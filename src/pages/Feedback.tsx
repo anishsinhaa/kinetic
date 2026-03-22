@@ -57,7 +57,7 @@ function ScaleSelector({
             key={n}
             onClick={() => onChange(n)}
             className={cn(
-              'flex-1 h-9 rounded-xl text-sm font-semibold transition-all',
+              'flex-1 h-10 md:h-9 rounded-xl text-sm font-semibold transition-all',
               value === n
                 ? 'bg-primary text-black scale-110 shadow-lg shadow-primary/30'
                 : 'bg-surface-2 border border-border text-text-secondary hover:border-primary hover:text-primary',
@@ -239,23 +239,23 @@ export default function Feedback() {
   const soreCount = Object.keys(soreness).length
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-4 md:p-8">
       {/* Header */}
-      <div className="flex items-start justify-between mb-8">
+      <div className="flex items-start justify-between mb-6 md:mb-8">
         <div>
           <p className="text-[10px] text-primary uppercase tracking-widest mb-1">
             Recovery Protocol
           </p>
-          <h1 className="text-5xl font-black text-text-primary">Daily Check-in</h1>
+          <h1 className="text-3xl md:text-5xl font-black text-text-primary">Daily Check-in</h1>
         </div>
-        <div className="text-right mt-2">
-          <p className="text-sm font-semibold text-text-secondary uppercase tracking-widest">
+        <div className="text-right mt-1 md:mt-2 shrink-0 ml-3">
+          <p className="text-xs md:text-sm font-semibold text-text-secondary uppercase tracking-widest">
             {DAY_STR}, {DATE_STR}
           </p>
           {existing ? (
             <p className="text-[10px] text-primary uppercase tracking-widest mt-0.5 flex items-center justify-end gap-1">
               <CheckCircle2 size={10} />
-              Already logged today
+              Logged today
             </p>
           ) : (
             <p className="text-[10px] text-text-muted uppercase tracking-widest mt-0.5">
@@ -271,7 +271,7 @@ export default function Feedback() {
           Loading today's recovery data…
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
           {/* Left column */}
           <div className="space-y-5">
             {/* Fatigue */}

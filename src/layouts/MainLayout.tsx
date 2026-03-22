@@ -33,10 +33,15 @@ export function MainLayout() {
 
   const userInitial = (user?.email?.[0] ?? 'U').toUpperCase()
 
+  const mobileNavItems = [
+    ...navItems,
+    { label: 'Settings', icon: Settings, to: '/settings' },
+  ]
+
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-52 flex-shrink-0 flex flex-col bg-surface border-r border-border">
+      {/* ── Desktop sidebar (hidden on mobile) ── */}
+      <aside className="hidden md:flex w-52 flex-shrink-0 flex-col bg-surface border-r border-border">
         {/* Logo */}
         <div className="px-5 pt-5 pb-6">
           <img
@@ -93,33 +98,17 @@ export function MainLayout() {
         </div>
       </aside>
 
-      {/* Main area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Topbar */}
-        <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-surface flex-shrink-0">
+      {/* ── Main area ── */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        {/* Desktop topbar (hidden on mobile) */}
+        <header className="hidden md:flex h-14 items-center justify-between px-6 border-b border-border bg-surface flex-shrink-0">
           <div className="flex items-center gap-6">
             <nav className="flex items-center gap-5 text-sm">
-              {navItems.slice(0, 3).map(({ label, to }) => (
+              {navItems.map(({ label, to }) => (
                 <NavLink
                   key={to}
                   to={to}
                   end={to === '/'}
-                  className={({ isActive }) =>
-                    cn(
-                      'font-medium transition-colors pb-0.5',
-                      isActive
-                        ? 'text-primary border-b border-primary'
-                        : 'text-text-secondary hover:text-text-primary',
-                    )
-                  }
-                >
-                  {label}
-                </NavLink>
-              ))}
-              {navItems.slice(3).map(({ label, to }) => (
-                <NavLink
-                  key={to}
-                  to={to}
                   className={({ isActive }) =>
                     cn(
                       'font-medium transition-colors pb-0.5',
@@ -148,11 +137,42 @@ export function MainLayout() {
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto">
+        {/* Mobile topbar (hidden on desktop) */}
+        <header className="md:hidden h-12 flex items-center justify-between px-4 border-b border-border bg-surface flex-shrink-0">
+          <img src={fullLogo} alt="Kinetic" className="h-7 w-auto" />
+          <Link
+            to="/settings"
+            className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-black select-none"
+          >
+            {userInitial}
+          </Link>
+        </header>
+
+        {/* Page content — extra bottom padding on mobile for the tab bar */}
+        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
           <Outlet />
         </main>
       </div>
+
+      {/* ── Mobile bottom tab bar (hidden on desktop) ── */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-border flex items-stretch h-16">
+        {mobileNavItems.map(({ label, icon: Icon, to }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) =>
+              cn(
+                'flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors',
+                isActive ? 'text-primary' : 'text-text-muted',
+              )
+            }
+          >
+            <Icon size={20} strokeWidth={1.8} />
+            <span className="text-[9px] uppercase tracking-wider font-semibold">{label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   )
 }

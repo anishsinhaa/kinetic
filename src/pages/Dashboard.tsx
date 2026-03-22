@@ -120,23 +120,23 @@ export default function Dashboard() {
   ] as const
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="mb-8">
+      <div className="mb-6 md:mb-8">
         <p className="text-xs text-text-secondary uppercase tracking-widest mb-1">
           System Status: Active
         </p>
-        <div className="flex items-end justify-between">
-          <h1 className="text-7xl font-black text-text-primary leading-none">Today</h1>
-          <div className="flex gap-3 mb-2">
-            <Button variant="primary" size="lg" onClick={() => navigate('/workout')}>
+        <div className="flex items-start md:items-end justify-between gap-3">
+          <h1 className="text-4xl md:text-7xl font-black text-text-primary leading-none">Today</h1>
+          <div className="flex flex-col sm:flex-row gap-2 md:gap-3 shrink-0 md:mb-2">
+            <Button variant="primary" size="md" onClick={() => navigate('/workout')}>
               <Dumbbell size={14} className="mr-2" />
               Start Workout
             </Button>
             {lastWorkout && (
               <Button
                 variant="secondary"
-                size="lg"
+                size="md"
                 onClick={() => navigate('/workout?repeat=1')}
               >
                 <RepeatIcon size={14} className="mr-2" />
@@ -162,8 +162,8 @@ export default function Dashboard() {
             Loading today's log…
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-px">
+            <table className="w-full text-sm min-w-[500px]">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-6 py-3 font-medium">
@@ -219,12 +219,12 @@ export default function Dashboard() {
       </Card>
 
       {/* ── Insights ─────────────────────────────────────────────────────────── */}
-      <div className="mb-4">
+      <div className="mb-4 md:mb-6">
         <h2 className="text-lg font-bold text-text-primary mb-4 flex items-center gap-2">
           <span className="w-1 h-5 bg-primary rounded-full inline-block" />
           Recovery
         </h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Recovery Status — live */}
           <Card className="p-5">
             <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">

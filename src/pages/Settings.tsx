@@ -52,12 +52,12 @@ function Row({
   action?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between px-5 py-4 border-b border-border last:border-0">
-      <div>
+    <div className="flex items-start sm:items-center justify-between gap-3 px-4 md:px-5 py-3 md:py-4 border-b border-border last:border-0">
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-text-primary">{label}</p>
-        {value && <p className="text-xs text-text-muted mt-0.5">{value}</p>}
+        {value && <p className="text-xs text-text-muted mt-0.5 break-words">{value}</p>}
       </div>
-      {action && <div className="shrink-0 ml-4">{action}</div>}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }
@@ -260,11 +260,11 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-6 md:mb-8">
         <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Configuration</p>
-        <h1 className="text-5xl font-black uppercase text-text-primary">Settings</h1>
+        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary">Settings</h1>
       </div>
 
       {/* Account */}

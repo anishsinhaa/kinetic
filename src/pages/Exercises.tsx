@@ -381,14 +381,14 @@ export default function Exercises() {
   return (
     <div className="pb-24">
       {/* Header */}
-      <div className="px-8 pt-8 pb-5 border-b border-border">
+      <div className="px-4 md:px-8 pt-5 md:pt-8 pb-4 md:pb-5 border-b border-border">
         <p className="text-[10px] text-primary uppercase tracking-widest mb-1">
           {isSelectMode ? 'Select for workout' : 'Browse & manage'}
         </p>
-        <h1 className="text-5xl font-black uppercase text-text-primary">Exercises</h1>
+        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary">Exercises</h1>
       </div>
 
-      <div className="px-8 pt-5">
+      <div className="px-4 md:px-8 pt-4 md:pt-5">
         {/* Tabs */}
         <div className="flex gap-1 bg-surface-2 rounded-xl p-1 w-fit mb-6">
           {(['library', 'custom'] as const).map((tab) => (
@@ -492,7 +492,7 @@ export default function Exercises() {
                           {libraryQuery.data!.length} results
                           {libraryQuery.data!.length === 40 && ' (showing first 40)'}
                         </p>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {libraryQuery.data!.map((ex) => (
                             <ExerciseCard
                               key={ex.id}
@@ -665,7 +665,7 @@ export default function Exercises() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {filteredCustom.map((ex) => (
                 <ExerciseCard
                   key={ex.id}
@@ -682,7 +682,7 @@ export default function Exercises() {
 
       {/* Bottom bar — exercises selected */}
       {hasSelection && currentWorkoutId && (
-        <div className="fixed bottom-0 left-52 right-0 bg-surface/95 backdrop-blur border-t border-border px-8 py-4 flex items-center gap-4">
+        <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-surface/95 backdrop-blur border-t border-border px-4 md:px-8 py-3 md:py-4 flex items-center gap-3 md:gap-4">
           <div className="flex-1">
             <p className="text-sm font-bold text-text-primary uppercase tracking-wider">
               {selectedCount} exercise{selectedCount !== 1 ? 's' : ''} selected
@@ -701,7 +701,7 @@ export default function Exercises() {
       )}
 
       {hasSelection && !currentWorkoutId && (
-        <div className="fixed bottom-0 left-52 right-0 bg-surface/95 backdrop-blur border-t border-border px-8 py-4 flex items-center gap-4">
+        <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-surface/95 backdrop-blur border-t border-border px-4 md:px-8 py-3 md:py-4 flex items-center gap-3 md:gap-4">
           <p className="text-sm text-text-secondary flex-1">Start a workout first to add exercises.</p>
           <Button variant="secondary" size="sm" onClick={() => navigate('/workout')}>Go to Workout</Button>
         </div>

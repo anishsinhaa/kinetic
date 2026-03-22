@@ -176,6 +176,7 @@ function DailyLogsTab() {
       )}
 
       {!error && (
+        <div className="overflow-x-auto">
         <Table>
           <TableHead>
             <TableRow>
@@ -237,6 +238,7 @@ function DailyLogsTab() {
             ))}
           </TableBody>
         </Table>
+        </div>
       )}
     </Card>
   )
@@ -307,6 +309,7 @@ function ExerciseHistoryTab() {
   const { data: exercises, isLoading, error } = useExerciseHistory()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
 
   const filtered = (exercises ?? []).filter((e) =>
     e.exerciseName.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -315,69 +318,85 @@ function ExerciseHistoryTab() {
   const selected = exercises?.find((e) => e.exerciseId === selectedId)
     ?? (exercises && exercises.length > 0 ? exercises[0] : null)
 
+  const handleSelect = (id: string) => {
+    setSelectedId(id)
+    setMobileView('detail')
+  }
+
   return (
-    <div className="grid grid-cols-3 gap-5">
-      {/* Left: Exercise list */}
-      <Card className="p-4 h-fit">
-        <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">
-          Exercises ({filtered.length})
-        </p>
-
-        <div className="relative mb-3">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-          <input
-            type="text"
-            placeholder="Search exercises..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-surface-2 border border-border rounded-xl pl-8 pr-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
-          />
-        </div>
-
-        {isLoading && (
-          <div className="flex justify-center py-8">
-            <Loader2 size={20} className="text-primary animate-spin" />
-          </div>
-        )}
-
-        {error && (
-          <ErrorState message="Failed to load exercises." />
-        )}
-
-        {!isLoading && !error && filtered.length === 0 && (
-          <p className="text-text-muted text-sm text-center py-6">
-            {searchQuery ? 'No matches found.' : 'No exercise history yet.'}
+    <div className="md:grid md:grid-cols-3 md:gap-5 space-y-4 md:space-y-0">
+      {/* Left: Exercise list — hidden on mobile when detail is shown */}
+      <div className={cn(mobileView === 'detail' ? 'hidden md:block' : 'block')}>
+        <Card className="p-4 h-fit">
+          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">
+            Exercises ({filtered.length})
           </p>
-        )}
 
-        <div className="space-y-0.5">
-          {filtered.map((ex) => {
-            const isActive = (selected?.exerciseId ?? null) === ex.exerciseId
-            return (
-              <button
-                key={ex.exerciseId}
-                onClick={() => setSelectedId(ex.exerciseId)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                  isActive
-                    ? 'bg-primary text-black font-semibold'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
-                }`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="truncate">{ex.exerciseName}</p>
-                  <p className={`text-[10px] truncate ${isActive ? 'text-black/60' : 'text-text-muted'}`}>
-                    {ex.muscleGroup} · {ex.sessions.length} session{ex.sessions.length !== 1 ? 's' : ''}
-                  </p>
-                </div>
-                <ChevronRight size={14} className="shrink-0 ml-1" />
-              </button>
-            )
-          })}
-        </div>
-      </Card>
+          <div className="relative mb-3">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              type="text"
+              placeholder="Search exercises..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-surface-2 border border-border rounded-xl pl-8 pr-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
+            />
+          </div>
 
-      {/* Right: Exercise detail */}
-      <div className="col-span-2">
+          {isLoading && (
+            <div className="flex justify-center py-8">
+              <Loader2 size={20} className="text-primary animate-spin" />
+            </div>
+          )}
+
+          {error && (
+            <ErrorState message="Failed to load exercises." />
+          )}
+
+          {!isLoading && !error && filtered.length === 0 && (
+            <p className="text-text-muted text-sm text-center py-6">
+              {searchQuery ? 'No matches found.' : 'No exercise history yet.'}
+            </p>
+          )}
+
+          <div className="space-y-0.5">
+            {filtered.map((ex) => {
+              const isActive = (selected?.exerciseId ?? null) === ex.exerciseId
+              return (
+                <button
+                  key={ex.exerciseId}
+                  onClick={() => handleSelect(ex.exerciseId)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    isActive
+                      ? 'bg-primary text-black font-semibold'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">{ex.exerciseName}</p>
+                    <p className={`text-[10px] truncate ${isActive ? 'text-black/60' : 'text-text-muted'}`}>
+                      {ex.muscleGroup} · {ex.sessions.length} session{ex.sessions.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <ChevronRight size={14} className="shrink-0 ml-1" />
+                </button>
+              )
+            })}
+          </div>
+        </Card>
+      </div>
+
+      {/* Right: Exercise detail — hidden on mobile when list is shown */}
+      <div className={cn('md:col-span-2', mobileView === 'list' ? 'hidden md:block' : 'block')}>
+        {/* Mobile back button */}
+        <button
+          onClick={() => setMobileView('list')}
+          className="md:hidden flex items-center gap-1.5 text-sm text-text-secondary hover:text-primary mb-3 transition-colors"
+        >
+          <ChevronRight size={14} className="rotate-180" />
+          Back to list
+        </button>
+
         {!selected && !isLoading && (
           <Card className="p-6">
             <EmptyState
@@ -389,10 +408,10 @@ function ExerciseHistoryTab() {
         )}
 
         {selected && (
-          <Card className="p-6">
-            <div className="flex items-start justify-between mb-6">
+          <Card className="p-4 md:p-6">
+            <div className="flex items-start justify-between mb-5 md:mb-6">
               <div>
-                <h2 className="text-xl font-bold text-text-primary">{selected.exerciseName}</h2>
+                <h2 className="text-lg md:text-xl font-bold text-text-primary">{selected.exerciseName}</h2>
                 <p className="text-text-secondary text-sm mt-0.5">
                   {selected.muscleGroup} · {selected.sessions.length} session{selected.sessions.length !== 1 ? 's' : ''}
                 </p>
@@ -479,6 +498,7 @@ function RecoveryTab() {
       )}
 
       {!error && (
+        <div className="overflow-x-auto">
         <Table>
           <TableHead>
             <TableRow>
@@ -611,6 +631,7 @@ function RecoveryTab() {
             })}
           </TableBody>
         </Table>
+        </div>
       )}
     </Card>
   )
@@ -624,43 +645,45 @@ export default function History() {
   const [activeTab, setActiveTab] = useState<Tab>('daily')
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       {/* Header */}
-      <div className="flex items-end justify-between mb-6">
-        <div>
+      <div className="mb-5 md:mb-6">
+        <div className="mb-4">
           <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-1">
             Performance Archive
           </p>
-          <h1 className="text-4xl font-black text-text-primary">History</h1>
+          <h1 className="text-3xl md:text-4xl font-black text-text-primary">History</h1>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-1 bg-surface-2 border border-border rounded-xl p-1">
+        <div className="flex gap-1 bg-surface-2 border border-border rounded-xl p-1 w-full md:w-fit">
           <Button
             variant={activeTab === 'daily' ? 'secondary' : 'ghost'}
             size="sm"
             onClick={() => setActiveTab('daily')}
-            className={activeTab === 'daily' ? 'border-primary text-primary' : 'border-transparent'}
+            className={cn('flex-1 md:flex-none', activeTab === 'daily' ? 'border-primary text-primary' : 'border-transparent')}
           >
-            <Calendar size={13} className="mr-1.5" />
-            Daily Logs
+            <Calendar size={13} className="mr-1 md:mr-1.5" />
+            <span className="hidden sm:inline">Daily Logs</span>
+            <span className="sm:hidden">Daily</span>
           </Button>
           <Button
             variant={activeTab === 'exercise' ? 'secondary' : 'ghost'}
             size="sm"
             onClick={() => setActiveTab('exercise')}
-            className={activeTab === 'exercise' ? 'border-primary text-primary' : 'border-transparent'}
+            className={cn('flex-1 md:flex-none', activeTab === 'exercise' ? 'border-primary text-primary' : 'border-transparent')}
           >
-            <Dumbbell size={13} className="mr-1.5" />
-            Exercise History
+            <Dumbbell size={13} className="mr-1 md:mr-1.5" />
+            <span className="hidden sm:inline">Exercise History</span>
+            <span className="sm:hidden">Exercise</span>
           </Button>
           <Button
             variant={activeTab === 'recovery' ? 'secondary' : 'ghost'}
             size="sm"
             onClick={() => setActiveTab('recovery')}
-            className={activeTab === 'recovery' ? 'border-primary text-primary' : 'border-transparent'}
+            className={cn('flex-1 md:flex-none', activeTab === 'recovery' ? 'border-primary text-primary' : 'border-transparent')}
           >
-            <Heart size={13} className="mr-1.5" />
+            <Heart size={13} className="mr-1 md:mr-1.5" />
             Recovery
           </Button>
         </div>

@@ -282,10 +282,10 @@ export default function Workout() {
   return (
     <div className="pb-28">
       {/* Header */}
-      <div className="px-8 pt-8 pb-6 border-b border-border">
+      <div className="px-4 md:px-8 pt-5 md:pt-8 pb-4 md:pb-6 border-b border-border">
         <p className="text-[10px] text-primary uppercase tracking-widest mb-1">{headerLabel}</p>
         <div className="flex items-end justify-between">
-          <h1 className="text-5xl font-black uppercase text-text-primary">{title}</h1>
+          <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary">{title}</h1>
         </div>
 
         {currentWorkoutId && (
@@ -305,14 +305,14 @@ export default function Workout() {
                 void updateWorkoutLabel(currentWorkoutId, workoutLabel.trim())
               }}
               placeholder="Optional workout label (e.g. Upper, Cardio, etc.)"
-              className="w-full max-w-md bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+              className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
             />
           </div>
         )}
 
         {!currentWorkoutId && showTypeSetup && (
-          <div className="mt-4 flex items-end gap-3">
-            <div className="w-full max-w-md">
+          <div className="mt-4 space-y-3">
+            <div className="w-full">
               <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">
                 Workout Type {isRepeatMode && <span className="text-primary">(repeating last)</span>}
               </label>
@@ -332,27 +332,29 @@ export default function Workout() {
                 ))}
               </datalist>
             </div>
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => {
-                addWorkoutType(selectedType)
-                if (typeError && selectedType.trim()) setTypeError('')
-              }}
-            >
-              Save Type
-            </Button>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={() => {
-                setShowTypeSetup(false)
-                setSelectedType('')
-                setTypeError('')
-              }}
-            >
-              Cancel
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => {
+                  addWorkoutType(selectedType)
+                  if (typeError && selectedType.trim()) setTypeError('')
+                }}
+              >
+                Save Type
+              </Button>
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={() => {
+                  setShowTypeSetup(false)
+                  setSelectedType('')
+                  setTypeError('')
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
 
@@ -382,7 +384,7 @@ export default function Workout() {
       </div>
 
       {/* Exercises */}
-      <div className="px-8 pt-6 space-y-5">
+      <div className="px-4 md:px-8 pt-5 md:pt-6 space-y-4 md:space-y-5">
         {exercises.map((ex) => (
           <div key={ex.id} className="bg-surface rounded-xl border border-border overflow-hidden">
             {/* Exercise header */}
@@ -455,21 +457,23 @@ export default function Workout() {
                       }
                     }}
                     type="number"
+                    inputMode="decimal"
                     value={set.weight}
                     disabled={!canEdit}
                     onChange={(e) => updateSet(ex.id, set.id, { weight: e.target.value })}
                     onBlur={() => void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
-                    className="w-20 bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-center text-text-primary focus:outline-none focus:border-primary transition-colors"
+                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-none focus:border-primary transition-colors"
                   />
 
                   {/* Col 3: reps */}
                   <input
                     type="number"
+                    inputMode="numeric"
                     value={set.reps}
                     disabled={!canEdit}
                     onChange={(e) => updateSet(ex.id, set.id, { reps: e.target.value })}
                     onBlur={() => void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
-                    className="w-20 bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-center text-text-primary focus:outline-none focus:border-primary transition-colors"
+                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-none focus:border-primary transition-colors"
                   />
 
                   {/* Col 4: failure toggle */}
@@ -510,7 +514,7 @@ export default function Workout() {
       </div>
 
       {/* Sticky footer CTA */}
-      <div className="fixed bottom-0 left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-8 py-4 flex items-center justify-center">
+      <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 md:px-8 py-3 md:py-4 flex items-center justify-center">
         <Button
           variant={currentWorkoutId ? 'primary' : 'secondary'}
           size="lg"
