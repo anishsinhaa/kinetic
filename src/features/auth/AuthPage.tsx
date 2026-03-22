@@ -88,8 +88,8 @@ export default function AuthPage() {
       <div className="hidden lg:flex flex-col justify-between w-[480px] shrink-0 px-12 py-16 bg-surface border-r border-border">
         <div>
           {/* Logo */}
-          <div className="mb-16">
-            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-48" />
+          <div className="mb-10">
+            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-32" />
           </div>
 
           {/* Headline */}
@@ -121,8 +121,8 @@ export default function AuthPage() {
       <div className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
           {/* Mobile logo */}
-          <div className="mb-10 lg:hidden">
-            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-36" />
+          <div className="mb-8 lg:hidden">
+            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-28" />
           </div>
 
           {/* Mode switcher */}
