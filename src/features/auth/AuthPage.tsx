@@ -85,34 +85,38 @@ export default function AuthPage() {
   return (
     <div className="min-h-screen bg-background flex">
       {/* ── Left branding panel ──────────────────────────────────────────────── */}
-      <div className="hidden lg:flex flex-col justify-between w-[480px] shrink-0 px-12 py-16 bg-surface border-r border-border">
-        <div>
-          {/* Logo */}
-          <div className="mb-10">
-            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-32" />
+      <div className="hidden lg:flex flex-col justify-between flex-1 min-w-0 max-w-none lg:max-w-[min(50vw,720px)] xl:max-w-[min(52vw,800px)] px-8 xl:px-12 2xl:px-16 py-14 xl:py-16 bg-surface border-r border-border">
+        <div className="w-full max-w-full">
+          {/* Logo — spans full column width */}
+          <div className="mb-8 xl:mb-10 w-full">
+            <img
+              src={fullLogo}
+              alt="Kinetic — Track. Recover. Progress."
+              className="w-full max-w-full h-auto object-left object-contain"
+            />
           </div>
 
           {/* Headline */}
-          <h1 className="text-5xl font-black text-text-primary leading-tight mb-4">
+          <h1 className="text-5xl xl:text-6xl 2xl:text-7xl font-black text-text-primary leading-[1.05] mb-5 xl:mb-6">
             Train with<br />
             <span className="text-primary">precision.</span>
           </h1>
-          <p className="text-text-secondary text-lg leading-relaxed mb-12">
+          <p className="text-text-secondary text-lg xl:text-xl leading-relaxed mb-10 xl:mb-12 w-full">
             The intelligent fitness platform that turns raw data into your competitive edge.
           </p>
 
           {/* Feature list */}
-          <ul className="space-y-4">
+          <ul className="space-y-4 xl:space-y-5 w-full">
             {features.map((f) => (
-              <li key={f} className="flex items-center gap-3 text-text-secondary">
-                <CheckCircle2 size={16} className="text-primary shrink-0" />
-                <span className="text-sm">{f}</span>
+              <li key={f} className="flex items-start gap-3 xl:gap-4 text-text-secondary">
+                <CheckCircle2 size={22} className="text-primary shrink-0 mt-0.5" />
+                <span className="text-base xl:text-lg leading-snug">{f}</span>
               </li>
             ))}
           </ul>
         </div>
 
-        <p className="text-[10px] text-text-muted uppercase tracking-widest">
+        <p className="text-[11px] xl:text-xs text-text-muted uppercase tracking-widest mt-10">
           © 2026 Kinetic · All rights reserved
         </p>
       </div>
@@ -121,8 +125,12 @@ export default function AuthPage() {
       <div className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
           {/* Mobile logo */}
-          <div className="mb-8 lg:hidden">
-            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-28" />
+          <div className="mb-8 lg:hidden w-full">
+            <img
+              src={fullLogo}
+              alt="Kinetic — Track. Recover. Progress."
+              className="w-full max-w-[280px] sm:max-w-sm h-auto object-left object-contain"
+            />
           </div>
 
           {/* Mode switcher */}
