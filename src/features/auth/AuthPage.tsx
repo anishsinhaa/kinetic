@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Loader2, Zap, CheckCircle2 } from 'lucide-react'
+import { Loader2, CheckCircle2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { login, signUp, loginWithGoogle } from './authService'
+import fullLogo from '../../assets/full_logo.png'
 
 type Mode = 'login' | 'signup'
 
@@ -87,11 +88,8 @@ export default function AuthPage() {
       <div className="hidden lg:flex flex-col justify-between w-[480px] shrink-0 px-12 py-16 bg-surface border-r border-border">
         <div>
           {/* Logo */}
-          <div className="flex items-center gap-2 mb-16">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Zap size={16} className="text-black" strokeWidth={2.5} />
-            </div>
-            <span className="text-xl font-black text-text-primary tracking-tight">KINETIC</span>
+          <div className="mb-16">
+            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-48" />
           </div>
 
           {/* Headline */}
@@ -123,11 +121,8 @@ export default function AuthPage() {
       <div className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
           {/* Mobile logo */}
-          <div className="flex items-center gap-2 mb-10 lg:hidden">
-            <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
-              <Zap size={14} className="text-black" strokeWidth={2.5} />
-            </div>
-            <span className="text-lg font-black text-text-primary tracking-tight">KINETIC</span>
+          <div className="mb-10 lg:hidden">
+            <img src={fullLogo} alt="Kinetic — Track. Recover. Progress." className="w-36" />
           </div>
 
           {/* Mode switcher */}
