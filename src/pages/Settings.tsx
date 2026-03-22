@@ -178,7 +178,7 @@ function LibrarySection({ userId }: { userId: string }) {
                 Importing exercises…
               </p>
               <span className="text-xs text-text-muted">
-                {importState.progress.muscleIndex} / {importState.progress.totalMuscles} muscle groups
+                {importState.progress.completedSteps} / {importState.progress.totalSteps} combinations
               </span>
             </div>
             {/* Progress bar */}

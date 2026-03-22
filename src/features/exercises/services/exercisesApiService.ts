@@ -18,6 +18,7 @@ export type ApiExercise = {
 export type ApiSearchParams = {
   name?: string
   muscle?: string
+  type?: string
   difficulty?: string
   offset?: number
 }
@@ -33,6 +34,7 @@ export async function searchExercises(params: ApiSearchParams): Promise<ApiExerc
   const qs = new URLSearchParams()
   if (params.name?.trim()) qs.set('name', params.name.trim())
   if (params.muscle) qs.set('muscle', params.muscle)
+  if (params.type) qs.set('type', params.type)
   if (params.difficulty) qs.set('difficulty', params.difficulty)
   if (params.offset) qs.set('offset', String(params.offset))
 
