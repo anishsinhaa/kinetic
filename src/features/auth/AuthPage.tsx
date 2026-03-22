@@ -85,51 +85,51 @@ export default function AuthPage() {
   return (
     <div className="min-h-screen bg-background flex">
       {/* ── Left branding panel ──────────────────────────────────────────────── */}
-      <div className="hidden lg:flex flex-col justify-between flex-1 min-w-0 max-w-none lg:max-w-[min(50vw,720px)] xl:max-w-[min(52vw,800px)] px-8 xl:px-12 2xl:px-16 py-14 xl:py-16 bg-surface border-r border-border">
-        <div className="w-full max-w-full">
-          {/* Logo — spans full column width */}
-          <div className="mb-8 xl:mb-10 w-full">
+      <div className="hidden lg:flex flex-col justify-between w-[min(100%,420px)] xl:w-[460px] shrink-0 px-9 xl:px-10 py-12 max-h-screen overflow-y-auto bg-surface border-r border-border">
+        <div>
+          {/* Logo — capped, centered in column */}
+          <div className="mb-7 flex justify-center">
             <img
               src={fullLogo}
               alt="Kinetic — Track. Recover. Progress."
-              className="w-full max-w-full h-auto object-left object-contain"
+              className="w-auto max-w-[200px] xl:max-w-[250px] h-auto object-contain"
             />
           </div>
 
           {/* Headline */}
-          <h1 className="text-5xl xl:text-6xl 2xl:text-7xl font-black text-text-primary leading-[1.05] mb-5 xl:mb-6">
+          <h1 className="text-4xl xl:text-[2.75rem] font-black text-text-primary leading-[1.08] mb-3">
             Train with<br />
             <span className="text-primary">precision.</span>
           </h1>
-          <p className="text-text-secondary text-lg xl:text-xl leading-relaxed mb-10 xl:mb-12 w-full">
+          <p className="text-text-secondary text-[15px] xl:text-base leading-relaxed mb-8">
             The intelligent fitness platform that turns raw data into your competitive edge.
           </p>
 
           {/* Feature list */}
-          <ul className="space-y-4 xl:space-y-5 w-full">
+          <ul className="space-y-3">
             {features.map((f) => (
-              <li key={f} className="flex items-start gap-3 xl:gap-4 text-text-secondary">
-                <CheckCircle2 size={22} className="text-primary shrink-0 mt-0.5" />
-                <span className="text-base xl:text-lg leading-snug">{f}</span>
+              <li key={f} className="flex items-center gap-2.5 text-text-secondary">
+                <CheckCircle2 size={16} className="text-primary shrink-0" />
+                <span className="text-sm leading-snug">{f}</span>
               </li>
             ))}
           </ul>
         </div>
 
-        <p className="text-[11px] xl:text-xs text-text-muted uppercase tracking-widest mt-10">
+        <p className="text-[10px] text-text-muted uppercase tracking-widest mt-8 shrink-0">
           © 2026 Kinetic · All rights reserved
         </p>
       </div>
 
       {/* ── Right auth panel ─────────────────────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
+      <div className="flex-1 flex items-center justify-center lg:items-start lg:justify-center px-6 py-12 lg:pt-16 xl:pt-20">
         <div className="w-full max-w-sm">
           {/* Mobile logo */}
-          <div className="mb-8 lg:hidden w-full">
+          <div className="mb-8 lg:hidden flex justify-center">
             <img
               src={fullLogo}
               alt="Kinetic — Track. Recover. Progress."
-              className="w-full max-w-[280px] sm:max-w-sm h-auto object-left object-contain"
+              className="w-auto max-w-[220px] h-auto object-contain"
             />
           </div>
 
