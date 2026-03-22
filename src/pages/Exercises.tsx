@@ -57,9 +57,24 @@ const MUSCLE_FILTERS = [
   { label: 'Adductors', value: 'Adductors' },
 ] as const
 
-const CUSTOM_MUSCLE_GROUPS = [
-  'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other',
-]
+/** Matches API Ninjas / imported library `exercise_type` values */
+const EXERCISE_TYPE_OPTIONS = [
+  { label: '— Not set —', value: '' },
+  { label: 'Strength', value: 'strength' },
+  { label: 'Cardio', value: 'cardio' },
+  { label: 'Stretching', value: 'stretching' },
+  { label: 'Plyometrics', value: 'plyometrics' },
+  { label: 'Powerlifting', value: 'powerlifting' },
+  { label: 'Olympic weightlifting', value: 'olympic_weightlifting' },
+  { label: 'Strongman', value: 'strongman' },
+] as const
+
+const DIFFICULTY_OPTIONS = [
+  { label: '— Not set —', value: '' },
+  { label: 'Beginner', value: 'beginner' },
+  { label: 'Intermediate', value: 'intermediate' },
+  { label: 'Expert', value: 'expert' },
+] as const
 
 const DIFF_STYLE: Record<string, string> = {
   beginner: 'text-green-400 bg-green-900/20 border border-green-900',
@@ -216,7 +231,19 @@ export default function Exercises() {
   const [customName, setCustomName] = useState('')
   const [customMuscle, setCustomMuscle] = useState('Chest')
   const [customEquipment, setCustomEquipment] = useState('')
+  const [customDifficulty, setCustomDifficulty] = useState('')
+  const [customExerciseType, setCustomExerciseType] = useState('')
+  const [customInstructions, setCustomInstructions] = useState('')
   const customNameRef = useRef<HTMLInputElement>(null)
+
+  const resetCustomForm = () => {
+    setCustomName('')
+    setCustomMuscle('Chest')
+    setCustomEquipment('')
+    setCustomDifficulty('')
+    setCustomExerciseType('')
+    setCustomInstructions('')
+  }
 
   // Debounce search
   useEffect(() => {
@@ -261,12 +288,19 @@ export default function Exercises() {
 
   // ── Create custom ──────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: ({ name, muscle, equipment }: { name: string; muscle: string; equipment: string }) =>
-      createExercise(name, muscle, userId, equipment),
+    mutationFn: () =>
+      createExercise({
+        name: customName,
+        muscleGroup: customMuscle,
+        userId,
+        equipment: customEquipment || null,
+        difficulty: customDifficulty || null,
+        exerciseType: customExerciseType || null,
+        instructions: customInstructions || null,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['exercises', 'custom', userId] })
-      setCustomName('')
-      setCustomEquipment('')
+      resetCustomForm()
       setShowCreateForm(false)
     },
   })
@@ -487,6 +521,9 @@ export default function Exercises() {
                 <p className="text-[10px] text-primary uppercase tracking-widest mb-4 font-semibold">
                   New Custom Exercise
                 </p>
+                <p className="text-xs text-text-muted mb-4">
+                  Same fields as the imported library — fill what you know; leave the rest blank.
+                </p>
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Name</label>
@@ -494,31 +531,75 @@ export default function Exercises() {
                       ref={customNameRef}
                       value={customName}
                       onChange={(e) => setCustomName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') createMutation.mutate({ name: customName, muscle: customMuscle, equipment: customEquipment }) }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          if (customName.trim()) createMutation.mutate()
+                        }
+                      }}
                       placeholder="e.g. Cable Pull-Through"
                       className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Muscle Group</label>
+                      <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Muscle group</label>
                       <select
                         value={customMuscle}
                         onChange={(e) => setCustomMuscle(e.target.value)}
                         className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
                       >
-                        {CUSTOM_MUSCLE_GROUPS.map((g) => <option key={g} value={g}>{g}</option>)}
+                        {MUSCLE_FILTERS.map(({ label, value }) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                        <option value="Other">Other</option>
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Equipment (optional)</label>
+                      <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Equipment</label>
                       <input
                         value={customEquipment}
                         onChange={(e) => setCustomEquipment(e.target.value)}
-                        placeholder="e.g. Barbell"
+                        placeholder="e.g. Barbell, cable machine"
                         className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
                       />
                     </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Difficulty</label>
+                      <select
+                        value={customDifficulty}
+                        onChange={(e) => setCustomDifficulty(e.target.value)}
+                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+                      >
+                        {DIFFICULTY_OPTIONS.map(({ label, value }) => (
+                          <option key={label} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Exercise type</label>
+                      <select
+                        value={customExerciseType}
+                        onChange={(e) => setCustomExerciseType(e.target.value)}
+                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+                      >
+                        {EXERCISE_TYPE_OPTIONS.map(({ label, value }) => (
+                          <option key={label} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">Instructions</label>
+                    <textarea
+                      value={customInstructions}
+                      onChange={(e) => setCustomInstructions(e.target.value)}
+                      placeholder="How to perform the movement, cues, setup…"
+                      rows={4}
+                      className="w-full resize-y min-h-[88px] bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+                    />
                   </div>
                   {createMutation.isError && (
                     <p className="text-xs text-red-400 flex items-center gap-1">
@@ -530,13 +611,20 @@ export default function Exercises() {
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => createMutation.mutate({ name: customName, muscle: customMuscle, equipment: customEquipment })}
+                      onClick={() => createMutation.mutate()}
                       disabled={!customName.trim() || createMutation.isPending}
                     >
                       {createMutation.isPending ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Plus size={13} className="mr-1.5" />}
                       Create Exercise
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => { setShowCreateForm(false); setCustomName(''); setCustomEquipment('') }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowCreateForm(false)
+                        resetCustomForm()
+                      }}
+                    >
                       Cancel
                     </Button>
                   </div>

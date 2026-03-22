@@ -99,23 +99,34 @@ export async function getUserCustomExercises(userId: string): Promise<Exercise[]
   return (data as ExerciseRow[]).map(mapExercise)
 }
 
-export async function createExercise(
-  name: string,
-  muscleGroup: string,
-  userId?: string,
-  equipment?: string,
-): Promise<Exercise> {
-  const trimmedName = name.trim()
+export type CreateExerciseInput = {
+  name: string
+  muscleGroup: string
+  userId: string
+  /** Primary equipment (matches library `equipment` column) */
+  equipment?: string | null
+  /** API-style: beginner | intermediate | expert */
+  difficulty?: string | null
+  /** API-style: strength, cardio, etc. */
+  exerciseType?: string | null
+  instructions?: string | null
+}
+
+export async function createExercise(input: CreateExerciseInput): Promise<Exercise> {
+  const trimmedName = input.name.trim()
   if (!trimmedName) throw new Error('Exercise name is required')
 
   const { data, error } = await supabase
     .from('exercises')
     .insert({
       name: trimmedName,
-      muscle_group: muscleGroup.trim() || 'Other',
+      muscle_group: input.muscleGroup.trim() || 'Other',
       is_custom: true,
-      equipment: equipment?.trim() || null,
-      ...(userId ? { created_by: userId } : {}),
+      equipment: input.equipment?.trim() || null,
+      difficulty: input.difficulty?.trim() || null,
+      exercise_type: input.exerciseType?.trim() || null,
+      instructions: input.instructions?.trim() || null,
+      created_by: input.userId,
     })
     .select('*')
     .single()
