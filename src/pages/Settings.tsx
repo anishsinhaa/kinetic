@@ -300,8 +300,8 @@ export default function Settings() {
         />
       </Section>
 
-      {/* Exercise Library + import */}
-      <LibrarySection userId={userId} />
+      {/* Exercise Library + import — admin only */}
+      {user?.email === 'anishsinha4911@gmail.com' && <LibrarySection userId={userId} />}
 
       {/* About */}
       <Section title="About">
