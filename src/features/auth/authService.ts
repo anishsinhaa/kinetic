@@ -1,15 +1,13 @@
 import { supabase } from '../../lib/supabase/client'
 import { useAppStore } from '../../store/useAppStore'
 import {
-  SUPER_ADMIN_EMAIL,
-  SUPER_ADMIN_PASSWORD,
   activateLocalSuperAdminBypass,
   clearLocalSuperAdminBypass,
   isSuperAdminCredentials,
 } from './superAdmin'
 
 export async function signUp(email: string, password: string) {
-  if (isSuperAdminCredentials(email, password)) {
+  if (import.meta.env.DEV && isSuperAdminCredentials(email, password)) {
     return loginAsSuperAdmin()
   }
   const { data, error } = await supabase.auth.signUp({ email, password })
@@ -18,14 +16,17 @@ export async function signUp(email: string, password: string) {
 }
 
 /**
- * Super-admin login: prefer a real Supabase session (sign-in, then sign-up if
- * needed). If Supabase auth is unavailable, fall back to a local bypass so the
- * app is always reachable with these credentials — including in production.
+ * Dev-only super-admin login: Supabase sign-in → auto-signup → local bypass.
+ * Entire path is gated by `import.meta.env.DEV` so it is absent from production.
  */
 async function loginAsSuperAdmin() {
+  if (!import.meta.env.DEV) {
+    throw new Error('Super-admin login is only available in development.')
+  }
+
   const credentials = {
-    email: SUPER_ADMIN_EMAIL,
-    password: SUPER_ADMIN_PASSWORD,
+    email: 'superuser@kinetic.com',
+    password: 'admin222',
   }
 
   const first = await supabase.auth.signInWithPassword(credentials)
@@ -34,10 +35,7 @@ async function loginAsSuperAdmin() {
     return first.data
   }
 
-  const created = await supabase.auth.signUp({
-    email: SUPER_ADMIN_EMAIL,
-    password: SUPER_ADMIN_PASSWORD,
-  })
+  const created = await supabase.auth.signUp(credentials)
   if (!created.error && created.data.session) {
     clearLocalSuperAdminBypass()
     return created.data
@@ -49,15 +47,17 @@ async function loginAsSuperAdmin() {
     return retry.data
   }
 
-  // Break-glass: enter the app without a Supabase JWT.
   const user = activateLocalSuperAdminBypass()
+  if (!user) {
+    throw new Error('Super-admin login is only available in development.')
+  }
   useAppStore.getState().setUser(user)
   useAppStore.getState().setAuthReady(true)
-  return { user: { id: user.id, email: user.email ?? SUPER_ADMIN_EMAIL }, session: null }
+  return { user: { id: user.id, email: user.email ?? credentials.email }, session: null }
 }
 
 export async function login(email: string, password: string) {
-  if (isSuperAdminCredentials(email, password)) {
+  if (import.meta.env.DEV && isSuperAdminCredentials(email, password)) {
     return loginAsSuperAdmin()
   }
   clearLocalSuperAdminBypass()

@@ -33,12 +33,14 @@ export function useAuthListener() {
         // Ignore sign-out failures — still clear local auth state below.
       }
       if (cancelled) return
-      // Keep break-glass super-admin session if active
-      const local = getLocalSuperAdminUser()
-      if (local) {
-        setUser(local)
-        setAuthReady(true)
-        return
+      // Keep DEV-only break-glass session if active
+      if (import.meta.env.DEV) {
+        const local = getLocalSuperAdminUser()
+        if (local) {
+          setUser(local)
+          setAuthReady(true)
+          return
+        }
       }
       setUser(null)
       setAuthReady(true)
@@ -49,11 +51,13 @@ export function useAuthListener() {
       .then(({ data: { session }, error }) => {
         if (cancelled) return
         if (error) {
-          const local = getLocalSuperAdminUser()
-          if (local) {
-            setUser(local)
-            setAuthReady(true)
-            return
+          if (import.meta.env.DEV) {
+            const local = getLocalSuperAdminUser()
+            if (local) {
+              setUser(local)
+              setAuthReady(true)
+              return
+            }
           }
           void clearSessionAndShowLogin()
           return
@@ -62,11 +66,13 @@ export function useAuthListener() {
         setAuthReady(true)
       })
       .catch(() => {
-        const local = getLocalSuperAdminUser()
-        if (local) {
-          setUser(local)
-          setAuthReady(true)
-          return
+        if (import.meta.env.DEV) {
+          const local = getLocalSuperAdminUser()
+          if (local) {
+            setUser(local)
+            setAuthReady(true)
+            return
+          }
         }
         void clearSessionAndShowLogin()
       })

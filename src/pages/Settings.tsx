@@ -14,7 +14,7 @@ import { countLibraryExercises, getLibraryStats } from '../features/workout/serv
 import { importExerciseLibrary, type ImportProgress } from '../features/exercises/services/exerciseImportService'
 import { hasApiKey } from '../features/exercises/services/exercisesApiService'
 import { logout } from '../features/auth/authService'
-import { isSuperAdminEmail } from '../features/auth/superAdmin'
+import { isAdminEmail } from '../features/auth/adminEmails'
 import { useCurrentUser } from '../features/auth/useAuth'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,10 +301,8 @@ export default function Settings() {
         />
       </Section>
 
-      {/* Exercise Library + import — admin only */}
-      {(user?.email === 'anishsinha4911@gmail.com' || isSuperAdminEmail(user?.email)) && (
-        <LibrarySection userId={userId} />
-      )}
+      {/* Exercise Library + import — admin emails from VITE_ADMIN_EMAILS */}
+      {isAdminEmail(user?.email) && <LibrarySection userId={userId} />}
 
       {/* About */}
       <Section title="About">

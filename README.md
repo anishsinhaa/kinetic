@@ -136,6 +136,7 @@ cp .env.example .env
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 VITE_EXERCISES_API_KEY=your_api_ninjas_key
+VITE_ADMIN_EMAILS=you@example.com
 ```
 
 Run the SQL schema in your Supabase SQL Editor:
@@ -163,7 +164,7 @@ Build config is defined in `netlify.toml`:
 - Publish directory: `dist`
 - SPA redirect: all routes fall back to `index.html`
 
-Environment variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_EXERCISES_API_KEY`) are set in the Netlify dashboard and are never committed to the repository.
+Environment variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_EXERCISES_API_KEY`, `VITE_ADMIN_EMAILS`) are set in the Netlify dashboard and are never committed to the repository.
 
 ---
 
