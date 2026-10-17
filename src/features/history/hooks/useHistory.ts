@@ -23,5 +23,8 @@ export function useExerciseHistory() {
     queryFn: () => getExerciseHistory(userId!),
     enabled: Boolean(userId),
     staleTime: 1000 * 60 * 5,
+    retry: 1,
+    // Don't leave the tab spinning forever on a hung request
+    throwOnError: false,
   })
 }

@@ -33,6 +33,7 @@ import { suggestNextType } from '../features/workout/lib/suggestNextType'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { pluralize } from '../lib/pluralize'
+import { formatVolumeKg } from '../features/workout/lib/volume'
 import { cn } from '../lib/utils'
 import { selectOnFocus } from '../lib/selectOnFocus'
 
@@ -367,7 +368,7 @@ export default function Dashboard() {
               <TrendingUp size={12} />
               {pluralize(lastWorkoutQuery.data.exerciseCount, 'exercise')} ·{' '}
               {pluralize(lastWorkoutQuery.data.setCount, 'set')} ·{' '}
-              {lastWorkoutQuery.data.totalVolumeKg} kg
+              {formatVolumeKg(lastWorkoutQuery.data.totalVolumeKg)} kg
             </p>
           </>
         ) : (

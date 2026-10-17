@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Button } from '../components/ui/Button'
-import { Plus, Timer, Dumbbell, Loader2, Flame } from 'lucide-react'
+import { Plus, Timer, Dumbbell, Loader2 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   addExerciseToWorkout,
   createWorkout,
   deleteSet,
+  deleteWorkout,
   finishWorkout as finishWorkoutDb,
   getLatestCompletedWorkout,
   getLastPerformance,
@@ -24,12 +25,13 @@ import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { suggestNextType } from '../features/workout/lib/suggestNextType'
-import { totalVolumeKg } from '../features/workout/lib/volume'
+import { formatVolumeKg, totalVolumeKg } from '../features/workout/lib/volume'
 import { detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
+import { PrCelebration } from '../features/workout/components/PrCelebration'
 import type { Exercise } from '../features/exercises/types'
 import type { WorkoutExerciseTarget } from '../lib/supabase/database.types'
 
@@ -64,8 +66,10 @@ export default function Workout() {
   const userId = user!.id
   const today = new Date().toISOString().slice(0, 10)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const reduceMotion = useReducedMotion()
+  const addSetLockRef = useRef(0)
 
   const isRepeatMode = searchParams.get('repeat') === '1'
   const autoStart = searchParams.get('start') === '1'
@@ -107,22 +111,46 @@ export default function Workout() {
           .find(({ set }) => set.id === payload.setId)
         const setItem = fresh?.set
         const weId = fresh?.exercise.dbWorkoutExerciseId ?? payload.workoutExerciseId
-        if (!setItem || !weId) return
+        if (!setItem || !weId) {
+          setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'idle' }))
+          return
+        }
+
+        // Skip empty unchecked rows — don't create junk DB rows
+        if (!setItem.completed && setItem.weight === '' && setItem.reps === '') {
+          try {
+            await deleteSet(payload.setId)
+          } catch {
+            // may not exist yet
+          }
+          setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'idle' }))
+          return
+        }
+
+        const reps =
+          setItem.reps === '' ? null : Number.parseInt(setItem.reps, 10)
+        const weight =
+          setItem.weight === '' ? null : Number.parseFloat(setItem.weight)
 
         await upsertSet(payload.setId, weId, {
-          reps: setItem.reps === '' ? null : parseInt(setItem.reps, 10),
-          weight: setItem.weight === '' ? null : parseFloat(setItem.weight),
+          reps: reps != null && Number.isFinite(reps) ? reps : null,
+          weight: weight != null && Number.isFinite(weight) ? weight : null,
           to_failure: setItem.toFailure,
           set_index: payload.setIndex,
-          completed_at: setItem.completedAt ?? (setItem.completed ? new Date().toISOString() : null),
+          completed_at: setItem.completed
+            ? (setItem.completedAt ?? new Date().toISOString())
+            : null,
         })
-        useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, { dbSetId: payload.setId })
+        useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
+          dbSetId: payload.setId,
+        })
         setSaveError('')
         setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
       } catch (err) {
+        console.error('[setPersist]', err)
         setSaveError((err as Error).message)
         setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'error' }))
-        throw err
+        // Don't rethrow — keeps queue alive and clears "Saving…" via error status
       }
     }, 300),
   )
@@ -412,10 +440,54 @@ export default function Workout() {
     await persistQueueRef.current.flush(setLocalId)
   }
 
+  const isEmptySetRow = (s: { weight: string; reps: string }) =>
+    s.weight === '' && s.reps === ''
+
   const incompleteSetCount = useMemo(
-    () => exercises.reduce((n, e) => n + e.sets.filter((s) => !s.completed).length, 0),
+    () =>
+      exercises.reduce(
+        (n, e) => n + e.sets.filter((s) => !s.completed && !isEmptySetRow(s)).length,
+        0,
+      ),
     [exercises],
   )
+
+  const completedSetCount = useMemo(
+    () => exercises.reduce((n, e) => n + e.sets.filter((s) => s.completed).length, 0),
+    [exercises],
+  )
+
+  const invalidateAfterWorkout = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+      queryClient.invalidateQueries({ queryKey: ['workout'] }),
+      queryClient.invalidateQueries({ queryKey: ['history'] }),
+      latestWorkoutQuery.refetch(),
+    ])
+  }
+
+  const handleDeleteSet = async (exerciseLocalId: string, setLocalId: string) => {
+    useWorkoutStore.getState().removeSet(exerciseLocalId, setLocalId)
+    try {
+      await deleteSet(setLocalId)
+    } catch {
+      // row may never have been persisted
+    }
+    setSetStatusMap((prev) => {
+      const next = { ...prev }
+      delete next[setLocalId]
+      return next
+    })
+  }
+
+  const handleAddSet = (exerciseLocalId: string) => {
+    const now = Date.now()
+    if (now - addSetLockRef.current < 400) return
+    addSetLockRef.current = now
+    void persistQueueRef.current.flushAll().then(() => {
+      useWorkoutStore.getState().addSet(exerciseLocalId)
+    })
+  }
 
   const handleFinishConfirm = async () => {
     if (!currentWorkoutId) return
@@ -450,7 +522,18 @@ export default function Workout() {
             completed: true as const,
           })),
       )
-      const volume = Math.round(totalVolumeKg(completedSets))
+
+      // Empty workout — discard entirely (don't count in history/stats)
+      if (completedSets.length === 0) {
+        await deleteWorkout(currentWorkoutId)
+        useWorkoutStore.getState().finishWorkout()
+        setConfirmFinish(false)
+        await invalidateAfterWorkout()
+        navigate('/')
+        return
+      }
+
+      const volume = Math.round(totalVolumeKg(completedSets) * 10) / 10
 
       // Exclude current workout so already-upserted sets don't mask new PRs
       const prevPrs: Record<string, { weight: number; reps: number } | null> = {}
@@ -493,7 +576,7 @@ export default function Workout() {
 
       useWorkoutStore.getState().setPhase('summary')
       setConfirmFinish(false)
-      await latestWorkoutQuery.refetch()
+      await invalidateAfterWorkout()
     } catch (err) {
       setSaveError((err as Error).message)
     } finally {
@@ -559,7 +642,7 @@ export default function Workout() {
             {[
               ['Duration', formatElapsed(summarySnapshot.durationSec * 1000)],
               ['Warmup', formatElapsed(summarySnapshot.warmupSec * 1000)],
-              ['Volume', `${summarySnapshot.volumeKg} kg`],
+              ['Volume', `${formatVolumeKg(summarySnapshot.volumeKg)} kg`],
               ['Sets', String(summarySnapshot.setCount)],
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl border border-border bg-surface p-4">
@@ -569,24 +652,7 @@ export default function Workout() {
             ))}
           </div>
 
-          {summarySnapshot.prLabels.length > 0 && (
-            <motion.div
-              className="rounded-xl border border-primary/40 bg-primary/10 p-4 mb-6"
-              initial={reduceMotion ? false : { scale: 0.95 }}
-              animate={{ scale: 1 }}
-            >
-              <p className="text-sm font-bold text-primary flex items-center gap-2 mb-2">
-                <Flame size={16} /> PRs hit
-              </p>
-              <ul className="space-y-1">
-                {summarySnapshot.prLabels.map((p) => (
-                  <li key={p} className="text-sm text-text-primary">
-                    {p}
-                  </li>
-                ))}
-              </ul>
-            </motion.div>
-          )}
+          <PrCelebration labels={summarySnapshot.prLabels} />
 
           <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
             How did it feel? (optional)
@@ -801,10 +867,11 @@ export default function Workout() {
               </div>
             </div>
 
-            <div className="grid grid-cols-[2rem_1fr_1fr_3rem] gap-2 px-3 py-2 text-[10px] text-text-muted uppercase tracking-widest border-b border-border">
+            <div className="grid grid-cols-[2rem_1fr_1fr_2.5rem_2.5rem] gap-1.5 px-2 sm:px-3 py-2 text-[10px] text-text-muted uppercase tracking-widest border-b border-border">
               <span>Set</span>
               <span className="text-center">Weight</span>
               <span className="text-center">Reps</span>
+              <span />
               <span />
             </div>
 
@@ -822,17 +889,14 @@ export default function Workout() {
                 }}
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
                 onUncomplete={() => void handleUncompleteSet(ex.id, set.id, idx)}
+                onDelete={() => void handleDeleteSet(ex.id, set.id)}
               />
             ))}
 
             <button
               type="button"
               disabled={!canEdit}
-              onClick={() => {
-                void persistQueueRef.current.flushAll().then(() => {
-                  useWorkoutStore.getState().addSet(ex.id)
-                })
-              }}
+              onClick={() => handleAddSet(ex.id)}
               className="w-full py-3 text-xs text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
             >
               <Plus size={12} /> Add set
@@ -850,26 +914,36 @@ export default function Workout() {
           <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
         </button>
 
-        {/* Spacer so Add set / Finish stay clear of compact rest bar */}
-        {restEndsAt && <div className="h-14" aria-hidden />}
+        {/* Footer stack height reserve */}
+        <div className={cn('h-24', restEndsAt && 'h-36')} aria-hidden />
       </div>
 
-      <RestTimerRing
-        endsAt={restEndsAt}
-        totalSeconds={restTotalSeconds}
-        onSkip={() => useWorkoutStore.getState().clearRest()}
-        onAdjust={(d) => useWorkoutStore.getState().adjustRest(d)}
-        onComplete={() => useWorkoutStore.getState().clearRest()}
-      />
+      <div
+        className={cn(
+          'fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-3',
+          confirmFinish ? 'z-50' : 'z-30',
+        )}
+      >
+        <RestTimerRing
+          inline
+          endsAt={restEndsAt}
+          totalSeconds={restTotalSeconds}
+          onSkip={() => useWorkoutStore.getState().clearRest()}
+          onAdjust={(d) => useWorkoutStore.getState().adjustRest(d)}
+          onComplete={() => useWorkoutStore.getState().clearRest()}
+        />
 
-      <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-3 z-30">
         {confirmFinish ? (
           <div className="max-w-md mx-auto space-y-2">
-            {incompleteSetCount > 0 && (
-              <p className="text-xs text-text-muted text-center">
-                Discard {incompleteSetCount} incomplete set
-                {incompleteSetCount === 1 ? '' : 's'}?
-              </p>
+            {completedSetCount === 0 ? (
+              <p className="text-xs text-text-muted text-center">Discard empty workout?</p>
+            ) : (
+              incompleteSetCount > 0 && (
+                <p className="text-xs text-text-muted text-center">
+                  Discard {incompleteSetCount} incomplete set
+                  {incompleteSetCount === 1 ? '' : 's'}?
+                </p>
+              )
             )}
             <div className="flex gap-2">
               <Button variant="ghost" size="md" className="flex-1" onClick={() => setConfirmFinish(false)}>
@@ -882,7 +956,13 @@ export default function Workout() {
                 disabled={isFinishing}
                 onClick={() => void handleFinishConfirm()}
               >
-                {isFinishing ? <Loader2 size={14} className="animate-spin" /> : 'Confirm finish'}
+                {isFinishing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : completedSetCount === 0 ? (
+                  'Discard'
+                ) : (
+                  'Confirm finish'
+                )}
               </Button>
             </div>
           </div>

@@ -42,3 +42,9 @@ export function setVolumeKg(set: VolumeSet): number {
 export function totalVolumeKg(sets: VolumeSet[]): number {
   return sets.reduce((sum, s) => sum + setVolumeKg(s), 0)
 }
+
+/** Display volume with up to 1 decimal (807.5), dropping trailing .0 */
+export function formatVolumeKg(volume: number): string {
+  const rounded = Math.round(volume * 10) / 10
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}

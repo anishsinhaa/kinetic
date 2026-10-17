@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isCompletedSet, setVolumeKg, totalVolumeKg } from './volume'
+import { formatVolumeKg, isCompletedSet, setVolumeKg, totalVolumeKg } from './volume'
 
 describe('volume', () => {
   it('requires completion when completed flag / completed_at is present', () => {
@@ -24,5 +24,11 @@ describe('volume', () => {
       { weight: 90, reps: 5, completed: true },
     ]
     expect(totalVolumeKg(sets)).toBe(50 * 10 + 90 * 5)
+  })
+
+  it('formats volume with up to 1 decimal', () => {
+    expect(formatVolumeKg(807.5)).toBe('807.5')
+    expect(formatVolumeKg(800)).toBe('800')
+    expect(formatVolumeKg(807.54)).toBe('807.5')
   })
 })

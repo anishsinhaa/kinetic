@@ -21,6 +21,7 @@ import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/t
 import type { ExerciseHistory } from '../features/history/types'
 import { cn } from '../lib/utils'
 import { pluralize } from '../lib/pluralize'
+import { formatVolumeKg } from '../features/workout/lib/volume'
 
 type Tab = 'daily' | 'exercise' | 'recovery'
 
@@ -73,7 +74,7 @@ function fmtSleep(v: number | null): string {
 }
 
 function fmtVolume(v: number): string {
-  return v > 0 ? `${v.toLocaleString()} kg` : '—'
+  return v > 0 ? `${formatVolumeKg(v)} kg` : '—'
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +292,7 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
                 <p className="font-semibold text-text-primary">{fmtDateLong(session.date)}</p>
                 {session.totalVolume > 0 && (
                   <span className="text-xs text-text-muted">
-                    Volume: {fmtVolume(Math.round(session.totalVolume))}
+                    Volume: {fmtVolume(session.totalVolume)}
                   </span>
                 )}
                 {session.feel != null && (
@@ -329,11 +330,12 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
 }
 
 function ExerciseHistoryTab() {
-  const { data: exercises, isLoading, error } = useExerciseHistory()
+  const { data: exercises, isPending, isFetching, error, refetch } = useExerciseHistory()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
 
+  const showInitialSpinner = isPending && !exercises
   const filtered = (exercises ?? []).filter((e) =>
     e.exerciseName.toLowerCase().includes(searchQuery.toLowerCase()),
   )
@@ -352,7 +354,9 @@ function ExerciseHistoryTab() {
       <div className={cn(mobileView === 'detail' ? 'hidden md:block' : 'block')}>
         <Card className="p-4 h-fit">
           <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">
-            Exercises ({filtered.length})
+            Exercises
+            {!showInitialSpinner && ` (${filtered.length})`}
+            {isFetching && exercises ? ' · updating…' : ''}
           </p>
 
           <div className="relative mb-3">
@@ -366,17 +370,24 @@ function ExerciseHistoryTab() {
             />
           </div>
 
-          {isLoading && (
+          {showInitialSpinner && (
             <div className="flex justify-center py-8">
               <Loader2 size={20} className="text-primary animate-spin" />
             </div>
           )}
 
-          {error && (
-            <ErrorState message="Failed to load exercises." />
+          {error && !exercises && (
+            <div className="space-y-3 py-4">
+              <ErrorState
+                message={(error as Error).message || 'Failed to load exercises.'}
+              />
+              <Button variant="secondary" size="sm" className="w-full" onClick={() => void refetch()}>
+                Retry
+              </Button>
+            </div>
           )}
 
-          {!isLoading && !error && filtered.length === 0 && (
+          {!showInitialSpinner && !error && filtered.length === 0 && (
             <p className="text-text-muted text-sm text-center py-6">
               {searchQuery ? 'No matches found.' : 'No exercise history yet.'}
             </p>
@@ -420,7 +431,7 @@ function ExerciseHistoryTab() {
           Back to list
         </button>
 
-        {!selected && !isLoading && (
+        {!selected && !showInitialSpinner && (
           <Card className="p-6">
             <EmptyState
               icon={TrendingUp}

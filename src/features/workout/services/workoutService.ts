@@ -134,6 +134,12 @@ export async function finishWorkout(
   if (error) throw toServiceError(error)
 }
 
+/** Discard an in-progress / empty workout (cascades exercises + sets). */
+export async function deleteWorkout(workoutId: string): Promise<void> {
+  const { error } = await supabase.from('workouts').delete().eq('id', workoutId)
+  if (error) throw toServiceError(error)
+}
+
 export async function addExerciseToWorkout(
   workoutId: string,
   exerciseId: string,
@@ -175,67 +181,103 @@ export async function updateWorkoutExercise(
   if (error) throw toServiceError(error)
 }
 
-function setWritePayload(setData: AddSetInput, includeV2Fields: boolean) {
-  const failed = setData.failed ?? setData.to_failure
-  const base = {
-    reps: setData.reps,
-    weight: setData.weight,
-    to_failure: failed,
-    set_index: setData.set_index ?? 1,
-  }
-  if (!includeV2Fields) return base
-  return {
-    ...base,
-    failed,
-    // Never auto-complete — only checked sets get a completed_at timestamp
-    completed_at: setData.completed_at !== undefined ? setData.completed_at : null,
-  }
+function finiteOrNull(n: number | null | undefined): number | null {
+  if (n == null) return null
+  return Number.isFinite(n) ? n : null
 }
 
-function isMissingColumnError(error: { message?: string; code?: string } | null): boolean {
-  if (!error?.message) return false
+function isMissingColumnError(error: { message?: string; code?: string; details?: string } | null): boolean {
+  if (!error?.message && !error?.details) return false
+  const blob = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
   return (
-    error.message.includes('schema cache') ||
-    error.message.includes('column') ||
+    blob.includes('schema cache') ||
+    blob.includes('column') ||
+    blob.includes('could not find') ||
     error.code === 'PGRST204'
   )
 }
 
+function logSetUpsertError(
+  label: string,
+  error: { message?: string; code?: string; details?: string; hint?: string },
+  payload: Record<string, unknown>,
+) {
+  console.error(`[upsertSet] ${label}`, {
+    message: error.message,
+    code: error.code,
+    details: error.details,
+    hint: error.hint,
+    payload,
+  })
+}
+
 /**
  * Single write path for a set: upsert by primary key so rapid edits never duplicate rows.
+ * Tries full v2 payload, then strips unknown columns, then legacy columns only.
  */
 export async function upsertSet(
   setId: string,
   workoutExerciseId: string,
   setData: AddSetInput,
 ): Promise<string> {
-  const withV2 = {
-    id: setId,
-    workout_exercise_id: workoutExerciseId,
-    ...setWritePayload(setData, true),
+  const failed = Boolean(setData.failed ?? setData.to_failure)
+  const reps = finiteOrNull(setData.reps)
+  const weight = finiteOrNull(setData.weight)
+  const setIndex = setData.set_index ?? 1
+  const completedAt =
+    setData.completed_at !== undefined ? setData.completed_at : null
+
+  const attempts: Array<Record<string, unknown>> = [
+    {
+      id: setId,
+      workout_exercise_id: workoutExerciseId,
+      reps,
+      weight,
+      to_failure: failed,
+      failed,
+      completed_at: completedAt,
+      set_index: setIndex,
+    },
+    {
+      id: setId,
+      workout_exercise_id: workoutExerciseId,
+      reps,
+      weight,
+      to_failure: failed,
+      completed_at: completedAt,
+      set_index: setIndex,
+    },
+    {
+      id: setId,
+      workout_exercise_id: workoutExerciseId,
+      reps,
+      weight,
+      to_failure: failed,
+      set_index: setIndex,
+    },
+  ]
+
+  let lastError: { message?: string; code?: string; details?: string; hint?: string } | null =
+    null
+
+  for (let i = 0; i < attempts.length; i++) {
+    const row = attempts[i]!
+    // Avoid .select().single() — RLS can hide the row and surface a false 400/406
+    const { error } = await supabase.from('sets').upsert(row, { onConflict: 'id' })
+    if (!error) return setId
+
+    lastError = error
+    logSetUpsertError(`attempt ${i + 1}/${attempts.length}`, error, row)
+
+    const retryable = isMissingColumnError(error)
+    if (!retryable && i === 0) {
+      // Non-column error on full payload — still try stripped variants once
+      continue
+    }
+    if (!retryable && i > 0) break
   }
-  const first = await supabase.from('sets').upsert(withV2, { onConflict: 'id' }).select('id').single()
 
-  if (!first.error) return (first.data as Pick<SetRow, 'id'>).id
-
-  if (isMissingColumnError(first.error)) {
-    const fallback = await supabase
-      .from('sets')
-      .upsert(
-        {
-          id: setId,
-          workout_exercise_id: workoutExerciseId,
-          ...setWritePayload(setData, false),
-        },
-        { onConflict: 'id' },
-      )
-      .select('id')
-      .single()
-    if (fallback.error) throw toServiceError(fallback.error)
-    return (fallback.data as Pick<SetRow, 'id'>).id
-  }
-
-  throw toServiceError(first.error)
+  throw toServiceError(lastError ?? new Error('Failed to save set'))
 }
 
 export async function deleteSet(setId: string): Promise<void> {
@@ -259,25 +301,22 @@ export async function addSet(
 export async function updateSet(
   setId: string,
   setData: AddSetInput,
+  workoutExerciseId?: string,
 ): Promise<void> {
-  // Update-only path kept for callers that already have a row; still safe via upsert when weid known
-  const first = await supabase
-    .from('sets')
-    .update(setWritePayload(setData, true))
-    .eq('id', setId)
-
-  if (!first.error) return
-
-  if (isMissingColumnError(first.error)) {
-    const fallback = await supabase
-      .from('sets')
-      .update(setWritePayload(setData, false))
-      .eq('id', setId)
-    if (fallback.error) throw toServiceError(fallback.error)
+  if (workoutExerciseId) {
+    await upsertSet(setId, workoutExerciseId, setData)
     return
   }
-
-  throw toServiceError(first.error)
+  const failed = Boolean(setData.failed ?? setData.to_failure)
+  const patch = {
+    reps: finiteOrNull(setData.reps),
+    weight: finiteOrNull(setData.weight),
+    to_failure: failed,
+    set_index: setData.set_index ?? 1,
+    ...(setData.completed_at !== undefined ? { completed_at: setData.completed_at } : {}),
+  }
+  const { error } = await supabase.from('sets').update(patch).eq('id', setId)
+  if (error) throw toServiceError(error)
 }
 
 type LastWorkoutExerciseWithSets = {
@@ -635,7 +674,7 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
 
   const completed = exercises.flatMap((e) => e.sets)
   const setCount = completed.length
-  const volume = Math.round(totalVolumeKg(completed))
+  const volume = Math.round(totalVolumeKg(completed) * 10) / 10
 
   return {
     label: row.workout_type || row.name || 'Workout Session',

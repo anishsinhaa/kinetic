@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { Check, Minus, Plus } from 'lucide-react'
+import { Check, Minus, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { selectOnFocus } from '../../../lib/selectOnFocus'
 import type { WorkoutSetDraft } from '../types'
@@ -13,6 +13,7 @@ type SetStepperRowProps = {
   onChange: (patch: Partial<WorkoutSetDraft>) => void
   onComplete: () => void
   onUncomplete: () => void
+  onDelete: () => void
 }
 
 function parseNum(v: string): number {
@@ -29,6 +30,7 @@ export function SetStepperRow({
   onChange,
   onComplete,
   onUncomplete,
+  onDelete,
 }: SetStepperRowProps) {
   const reduceMotion = useReducedMotion()
   const weight = parseNum(set.weight)
@@ -39,7 +41,7 @@ export function SetStepperRow({
     <motion.div
       layout
       className={cn(
-        'grid grid-cols-[2rem_1fr_1fr_3rem] gap-2 items-center px-3 py-3 border-b border-border',
+        'grid grid-cols-[2rem_1fr_1fr_2.5rem_2.5rem] gap-1.5 items-center px-2 sm:px-3 py-3 border-b border-border',
         set.completed && 'bg-primary/5',
       )}
       animate={
@@ -62,7 +64,7 @@ export function SetStepperRow({
         <button
           type="button"
           disabled={locked || set.completed}
-          className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
+          className="min-h-11 min-w-9 sm:min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() =>
             onChange({ weight: String(Math.max(0, +(weight - weightStep).toFixed(2))) })
           }
@@ -81,7 +83,7 @@ export function SetStepperRow({
         <button
           type="button"
           disabled={locked || set.completed}
-          className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
+          className="min-h-11 min-w-9 sm:min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() => onChange({ weight: String(+(weight + weightStep).toFixed(2)) })}
         >
           <Plus size={14} />
@@ -92,7 +94,7 @@ export function SetStepperRow({
         <button
           type="button"
           disabled={locked || set.completed}
-          className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
+          className="min-h-11 min-w-9 sm:min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() => onChange({ reps: String(Math.max(0, reps - 1)) })}
         >
           <Minus size={14} />
@@ -109,7 +111,7 @@ export function SetStepperRow({
         <button
           type="button"
           disabled={locked || set.completed}
-          className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
+          className="min-h-11 min-w-9 sm:min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() => onChange({ reps: String(reps + 1) })}
         >
           <Plus size={14} />
@@ -121,7 +123,7 @@ export function SetStepperRow({
         disabled={locked || (!set.completed && (set.weight === '' || set.reps === ''))}
         onClick={() => (set.completed ? onUncomplete() : onComplete())}
         className={cn(
-          'min-h-11 min-w-11 rounded-xl flex items-center justify-center border transition-colors',
+          'min-h-11 min-w-10 rounded-xl flex items-center justify-center border transition-colors',
           set.completed
             ? 'bg-primary text-black border-primary'
             : 'bg-surface-2 border-border text-text-secondary hover:border-primary hover:text-primary disabled:opacity-40',
@@ -131,8 +133,21 @@ export function SetStepperRow({
         <Check size={18} strokeWidth={3} />
       </button>
 
+      <button
+        type="button"
+        disabled={locked}
+        onClick={onDelete}
+        className="min-h-11 min-w-10 rounded-xl flex items-center justify-center border border-border bg-surface-2 text-text-muted hover:text-red-400 hover:border-red-400/50 disabled:opacity-40"
+        aria-label="Delete set"
+      >
+        <Trash2 size={15} />
+      </button>
+
       {status === 'saving' && (
-        <span className="col-span-4 text-[9px] text-text-muted">Saving…</span>
+        <span className="col-span-5 text-[9px] text-text-muted">Saving…</span>
+      )}
+      {status === 'error' && (
+        <span className="col-span-5 text-[9px] text-red-400">Save failed</span>
       )}
     </motion.div>
   )

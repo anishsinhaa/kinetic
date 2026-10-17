@@ -128,37 +128,48 @@ type RawWorkoutExerciseRow = {
     | null
 }
 
-export async function getExerciseHistory(userId: string): Promise<ExerciseHistory[]> {
-  const { data, error } = await supabase
-    .from('workout_exercises')
-    .select(`
+async function fetchExerciseHistoryRows(userId: string): Promise<RawWorkoutExerciseRow[]> {
+  // Prefer richer select; fall back quickly if columns/embeds are unavailable
+  const attempts = [
+    `
       exercise_id,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index, completed_at ),
       workouts!inner ( date, user_id, ended_at, feel, note )
-    `)
-    .eq('workouts.user_id', userId)
-    .not('workouts.ended_at', 'is', null)
-    .order('date', { ascending: false, foreignTable: 'workouts' })
+    `,
+    `
+      exercise_id,
+      exercises ( id, name, muscle_group ),
+      sets ( weight, reps, set_index ),
+      workouts!inner ( date, user_id, ended_at, feel, note )
+    `,
+    `
+      exercise_id,
+      exercises ( id, name, muscle_group ),
+      sets ( weight, reps, set_index ),
+      workouts!inner ( date, user_id, ended_at )
+    `,
+  ]
 
-  if (error) {
-    // Fallback without feel/note/completed_at for older schemas
-    const legacy = await supabase
+  let lastError: unknown = null
+  for (const select of attempts) {
+    const { data, error } = await supabase
       .from('workout_exercises')
-      .select(`
-        exercise_id,
-        exercises ( id, name, muscle_group ),
-        sets ( weight, reps, set_index ),
-        workouts!inner ( date, user_id, ended_at )
-      `)
+      .select(select)
       .eq('workouts.user_id', userId)
       .not('workouts.ended_at', 'is', null)
-      .order('date', { ascending: false, foreignTable: 'workouts' })
-    if (legacy.error) throw toServiceError(legacy.error)
-    return buildExerciseHistory((legacy.data ?? []) as unknown as RawWorkoutExerciseRow[])
+
+    if (!error) return (data ?? []) as unknown as RawWorkoutExerciseRow[]
+    lastError = error
+    console.warn('[getExerciseHistory] select failed, trying fallback', error.message)
   }
 
-  return buildExerciseHistory((data ?? []) as unknown as RawWorkoutExerciseRow[])
+  throw toServiceError(lastError)
+}
+
+export async function getExerciseHistory(userId: string): Promise<ExerciseHistory[]> {
+  const rows = await fetchExerciseHistoryRows(userId)
+  return buildExerciseHistory(rows)
 }
 
 function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] {
