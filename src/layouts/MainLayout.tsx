@@ -1,4 +1,5 @@
 import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import fullLogo from '../assets/full_logo.png'
 import { cn } from '../lib/utils'
 import {
@@ -13,6 +14,8 @@ import {
 } from 'lucide-react'
 import { logout } from '../features/auth/authService'
 import { useCurrentUser } from '../features/auth/useAuth'
+import { searchExercisesFromDb } from '../features/workout/services/exerciseService'
+import { getRecentExerciseIds } from '../features/workout/services/workoutService'
 
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, to: '/' },
@@ -25,6 +28,19 @@ const navItems = [
 export function MainLayout() {
   const navigate = useNavigate()
   const { user } = useCurrentUser()
+
+  // Prefetch exercise library + recents so Add Exercise opens instantly
+  useQuery({
+    queryKey: ['exercises', 'library', '', null],
+    queryFn: () => searchExercisesFromDb({ limit: 80 }),
+    staleTime: 5 * 60 * 1000,
+  })
+  useQuery({
+    queryKey: ['exercises', 'recent-ids', user?.id],
+    queryFn: () => getRecentExerciseIds(user!.id),
+    enabled: Boolean(user?.id),
+    staleTime: 5 * 60 * 1000,
+  })
 
   const handleLogout = async () => {
     await logout()
@@ -62,7 +78,7 @@ export function MainLayout() {
                 cn(
                   'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
                   isActive
-                    ? 'bg-surface-3 text-primary border-l-2 border-primary pl-[10px]'
+                    ? 'bg-surface-3 text-primary border-l-2 border-primary pl-2.5'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-2',
                 )
               }
@@ -80,7 +96,7 @@ export function MainLayout() {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors w-full ${
                 isActive
-                  ? 'bg-surface-3 text-primary border-l-2 border-primary pl-[10px]'
+                  ? 'bg-surface-3 text-primary border-l-2 border-primary pl-2.5'
                   : 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
               }`
             }

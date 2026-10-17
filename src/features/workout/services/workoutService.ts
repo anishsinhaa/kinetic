@@ -354,6 +354,102 @@ export async function getExercisePersonalRecord(
   }
 }
 
+/** Recent completed workout types (most recent first). */
+export async function getRecentWorkoutTypes(
+  userId: string,
+  limit = 8,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('workout_type, name, ended_at')
+    .eq('user_id', userId)
+    .not('ended_at', 'is', null)
+    .order('ended_at', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    const legacy = await supabase
+      .from('workouts')
+      .select('name, ended_at')
+      .eq('user_id', userId)
+      .not('ended_at', 'is', null)
+      .order('ended_at', { ascending: false })
+      .limit(limit)
+    if (legacy.error) throw toServiceError(legacy.error)
+    return (legacy.data ?? [])
+      .map((r) => ((r as { name: string | null }).name ?? '').trim())
+      .filter(Boolean)
+  }
+
+  return (data ?? [])
+    .map((r) => {
+      const row = r as { workout_type: string | null; name: string | null }
+      return (row.workout_type || row.name || '').trim()
+    })
+    .filter(Boolean)
+}
+
+export type DashboardStats = {
+  weightTrend: Array<{ date: string; weight: number }>
+  workoutsThisWeek: number
+  streakDays: number
+}
+
+export async function getDashboardStats(userId: string): Promise<DashboardStats> {
+  const weekAgo = new Date()
+  weekAgo.setDate(weekAgo.getDate() - 6)
+  const weekAgoStr = weekAgo.toISOString().slice(0, 10)
+
+  const [weights, workouts] = await Promise.all([
+    supabase
+      .from('daily_logs')
+      .select('date, weight')
+      .eq('user_id', userId)
+      .not('weight', 'is', null)
+      .gte('date', weekAgoStr)
+      .order('date', { ascending: true }),
+    supabase
+      .from('workouts')
+      .select('date, ended_at')
+      .eq('user_id', userId)
+      .not('ended_at', 'is', null)
+      .order('ended_at', { ascending: false })
+      .limit(60),
+  ])
+
+  if (weights.error) throw toServiceError(weights.error)
+  if (workouts.error) throw toServiceError(workouts.error)
+
+  const weightTrend = (weights.data ?? [])
+    .filter((r) => r.weight != null)
+    .map((r) => ({ date: r.date as string, weight: Number(r.weight) }))
+
+  const workoutDates = new Set(
+    (workouts.data ?? []).map((r) => r.date as string),
+  )
+  const workoutsThisWeek = [...workoutDates].filter((d) => d >= weekAgoStr).length
+
+  // Streak: consecutive calendar days with a completed workout ending today/yesterday
+  let streakDays = 0
+  const cursor = new Date()
+  for (let i = 0; i < 60; i++) {
+    const key = cursor.toISOString().slice(0, 10)
+    if (workoutDates.has(key)) {
+      streakDays += 1
+      cursor.setDate(cursor.getDate() - 1)
+      continue
+    }
+    if (i === 0) {
+      // allow missing today — start from yesterday
+      cursor.setDate(cursor.getDate() - 1)
+      continue
+    }
+    break
+  }
+
+  return { weightTrend, workoutsThisWeek, streakDays }
+}
+
 /** Exercise IDs the user has logged recently (most recent first). */
 export async function getRecentExerciseIds(
   userId: string,

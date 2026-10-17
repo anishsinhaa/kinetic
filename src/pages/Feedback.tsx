@@ -227,24 +227,26 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
   const [soreness, setSoreness] = useState<Record<string, number>>(() =>
     hasSavedLog ? sorenessToMap(existing?.soreness ?? []) : {},
   )
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(existing?.savedAt ?? null)
 
   const buildSorenessList = (): SorenessEntry[] =>
     Object.entries(soreness).map(([muscle_group, level]) => ({ muscle_group, level }))
 
   const handleSubmit = async () => {
     if (fatigue == null || sleepQuality == null) return
-    await save({
+    const result = await save({
       fatigue,
       sleepQuality,
       painFlag,
       soreness: buildSorenessList(),
     })
+    setLastSavedAt(result.savedAt)
   }
 
   const canSubmit = fatigue != null && sleepQuality != null
 
   const soreCount = Object.keys(soreness).length
-  const hasExisting = Boolean(existing)
+  const hasExisting = Boolean(existing?.id)
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
@@ -355,9 +357,12 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
           </Button>
 
           <p className="text-center text-[10px] text-text-muted uppercase tracking-widest">
-            {hasExisting
-              ? `Last saved: ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
-              : 'Estimated time: ~8s'}
+            {lastSavedAt
+              ? `Last saved: ${new Date(lastSavedAt).toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}`
+              : 'Nothing logged yet'}
           </p>
         </div>
       </div>

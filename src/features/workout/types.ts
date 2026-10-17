@@ -1,11 +1,15 @@
 import type { WorkoutExerciseTarget, WorkoutRow } from '../../lib/supabase/database.types'
 
+export type WorkoutPhase = 'idle' | 'type' | 'warmup' | 'training' | 'summary'
+
 export interface WorkoutSetDraft {
   id: string
   dbSetId?: string
   reps: string
   weight: string
   toFailure: boolean
+  completed: boolean
+  completedAt?: string | null
 }
 
 export interface WorkoutExerciseDraft {
@@ -16,6 +20,7 @@ export interface WorkoutExerciseDraft {
   muscleGroup?: string
   lastPerformance?: string
   personalRecord?: string
+  targetLabel?: string
   target?: WorkoutExerciseTarget | null
   note?: string | null
   sets: WorkoutSetDraft[]

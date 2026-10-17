@@ -12,6 +12,8 @@ type RawFeedbackRow = {
   fatigue: number | null
   sleep_quality: number | null
   pain_flag: boolean
+  created_at?: string | null
+  updated_at?: string | null
   muscle_soreness: Array<{ muscle_group: string; level: number | null }> | null
 }
 
@@ -26,17 +28,14 @@ function mapFeedbackRow(row: RawFeedbackRow): BodyFeedback {
       muscle_group: s.muscle_group,
       level: s.level ?? 1,
     })),
+    savedAt: row.updated_at ?? row.created_at ?? null,
   }
 }
-
-// ---------------------------------------------------------------------------
-// Get today's feedback (with soreness)
-// ---------------------------------------------------------------------------
 
 export async function getTodayFeedback(userId: string): Promise<BodyFeedback | null> {
   const today = todayDateString()
 
-  const { data, error } = await supabase
+  const withUpdated = await supabase
     .from('body_feedback')
     .select(`
       id,
@@ -44,30 +43,70 @@ export async function getTodayFeedback(userId: string): Promise<BodyFeedback | n
       fatigue,
       sleep_quality,
       pain_flag,
+      created_at,
+      updated_at,
       muscle_soreness ( muscle_group, level )
     `)
     .eq('user_id', userId)
     .eq('date', today)
     .maybeSingle()
 
-  if (error) throw toServiceError(error)
-  if (!data) return null
+  if (!withUpdated.error) {
+    if (!withUpdated.data) return null
+    return mapFeedbackRow(withUpdated.data as unknown as RawFeedbackRow)
+  }
 
-  return mapFeedbackRow(data as unknown as RawFeedbackRow)
+  // Pre-migration fallback (no updated_at)
+  const legacy = await supabase
+    .from('body_feedback')
+    .select(`
+      id,
+      date,
+      fatigue,
+      sleep_quality,
+      pain_flag,
+      created_at,
+      muscle_soreness ( muscle_group, level )
+    `)
+    .eq('user_id', userId)
+    .eq('date', today)
+    .maybeSingle()
+
+  if (legacy.error) throw toServiceError(legacy.error)
+  if (!legacy.data) return null
+  return mapFeedbackRow(legacy.data as unknown as RawFeedbackRow)
 }
-
-// ---------------------------------------------------------------------------
-// Upsert feedback (insert or update by user_id + date)
-// Returns the feedback row id
-// ---------------------------------------------------------------------------
 
 export async function upsertFeedback(
   userId: string,
   payload: { fatigue: number; sleepQuality: number; painFlag: boolean },
-): Promise<string> {
+): Promise<{ id: string; savedAt: string }> {
   const today = todayDateString()
+  const now = new Date().toISOString()
 
   const { data, error } = await supabase
+    .from('body_feedback')
+    .upsert(
+      {
+        user_id: userId,
+        date: today,
+        fatigue: payload.fatigue,
+        sleep_quality: payload.sleepQuality,
+        pain_flag: payload.painFlag,
+        updated_at: now,
+      },
+      { onConflict: 'user_id,date' },
+    )
+    .select('id, updated_at, created_at')
+    .single()
+
+  if (!error && data) {
+    const row = data as { id: string; updated_at?: string; created_at?: string }
+    return { id: row.id, savedAt: row.updated_at ?? row.created_at ?? now }
+  }
+
+  // Fallback without updated_at column
+  const legacy = await supabase
     .from('body_feedback')
     .upsert(
       {
@@ -79,16 +118,13 @@ export async function upsertFeedback(
       },
       { onConflict: 'user_id,date' },
     )
-    .select('id')
+    .select('id, created_at')
     .single()
 
-  if (error) throw toServiceError(error)
-  return (data as { id: string }).id
+  if (legacy.error) throw toServiceError(error ?? legacy.error)
+  const row = legacy.data as { id: string; created_at?: string }
+  return { id: row.id, savedAt: now }
 }
-
-// ---------------------------------------------------------------------------
-// Save muscle soreness — full replace strategy
-// ---------------------------------------------------------------------------
 
 export async function saveMuscleSoreness(
   feedbackId: string,
@@ -115,22 +151,14 @@ export async function saveMuscleSoreness(
   if (insertError) throw toServiceError(insertError)
 }
 
-// ---------------------------------------------------------------------------
-// Full save — upsert feedback + replace soreness (atomic from UI's perspective)
-// ---------------------------------------------------------------------------
-
 export async function saveFeedback(
   userId: string,
   payload: { fatigue: number; sleepQuality: number; painFlag: boolean; soreness: SorenessEntry[] },
-): Promise<string> {
-  const feedbackId = await upsertFeedback(userId, payload)
-  await saveMuscleSoreness(feedbackId, payload.soreness)
-  return feedbackId
+): Promise<{ id: string; savedAt: string }> {
+  const result = await upsertFeedback(userId, payload)
+  await saveMuscleSoreness(result.id, payload.soreness)
+  return result
 }
-
-// ---------------------------------------------------------------------------
-// Feedback history (last 30 days)
-// ---------------------------------------------------------------------------
 
 export async function getFeedbackHistory(userId: string): Promise<BodyFeedback[]> {
   const { data, error } = await supabase
@@ -141,6 +169,7 @@ export async function getFeedbackHistory(userId: string): Promise<BodyFeedback[]
       fatigue,
       sleep_quality,
       pain_flag,
+      created_at,
       muscle_soreness ( muscle_group, level )
     `)
     .eq('user_id', userId)

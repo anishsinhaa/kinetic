@@ -156,3 +156,16 @@ DROP POLICY IF EXISTS "push_subscriptions: owner delete" ON public.push_subscrip
 CREATE POLICY "push_subscriptions: owner delete"
   ON public.push_subscriptions FOR DELETE
   USING (auth.uid() = user_id);
+
+-- Recovery check-in last-saved timestamp
+ALTER TABLE public.body_feedback
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+UPDATE public.body_feedback
+SET updated_at = created_at
+WHERE updated_at IS NULL OR updated_at < created_at;
+
+DROP TRIGGER IF EXISTS body_feedback_updated_at ON public.body_feedback;
+CREATE TRIGGER body_feedback_updated_at
+  BEFORE UPDATE ON public.body_feedback
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

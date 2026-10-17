@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type FocusEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { motion, useReducedMotion } from 'framer-motion'
 import { Button } from '../components/ui/Button'
-import { Toggle } from '../components/ui/Toggle'
-import { Plus, Timer, Dumbbell, Loader2 } from 'lucide-react'
+import { Plus, Timer, Dumbbell, Loader2, Flame } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
@@ -14,16 +14,23 @@ import {
   getLastPerformance,
   getExercisePersonalRecord,
   updateWorkoutLabel,
+  updateWorkoutMeta,
+  updateWorkoutExercise,
   upsertSet,
+  getRecentWorkoutTypes,
 } from '../features/workout/services/workoutService'
 import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
+import { suggestNextType } from '../features/workout/lib/suggestNextType'
+import { totalVolumeKg } from '../features/workout/lib/volume'
+import { detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
-
-function selectOnFocus(e: FocusEvent<HTMLInputElement>) {
-  e.target.select()
-}
+import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
+import { SetStepperRow } from '../features/workout/components/SetStepperRow'
+import { RestTimerRing } from '../features/workout/components/RestTimerRing'
+import type { Exercise } from '../features/exercises/types'
+import type { WorkoutExerciseTarget } from '../lib/supabase/database.types'
 
 function newClientId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -32,121 +39,140 @@ function newClientId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
+function formatElapsed(ms: number) {
+  const h = String(Math.floor(ms / 3600000)).padStart(2, '0')
+  const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0')
+  const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')
+  return `${h}:${m}:${s}`
+}
+
+function targetPreview(
+  weight: number | null,
+  reps: number | null,
+  target: WorkoutExerciseTarget | null | undefined,
+  step: number,
+): string {
+  if (weight == null || reps == null) return '—'
+  if (!target || target === 'maintain') return `${weight}x${reps}`
+  if (target === 'increase_weight') return `${+(weight + step).toFixed(2)}x${reps}`
+  return `${weight}x${reps + 1}`
+}
+
 export default function Workout() {
   const { user } = useCurrentUser()
   const userId = user!.id
-
   const today = new Date().toISOString().slice(0, 10)
-
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const reduceMotion = useReducedMotion()
+
   const isRepeatMode = searchParams.get('repeat') === '1'
   const autoStart = searchParams.get('start') === '1'
+  const preselectedType = searchParams.get('type')
 
+  const store = useWorkoutStore()
   const {
+    phase,
     currentWorkoutId,
     workoutStartedAt,
     workoutLabel,
     workoutTypes,
+    suggestedType,
     exercises,
-    startWorkout,
-    setWorkoutLabel,
-    setWorkoutTypes,
-    addWorkoutType,
-    addSet,
-    updateSet,
-    finishWorkout,
-    addExercise,
-  } = useWorkoutStore()
+    warmupStartedAt,
+    warmupEndedAt,
+    warmupNote,
+    restEndsAt,
+    restTotalSeconds,
+    weightStep,
+    feel,
+    note,
+    summarySnapshot,
+  } = store
 
-  const [isFinishing, setIsFinishing] = useState(false)
-  const [showTypeSetup, setShowTypeSetup] = useState(false)
-  const [selectedType, setSelectedType] = useState('')
-  const [saveError, setSaveError] = useState('')
-  const [typeError, setTypeError] = useState('')
-  const [tick, setTick] = useState(Date.now())
-  // False only while an optimistic create is still in flight
   const [dbReady, setDbReady] = useState(true)
-  const [setStatusMap, setSetStatusMap] = useState<
-    Record<string, 'idle' | 'saving' | 'saved' | 'error'>
-  >({})
-
-  const justAddedSetIdRef = useRef<string | null>(null)
+  const [saveError, setSaveError] = useState('')
+  const [tick, setTick] = useState(Date.now())
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [confirmFinish, setConfirmFinish] = useState(false)
+  const [isFinishing, setIsFinishing] = useState(false)
+  const [setStatusMap, setSetStatusMap] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
   const startingRef = useRef(false)
 
   const persistQueueRef = useRef(
     createSetPersistQueue(async (payload) => {
-      const statusKey = payload.setId
-      setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'saving' }))
+      setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saving' }))
       try {
-        // Always re-read store so weight→reps edits never overwrite with stale values
         const fresh = useWorkoutStore
           .getState()
           .exercises.flatMap((e) => e.sets.map((s) => ({ exercise: e, set: s })))
           .find(({ set }) => set.id === payload.setId)
-
         const setItem = fresh?.set
-        const workoutExerciseId =
-          fresh?.exercise.dbWorkoutExerciseId ?? payload.workoutExerciseId
-        if (!setItem || !workoutExerciseId) return
+        const weId = fresh?.exercise.dbWorkoutExerciseId ?? payload.workoutExerciseId
+        if (!setItem || !weId) return
 
-        await upsertSet(payload.setId, workoutExerciseId, {
+        await upsertSet(payload.setId, weId, {
           reps: setItem.reps === '' ? null : parseInt(setItem.reps, 10),
           weight: setItem.weight === '' ? null : parseFloat(setItem.weight),
           to_failure: setItem.toFailure,
           set_index: payload.setIndex,
+          completed_at: setItem.completedAt ?? (setItem.completed ? new Date().toISOString() : null),
         })
-        updateSet(fresh.exercise.id, payload.setId, { dbSetId: payload.setId })
+        store.updateSet(fresh.exercise.id, payload.setId, { dbSetId: payload.setId })
         setSaveError('')
-        setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'saved' }))
+        setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
       } catch (err) {
         setSaveError((err as Error).message)
-        setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'error' }))
+        setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'error' }))
         throw err
       }
     }, 300),
   )
-
-  const canEdit = Boolean(currentWorkoutId) && dbReady
 
   const latestWorkoutQuery = useQuery({
     queryKey: ['workout', 'latest-completed', userId],
     queryFn: () => getLatestCompletedWorkout(userId),
   })
 
-  // Seed / refresh type chips from user_settings (defaults when empty)
+  const recentTypesQuery = useQuery({
+    queryKey: ['workout', 'recent-types', userId],
+    queryFn: () => getRecentWorkoutTypes(userId),
+  })
+
   useEffect(() => {
-    let cancelled = false
     void getUserSettings(userId)
-      .then((settings) => {
-        if (cancelled) return
-        setWorkoutTypes(resolveWorkoutTypes(settings.workoutTypes))
+      .then((s) => {
+        store.setWorkoutTypes(resolveWorkoutTypes(s.workoutTypes))
+        store.setPrefs({
+          weightStep: s.weightStep,
+          restDefaultSeconds: s.restTimerSeconds,
+        })
       })
-      .catch(() => {
-        if (cancelled) return
-        setWorkoutTypes(resolveWorkoutTypes(null))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [userId, setWorkoutTypes])
-
-  // Ensure persisted store always expands to full defaults on mount
-  useEffect(() => {
-    setWorkoutTypes(resolveWorkoutTypes(useWorkoutStore.getState().workoutTypes))
-  }, [setWorkoutTypes])
+      .catch(() => store.setWorkoutTypes(resolveWorkoutTypes(null)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount seed only
+  }, [userId])
 
   useEffect(() => {
-    if (!currentWorkoutId && (autoStart || isRepeatMode)) {
-      setShowTypeSetup(true)
-    }
-  }, [autoStart, isRepeatMode, currentWorkoutId])
+    const next = suggestNextType(recentTypesQuery.data ?? [], resolveWorkoutTypes(workoutTypes))
+    if (next) store.setSuggestedType(next)
+  }, [recentTypesQuery.data, workoutTypes, store])
 
   useEffect(() => {
-    if (isRepeatMode && !currentWorkoutId && latestWorkoutQuery.data) {
-      setSelectedType(latestWorkoutQuery.data.label)
+    if (!currentWorkoutId && (autoStart || isRepeatMode || preselectedType)) {
+      store.setPhase('type')
+      if (preselectedType) store.setSuggestedType(preselectedType)
+      else if (isRepeatMode && latestWorkoutQuery.data) {
+        store.setSuggestedType(latestWorkoutQuery.data.label)
+      }
     }
-  }, [isRepeatMode, currentWorkoutId, latestWorkoutQuery.data])
+  }, [autoStart, isRepeatMode, preselectedType, currentWorkoutId, latestWorkoutQuery.data, store])
+
+  // Resume: if persisted mid-session, jump to training/warmup
+  useEffect(() => {
+    if (currentWorkoutId && phase === 'idle') {
+      store.setPhase(warmupEndedAt || !warmupStartedAt ? 'training' : 'warmup')
+    }
+  }, [currentWorkoutId, phase, warmupEndedAt, warmupStartedAt, store])
 
   useEffect(() => {
     if (!currentWorkoutId || !workoutStartedAt) return
@@ -154,23 +180,18 @@ export default function Workout() {
     return () => clearInterval(t)
   }, [currentWorkoutId, workoutStartedAt])
 
-  const startedTimeLabel = useMemo(() => {
-    if (!workoutStartedAt) return '--:--'
-    return new Date(workoutStartedAt).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
-  }, [workoutStartedAt])
+  const elapsedMs = workoutStartedAt
+    ? Math.max(0, tick - new Date(workoutStartedAt).getTime())
+    : 0
 
-  const elapsedLabel = useMemo(() => {
-    if (!workoutStartedAt) return '00:00:00'
-    const diff = Math.max(0, tick - new Date(workoutStartedAt).getTime())
-    const h = String(Math.floor(diff / 3600000)).padStart(2, '0')
-    const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0')
-    const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0')
-    return `${h}:${m}:${s}`
-  }, [tick, workoutStartedAt])
+  const warmupElapsedMs = useMemo(() => {
+    if (!warmupStartedAt) return 0
+    const end = warmupEndedAt ? new Date(warmupEndedAt).getTime() : tick
+    return Math.max(0, end - new Date(warmupStartedAt).getTime())
+  }, [warmupStartedAt, warmupEndedAt, tick])
+
+  const typeChips = resolveWorkoutTypes(workoutTypes)
+  const canEdit = Boolean(currentWorkoutId) && dbReady && phase === 'training'
 
   const queuePersist = (
     exerciseLocalId: string,
@@ -182,7 +203,6 @@ export default function Workout() {
     const exercise = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
     const setItem = exercise?.sets.find((s) => s.id === setLocalId)
     if (!setItem) return
-
     persistQueueRef.current.schedule({
       setId: setLocalId,
       workoutExerciseId: dbWorkoutExerciseId,
@@ -193,34 +213,20 @@ export default function Workout() {
     })
   }
 
-  // ── Start / Finish ─────────────────────────────────────────────────────────
-
   const beginWorkoutWithType = (typeLabel: string) => {
     if (currentWorkoutId || startingRef.current) return
-
     const normalizedType = typeLabel.trim()
-    if (!normalizedType) {
-      setTypeError('Pick a workout type to begin.')
-      return
-    }
+    if (!normalizedType) return
 
     startingRef.current = true
-    setTypeError('')
-    setSelectedType(normalizedType)
-    addWorkoutType(normalizedType)
-    setSaveError('')
+    store.addWorkoutType(normalizedType)
     setDbReady(false)
+    setSaveError('')
 
-    // Optimistic: enter the session immediately, create the row in the background
     const workoutId = newClientId()
     const startedAt = new Date().toISOString()
-    startWorkout(workoutId, today, startedAt, normalizedType)
-    setWorkoutLabel(normalizedType)
-    setShowTypeSetup(false)
-
-    if (autoStart || isRepeatMode) {
-      setSearchParams({}, { replace: true })
-    }
+    store.startWorkout(workoutId, today, startedAt, normalizedType)
+    setSearchParams({}, { replace: true })
 
     void (async () => {
       try {
@@ -230,349 +236,543 @@ export default function Workout() {
         if (isRepeatMode && latestWorkoutQuery.data?.exercises?.length) {
           for (const ex of latestWorkoutQuery.data.exercises) {
             try {
-              const dbWeId = await addExerciseToWorkout(workoutId, ex.exerciseId, ex.orderIndex)
-              const lastSets = await getLastPerformance(userId, ex.exerciseId)
-              const lastPerformance =
-                lastSets.length > 0
-                  ? `Last: ${lastSets
-                      .map((s) => `${s.weight ?? '-'}kg x ${s.reps ?? '-'}`)
-                      .join(' • ')}`
-                  : 'No previous performance'
-              const pr = await getExercisePersonalRecord(userId, ex.exerciseId)
-              const personalRecord = pr
-                ? `PR: ${pr.weight ?? '-'}kg x ${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
-                : 'No PR yet'
-              addExercise({
-                exerciseId: ex.exerciseId,
+              await addExerciseFromLibrary({
+                id: ex.exerciseId,
                 name: ex.name,
                 muscleGroup: ex.muscleGroup,
-                dbWorkoutExerciseId: dbWeId,
-                lastPerformance,
-                personalRecord,
-              })
+              } as Exercise)
             } catch {
-              // Non-fatal
+              // skip
             }
           }
-          navigate('/workout', { replace: true })
         }
       } catch (err) {
         setSaveError((err as Error).message)
-        setDbReady(false)
       } finally {
         startingRef.current = false
       }
     })()
   }
 
-  const handleStartWorkout = () => {
-    if (currentWorkoutId) return
-    setShowTypeSetup(true)
-    setTypeError('')
+  const addExerciseFromLibrary = async (exercise: Exercise) => {
+    if (!currentWorkoutId) return
+    const orderIndex = useWorkoutStore.getState().exercises.length
+    const dbWeId = await addExerciseToWorkout(currentWorkoutId, exercise.id, orderIndex)
+    const lastSets = await getLastPerformance(userId, exercise.id)
+    const pr = await getExercisePersonalRecord(userId, exercise.id)
+    const lastPerformance =
+      lastSets.length > 0
+        ? `Last: ${lastSets.map((s) => `${s.weight ?? '-'}x${s.reps ?? '-'}`).join(' · ')}`
+        : 'No previous performance'
+    const personalRecord = pr
+      ? `PR: ${pr.weight ?? '-'}x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
+      : 'No PR yet'
+    const last = lastSets[0]
+    const targetLabel = last
+      ? `Target: ${targetPreview(last.weight, last.reps, 'maintain', weightStep)}`
+      : undefined
+
+    store.addExercise({
+      exerciseId: exercise.id,
+      name: exercise.name,
+      muscleGroup: exercise.muscleGroup,
+      dbWorkoutExerciseId: dbWeId,
+      lastPerformance,
+      personalRecord,
+      targetLabel,
+      target: 'maintain',
+      initialSets:
+        lastSets.length > 0
+          ? lastSets.map((s) => ({
+              weight: s.weight != null ? String(s.weight) : '',
+              reps: s.reps != null ? String(s.reps) : '',
+            }))
+          : [{ weight: '', reps: '' }],
+    })
+
+    // Persist prefilled sets
+    const added = useWorkoutStore.getState().exercises.find((e) => e.exerciseId === exercise.id)
+    if (added) {
+      for (let i = 0; i < added.sets.length; i++) {
+        queuePersist(added.id, added.sets[i].id, dbWeId, i)
+      }
+      await persistQueueRef.current.flushAll()
+    }
   }
 
-  const handleFinishWorkout = async () => {
-    if (!currentWorkoutId) return
+  const handlePickExercise = async (exercise: Exercise) => {
+    setPickerOpen(false)
     try {
-      setIsFinishing(true)
+      await addExerciseFromLibrary(exercise)
+    } catch (err) {
+      setSaveError((err as Error).message)
+    }
+  }
+
+  const handleCompleteSet = async (exerciseLocalId: string, setLocalId: string, index: number) => {
+    const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
+    store.completeSet(exerciseLocalId, setLocalId)
+    queuePersist(exerciseLocalId, setLocalId, ex?.dbWorkoutExerciseId, index)
+    await persistQueueRef.current.flush(setLocalId)
+  }
+
+  const handleFinishConfirm = async () => {
+    if (!currentWorkoutId) return
+    setIsFinishing(true)
+    try {
       await persistQueueRef.current.flushAll()
-      await finishWorkoutDb(currentWorkoutId)
-      finishWorkout()
-      setShowTypeSetup(false)
-      setSelectedType('')
-      setSaveError('')
-      setTypeError('')
+
+      const state = useWorkoutStore.getState()
+      const allSets = state.exercises.flatMap((e) =>
+        e.sets.map((s) => ({
+          exerciseId: e.exerciseId,
+          exerciseName: e.name,
+          weight: s.weight === '' ? null : parseFloat(s.weight),
+          reps: s.reps === '' ? null : parseInt(s.reps, 10),
+          completed: s.completed,
+        })),
+      )
+      const completedSets = allSets.filter((s) => s.completed || (s.weight != null && s.reps != null))
+      const volume = Math.round(totalVolumeKg(completedSets))
+
+      const prevPrs: Record<string, { weight: number; reps: number } | null> = {}
+      for (const ex of state.exercises) {
+        const pr = await getExercisePersonalRecord(userId, ex.exerciseId)
+        prevPrs[ex.exerciseId] =
+          pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
+      }
+      const hits = detectPrHits(completedSets, prevPrs)
+
+      const warmupSec = state.warmupStartedAt
+        ? Math.round(
+            ((state.warmupEndedAt
+              ? new Date(state.warmupEndedAt).getTime()
+              : Date.now()) -
+              new Date(state.warmupStartedAt).getTime()) /
+              1000,
+          )
+        : 0
+
+      store.setSummarySnapshot({
+        durationSec: Math.round(elapsedMs / 1000),
+        warmupSec: Math.max(0, warmupSec),
+        volumeKg: volume,
+        setCount: completedSets.length,
+        prLabels: hits.map((h) => `${h.exerciseName} ${h.weight}x${h.reps}`),
+      })
+
+      await finishWorkoutDb(currentWorkoutId, {
+        feel: state.feel,
+        note: state.note.trim() || null,
+      })
+      await updateWorkoutMeta(currentWorkoutId, {
+        warmup_started_at: state.warmupStartedAt,
+        warmup_ended_at: state.warmupEndedAt,
+        warmup_note: state.warmupNote.trim() || null,
+        feel: state.feel,
+        note: state.note.trim() || null,
+      })
+
+      store.setPhase('summary')
+      setConfirmFinish(false)
       await latestWorkoutQuery.refetch()
+    } catch (err) {
+      setSaveError((err as Error).message)
     } finally {
       setIsFinishing(false)
     }
   }
 
-  // ── Set management ─────────────────────────────────────────────────────────
+  // ── Idle / type picker ─────────────────────────────────────────────────────
+  if (!currentWorkoutId || phase === 'type' || phase === 'idle') {
+    const showType = phase === 'type' || autoStart || isRepeatMode || Boolean(preselectedType)
+    return (
+      <div className="p-4 md:p-8 pb-28">
+        <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Workout</p>
+        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary mb-4">
+          {showType ? 'Pick a type' : 'Ready'}
+        </h1>
+        {saveError && <p className="text-xs text-red-400 mb-3">{saveError}</p>}
 
-  const handleAddSet = async (exerciseLocalId: string, dbWorkoutExerciseId?: string) => {
-    // Flush prior set writes so copied prefill never races with the previous row
-    await persistQueueRef.current.flushAll()
-
-    const newSet = addSet(exerciseLocalId)
-    if (!newSet || !dbWorkoutExerciseId) return
-
-    justAddedSetIdRef.current = newSet.id
-    // Do NOT upsert immediately — prefilled reps/weight are UI hints only.
-    // First save happens on edit (debounced) or blur.
-  }
-
-  const title = useMemo(() => {
-    if (!currentWorkoutId) return 'Workout'
-    return workoutLabel.trim() || 'Current Workout'
-  }, [currentWorkoutId, workoutLabel])
-
-  const headerLabel = currentWorkoutId ? 'Session Active' : 'Ready to Train'
-  const typeChips = resolveWorkoutTypes(workoutTypes)
-
-  return (
-    <div className="pb-28">
-      <div className="px-4 md:px-8 pt-5 md:pt-8 pb-4 md:pb-6 border-b border-border">
-        <p className="text-[10px] text-primary uppercase tracking-widest mb-1">{headerLabel}</p>
-        <div className="flex items-end justify-between">
-          <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary">{title}</h1>
-        </div>
-
-        {currentWorkoutId && (
-          <p className="text-text-secondary text-sm mt-1 flex items-center gap-1">
-            <Timer size={12} />
-            Started {startedTimeLabel} • Duration: {elapsedLabel}
-          </p>
-        )}
-
-        {currentWorkoutId && (
-          <div className="mt-3">
-            <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-1.5">
-              Workout Type
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {typeChips.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  disabled={!canEdit}
-                  onClick={() => {
-                    setWorkoutLabel(type)
-                    void updateWorkoutLabel(currentWorkoutId, type)
-                  }}
-                  className={cn(
-                    'px-3 py-1.5 rounded-xl text-xs font-semibold uppercase tracking-wider border transition-colors min-h-11',
-                    workoutLabel === type
-                      ? 'bg-primary text-black border-primary'
-                      : 'border-border text-text-secondary hover:border-text-secondary hover:text-text-primary',
-                  )}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
+        {showType ? (
+          <div className="flex flex-wrap gap-2">
+            {typeChips.map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => beginWorkoutWithType(type)}
+                className={cn(
+                  'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
+                  (suggestedType === type || preselectedType === type)
+                    ? 'bg-primary text-black border-primary'
+                    : 'border-border text-text-secondary hover:border-primary',
+                )}
+              >
+                {type}
+              </button>
+            ))}
           </div>
-        )}
-
-        {!currentWorkoutId && showTypeSetup && (
-          <div className="mt-4 space-y-3">
-            <div className="w-full">
-              <label className="block text-[10px] text-text-secondary uppercase tracking-widest mb-2">
-                Workout Type {isRepeatMode && <span className="text-primary">(repeating last)</span>}
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {typeChips.map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => beginWorkoutWithType(type)}
-                    className={cn(
-                      'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border transition-colors min-h-11',
-                      selectedType === type
-                        ? 'bg-primary text-black border-primary'
-                        : 'border-border text-text-secondary hover:border-primary hover:text-primary',
-                    )}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-text-muted">Tap a type to start — no extra Begin step.</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={() => {
-                setShowTypeSetup(false)
-                setSelectedType('')
-                setTypeError('')
-                if (autoStart || isRepeatMode) {
-                  setSearchParams({}, { replace: true })
-                }
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        )}
-
-        {typeError && <p className="mt-2 text-xs text-red-400">{typeError}</p>}
-        {saveError && <p className="mt-2 text-xs text-red-400">{saveError}</p>}
-
-        {!currentWorkoutId && latestWorkoutQuery.data && (
-          <div className="mt-3 rounded-xl border border-border bg-surface-2/60 px-3 py-2">
-            <p className="text-xs text-text-secondary">
-              Last workout:{' '}
-              <span className="text-text-primary">{latestWorkoutQuery.data.label}</span>{' '}
-              • {latestWorkoutQuery.data.date} • {latestWorkoutQuery.data.durationText}
-            </p>
-            <p className="mt-1 text-xs text-text-secondary">
-              {latestWorkoutQuery.data.exerciseCount} exercises •{' '}
-              {latestWorkoutQuery.data.setCount} sets •{' '}
-              {latestWorkoutQuery.data.totalVolumeKg} kg total volume
-            </p>
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 md:px-8 pt-5 md:pt-6 space-y-4 md:space-y-5">
-        {exercises.map((ex) => (
-          <div key={ex.id} className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <div>
-                <h3 className="font-semibold text-text-primary">{ex.name}</h3>
-                <p className="text-text-secondary text-xs mt-0.5">
-                  {ex.lastPerformance ?? 'No previous performance'}
-                </p>
-                <p className="text-[11px] text-primary mt-1">
-                  {ex.personalRecord ?? 'No PR yet'}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-4 px-5 py-2 border-b border-border">
-              {['Set', 'Weight (kg)', 'Reps', 'Fail'].map((h) => (
-                <span
-                  key={h}
-                  className="text-[10px] text-text-secondary uppercase tracking-widest font-medium"
-                >
-                  {h}
-                </span>
-              ))}
-            </div>
-
-            {ex.sets.map((set, idx) => {
-              const status = setStatusMap[set.id]
-              return (
-                <div
-                  key={set.id}
-                  className={cn(
-                    'grid grid-cols-4 items-center px-5 py-3',
-                    set.toFailure ? 'border-l-2 border-primary' : '',
-                    idx < ex.sets.length - 1 ? 'border-b border-border' : '',
-                  )}
-                >
-                  <div className="flex flex-col gap-0.5">
-                    <span
-                      className={cn(
-                        'text-sm font-bold',
-                        set.toFailure ? 'text-primary' : 'text-text-secondary',
-                      )}
-                    >
-                      {idx + 1}
-                    </span>
-                    {status === 'saving' && (
-                      <span className="text-[9px] text-text-muted flex items-center gap-0.5">
-                        <Loader2 size={8} className="animate-spin" />
-                      </span>
-                    )}
-                    {status === 'saved' && <span className="text-[9px] text-primary">✓</span>}
-                    {status === 'error' && <span className="text-[9px] text-red-400">!</span>}
-                  </div>
-
-                  <input
-                    ref={(el) => {
-                      if (el && set.id === justAddedSetIdRef.current) {
-                        el.focus()
-                        el.select()
-                        justAddedSetIdRef.current = null
-                      }
-                    }}
-                    type="number"
-                    inputMode="decimal"
-                    value={set.weight}
-                    disabled={!canEdit}
-                    onFocus={selectOnFocus}
-                    onChange={(e) => {
-                      updateSet(ex.id, set.id, { weight: e.target.value })
-                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
-                    }}
-                    onBlur={() => {
-                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
-                      void persistQueueRef.current.flush(set.id)
-                    }}
-                    className="w-full max-w-20 bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
-                  />
-
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={set.reps}
-                    disabled={!canEdit}
-                    onFocus={selectOnFocus}
-                    onChange={(e) => {
-                      updateSet(ex.id, set.id, { reps: e.target.value })
-                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
-                    }}
-                    onBlur={() => {
-                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
-                      void persistQueueRef.current.flush(set.id)
-                    }}
-                    className="w-full max-w-20 bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
-                  />
-
-                  <Toggle
-                    checked={set.toFailure}
-                    onChange={(v) => {
-                      updateSet(ex.id, set.id, { toFailure: v })
-                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
-                      void persistQueueRef.current.flush(set.id)
-                    }}
-                  />
-                </div>
-              )
-            })}
-
-            <button
-              disabled={!canEdit}
-              onClick={() => void handleAddSet(ex.id, ex.dbWorkoutExerciseId)}
-              className="w-full py-3 text-xs text-text-secondary hover:text-primary transition-colors flex items-center justify-center gap-1.5 border-t border-border hover:bg-surface-2 disabled:opacity-40"
-            >
-              <Plus size={12} />
-              Add Set
-            </button>
-          </div>
-        ))}
-
-        <button
-          disabled={!canEdit}
-          onClick={() => navigate('/exercises?select=1')}
-          className="w-full py-8 border border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-primary hover:border-primary transition-colors group disabled:opacity-40"
-        >
-          <div className="w-8 h-8 rounded-full border border-current flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-            <Plus size={16} />
-          </div>
-          <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
-        </button>
-      </div>
-
-      <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 md:px-8 py-3 md:py-4 flex items-center justify-center">
-        {currentWorkoutId ? (
-          <Button
-            variant="primary"
-            size="lg"
-            className="w-64"
-            disabled={isFinishing}
-            onClick={() => void handleFinishWorkout()}
-          >
-            {isFinishing ? (
-              <Loader2 size={14} className="mr-2 animate-spin" />
-            ) : (
-              <Dumbbell size={14} className="mr-2" />
-            )}
-            Finish Workout
-          </Button>
-        ) : showTypeSetup ? (
-          <p className="text-sm text-text-secondary uppercase tracking-widest">
-            Pick a type above
-          </p>
         ) : (
-          <Button variant="secondary" size="lg" className="w-64" onClick={handleStartWorkout}>
+          <Button variant="primary" size="lg" onClick={() => store.setPhase('type')}>
             <Dumbbell size={14} className="mr-2" />
             Start Workout
           </Button>
         )}
       </div>
+    )
+  }
+
+  // ── Summary ────────────────────────────────────────────────────────────────
+  if (phase === 'summary' && summarySnapshot) {
+    return (
+      <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
+        <motion.div
+          initial={reduceMotion ? false : { opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Session complete</p>
+          <h1 className="text-3xl font-black text-text-primary mb-6">{workoutLabel || 'Workout'}</h1>
+
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            {[
+              ['Duration', formatElapsed(summarySnapshot.durationSec * 1000)],
+              ['Warmup', formatElapsed(summarySnapshot.warmupSec * 1000)],
+              ['Volume', `${summarySnapshot.volumeKg} kg`],
+              ['Sets', String(summarySnapshot.setCount)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-border bg-surface p-4">
+                <p className="text-[10px] text-text-muted uppercase tracking-widest">{label}</p>
+                <p className="text-xl font-black text-text-primary mt-1">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {summarySnapshot.prLabels.length > 0 && (
+            <motion.div
+              className="rounded-xl border border-primary/40 bg-primary/10 p-4 mb-6"
+              initial={reduceMotion ? false : { scale: 0.95 }}
+              animate={{ scale: 1 }}
+            >
+              <p className="text-sm font-bold text-primary flex items-center gap-2 mb-2">
+                <Flame size={16} /> PRs hit
+              </p>
+              <ul className="space-y-1">
+                {summarySnapshot.prLabels.map((p) => (
+                  <li key={p} className="text-sm text-text-primary">
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          )}
+
+          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
+            How did it feel? (optional)
+          </p>
+          <div className="flex gap-2 mb-4">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => store.setFeel(n)}
+                className={cn(
+                  'flex-1 min-h-11 rounded-xl border text-sm font-bold',
+                  feel === n
+                    ? 'bg-primary text-black border-primary'
+                    : 'border-border text-text-secondary',
+                )}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={note}
+            onChange={(e) => store.setNote(e.target.value)}
+            placeholder="Session note…"
+            rows={3}
+            className="w-full mb-6 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
+          />
+
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full"
+            onClick={() => {
+              if (currentWorkoutId) {
+                void updateWorkoutMeta(currentWorkoutId, {
+                  feel,
+                  note: note.trim() || null,
+                })
+              }
+              store.finishWorkout()
+              navigate('/')
+            }}
+          >
+            Done
+          </Button>
+        </motion.div>
+      </div>
+    )
+  }
+
+  // ── Warmup ─────────────────────────────────────────────────────────────────
+  if (phase === 'warmup') {
+    return (
+      <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
+        <p className="text-[10px] text-primary uppercase tracking-widest mb-1">{workoutLabel}</p>
+        <h1 className="text-3xl font-black text-text-primary mb-2">Warmup</h1>
+        <p className="text-text-secondary text-sm mb-6">Optional — skip anytime.</p>
+
+        <div className="rounded-2xl border border-border bg-surface p-8 text-center mb-4">
+          <p className="text-[10px] text-text-muted uppercase tracking-widest mb-2 flex items-center justify-center gap-1">
+            <Timer size={12} /> Warmup clock
+          </p>
+          <p className="text-5xl font-black tabular-nums text-text-primary">
+            {formatElapsed(warmupElapsedMs)}
+          </p>
+        </div>
+
+        <textarea
+          value={warmupNote}
+          onChange={(e) => store.setWarmupNote(e.target.value)}
+          placeholder="Warmup note (optional)"
+          rows={2}
+          className="w-full mb-4 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
+        />
+
+        <div className="flex flex-col gap-2">
+          {!warmupStartedAt ? (
+            <Button variant="primary" size="lg" onClick={() => store.startWarmup()}>
+              Start Warmup
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={() => {
+                store.endWarmup()
+                if (currentWorkoutId) {
+                  void updateWorkoutMeta(currentWorkoutId, {
+                    warmup_started_at: useWorkoutStore.getState().warmupStartedAt,
+                    warmup_ended_at: new Date().toISOString(),
+                    warmup_note: warmupNote.trim() || null,
+                  })
+                }
+              }}
+            >
+              End Warmup
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={() => {
+              store.skipWarmup()
+              if (currentWorkoutId) {
+                void updateWorkoutMeta(currentWorkoutId, {
+                  warmup_started_at: null,
+                  warmup_ended_at: null,
+                  warmup_note: warmupNote.trim() || null,
+                })
+              }
+            }}
+          >
+            Skip
+          </Button>
+        </div>
+        {saveError && <p className="text-xs text-red-400 mt-3">{saveError}</p>}
+      </div>
+    )
+  }
+
+  // ── Training ───────────────────────────────────────────────────────────────
+  return (
+    <div className="pb-36">
+      <div className="px-4 md:px-8 pt-5 md:pt-8 pb-4 border-b border-border sticky top-0 bg-background/95 backdrop-blur z-20">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Session</p>
+            <h1 className="text-2xl md:text-4xl font-black uppercase text-text-primary">
+              {workoutLabel || 'Workout'}
+            </h1>
+            <p className="text-text-secondary text-sm mt-1 flex items-center gap-1 tabular-nums">
+              <Timer size={12} />
+              {formatElapsed(elapsedMs)}
+              {!dbReady && (
+                <span className="ml-2 text-text-muted flex items-center gap-1">
+                  <Loader2 size={10} className="animate-spin" /> syncing
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mt-3">
+          {typeChips.map((type) => (
+            <button
+              key={type}
+              type="button"
+              disabled={!canEdit}
+              onClick={() => {
+                store.setWorkoutLabel(type)
+                if (currentWorkoutId) void updateWorkoutLabel(currentWorkoutId, type)
+              }}
+              className={cn(
+                'px-2.5 py-1.5 rounded-xl text-[10px] font-semibold uppercase tracking-wider border min-h-11',
+                workoutLabel === type
+                  ? 'bg-primary text-black border-primary'
+                  : 'border-border text-text-secondary',
+              )}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+        {saveError && <p className="text-xs text-red-400 mt-2">{saveError}</p>}
+      </div>
+
+      <div className="px-4 md:px-8 pt-4 space-y-4">
+        {exercises.map((ex) => (
+          <div key={ex.id} className="rounded-xl border border-border bg-surface overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <h3 className="font-semibold text-text-primary">{ex.name}</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                {ex.lastPerformance ?? 'No previous'}
+                {ex.targetLabel ? ` · ${ex.targetLabel}` : ''}
+              </p>
+              <p className="text-[11px] text-primary mt-0.5">{ex.personalRecord ?? 'No PR yet'}</p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(
+                  [
+                    ['maintain', 'Maintain'],
+                    ['increase_weight', '+ Weight'],
+                    ['increase_reps', '+ Reps'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={!canEdit}
+                    onClick={() => {
+                      store.updateExerciseMeta(ex.id, { target: value })
+                      if (ex.dbWorkoutExerciseId) {
+                        void updateWorkoutExercise(ex.dbWorkoutExerciseId, { target: value })
+                      }
+                      const last = ex.sets[0]
+                      const w = last?.weight ? parseFloat(last.weight) : null
+                      const r = last?.reps ? parseInt(last.reps, 10) : null
+                      store.updateExerciseMeta(ex.id, {
+                        targetLabel: `Target: ${targetPreview(w, r, value, weightStep)}`,
+                      })
+                    }}
+                    className={cn(
+                      'px-2 py-1 rounded-lg text-[10px] uppercase tracking-wider border',
+                      ex.target === value
+                        ? 'border-primary text-primary'
+                        : 'border-border text-text-muted',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-[2rem_1fr_1fr_3rem] gap-2 px-3 py-2 text-[10px] text-text-muted uppercase tracking-widest border-b border-border">
+              <span>Set</span>
+              <span className="text-center">Weight</span>
+              <span className="text-center">Reps</span>
+              <span />
+            </div>
+
+            {ex.sets.map((set, idx) => (
+              <SetStepperRow
+                key={set.id}
+                index={idx}
+                set={set}
+                weightStep={weightStep}
+                disabled={!canEdit}
+                status={setStatusMap[set.id]}
+                onChange={(patch) => {
+                  store.updateSet(ex.id, set.id, patch)
+                  queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                }}
+                onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
+              />
+            ))}
+
+            <button
+              type="button"
+              disabled={!canEdit}
+              onClick={() => {
+                void persistQueueRef.current.flushAll().then(() => {
+                  store.addSet(ex.id)
+                })
+              }}
+              className="w-full py-3 text-xs text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
+            >
+              <Plus size={12} /> Add set
+            </button>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          disabled={!canEdit}
+          onClick={() => setPickerOpen(true)}
+          className="w-full py-8 border border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-primary hover:border-primary disabled:opacity-40"
+        >
+          <Plus size={16} />
+          <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
+        </button>
+      </div>
+
+      <RestTimerRing
+        endsAt={restEndsAt}
+        totalSeconds={restTotalSeconds}
+        onSkip={() => store.clearRest()}
+        onAdjust={(d) => store.adjustRest(d)}
+        onComplete={() => store.clearRest()}
+      />
+
+      <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-3 z-30">
+        {confirmFinish ? (
+          <div className="flex gap-2 max-w-md mx-auto">
+            <Button variant="ghost" size="md" className="flex-1" onClick={() => setConfirmFinish(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              className="flex-1"
+              disabled={isFinishing}
+              onClick={() => void handleFinishConfirm()}
+            >
+              {isFinishing ? <Loader2 size={14} className="animate-spin" /> : 'Confirm finish'}
+            </Button>
+          </div>
+        ) : (
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full max-w-md mx-auto"
+            disabled={!canEdit}
+            onClick={() => setConfirmFinish(true)}
+          >
+            Finish Workout
+          </Button>
+        )}
+      </div>
+
+      <ExercisePickerSheet
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        userId={userId}
+        workoutType={workoutLabel}
+        excludeExerciseIds={exercises.map((e) => e.exerciseId)}
+        onPick={(ex) => void handlePickExercise(ex)}
+      />
     </div>
   )
 }

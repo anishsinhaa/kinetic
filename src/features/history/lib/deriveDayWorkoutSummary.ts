@@ -8,7 +8,10 @@ export type DayWorkoutInput = {
 
 export type DayWorkoutSummary = {
   typeLabel: string | null
+  /** Rounded total minutes (display). */
   durationMins: number
+  /** Exact total milliseconds before rounding. */
+  durationMs: number
   count: number
 }
 
@@ -17,23 +20,20 @@ function workoutTypeLabel(w: DayWorkoutInput): string | null {
   return label || null
 }
 
-function durationMins(w: DayWorkoutInput): number {
+function durationMs(w: DayWorkoutInput): number {
   if (!w.ended_at) return 0
   const start = w.started_at ?? w.created_at
   if (!start) return 0
-  const mins = Math.round(
-    (new Date(w.ended_at).getTime() - new Date(start).getTime()) / 60000,
-  )
-  return Math.max(0, mins)
+  return Math.max(0, new Date(w.ended_at).getTime() - new Date(start).getTime())
 }
 
 /**
  * Derive daily-log workout type + duration from all workouts that day.
- * Types are joined in chronological order (unique); duration is the sum.
+ * Sums exact durations, then rounds once for display.
  */
 export function deriveDayWorkoutSummary(workouts: DayWorkoutInput[]): DayWorkoutSummary {
   if (workouts.length === 0) {
-    return { typeLabel: null, durationMins: 0, count: 0 }
+    return { typeLabel: null, durationMins: 0, durationMs: 0, count: 0 }
   }
 
   const sorted = [...workouts].sort(
@@ -48,11 +48,12 @@ export function deriveDayWorkoutSummary(workouts: DayWorkoutInput[]): DayWorkout
     types.push(label)
   }
 
-  const totalMins = sorted.reduce((sum, w) => sum + durationMins(w), 0)
+  const totalMs = sorted.reduce((sum, w) => sum + durationMs(w), 0)
 
   return {
     typeLabel: types.length > 0 ? types.join(' + ') : null,
-    durationMins: totalMins,
+    durationMs: totalMs,
+    durationMins: Math.round(totalMs / 60000),
     count: sorted.length,
   }
 }

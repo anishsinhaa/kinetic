@@ -14,6 +14,8 @@ export interface BodyFeedback {
   sleep_quality: number | null   // 1–10
   pain_flag: boolean
   soreness: SorenessEntry[]
+  /** ISO timestamp of last save (updated_at ?? created_at). */
+  savedAt: string | null
 }
 
 export interface FeedbackPayload {

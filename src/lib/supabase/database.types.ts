@@ -88,6 +88,7 @@ export interface BodyFeedbackRow {
   sleep_quality: number | null
   pain_flag: boolean
   created_at: string
+  updated_at: string
 }
 
 export interface MuscleSorenessRow {
