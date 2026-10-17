@@ -225,7 +225,7 @@ function DailyLogsTab() {
                 </TableTd>
                 <TableTd>{fmtCalories(row.calories)}</TableTd>
                 <TableTd>{fmtSleep(row.sleep)}</TableTd>
-                <TableTd className="max-w-[200px]">
+                <TableTd className="max-w-50">
                   {row.notes ? (
                     <span title={row.notes} className="text-text-secondary text-xs truncate block">
                       {row.notes}
@@ -282,7 +282,7 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
                 {session.sets.map((set, j) => (
                   <div
                     key={j}
-                    className="bg-surface-2 border border-border rounded-xl px-3 py-2 text-center min-w-[70px]"
+                    className="bg-surface-2 border border-border rounded-xl px-3 py-2 text-center min-w-17.5"
                   >
                     <p className="text-[9px] text-text-muted uppercase tracking-widest mb-0.5">
                       Set {j + 1}
@@ -498,140 +498,200 @@ function RecoveryTab() {
       )}
 
       {!error && (
-        <div className="overflow-x-auto">
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableTh>Date</TableTh>
-              <TableTh>
-                <span className="flex items-center gap-1">
-                  <Zap size={11} />
-                  Fatigue
-                </span>
-              </TableTh>
-              <TableTh>
-                <span className="flex items-center gap-1">
-                  <Moon size={11} />
-                  Sleep
-                </span>
-              </TableTh>
-              <TableTh>Recovery Score</TableTh>
-              <TableTh>Pain</TableTh>
-              <TableTh>Soreness</TableTh>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {isLoading && Array.from({ length: 5 }).map((_, i) => (
-              <SkeletonRow key={i} cols={6} />
-            ))}
+        <>
+          {/* Mobile: stacked cards */}
+          <div className="md:hidden divide-y divide-border">
+            {isLoading &&
+              Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="p-4 space-y-2">
+                  <div className="h-4 w-28 bg-surface-3 rounded animate-pulse" />
+                  <div className="h-3 w-full bg-surface-3 rounded animate-pulse" />
+                  <div className="h-3 w-2/3 bg-surface-3 rounded animate-pulse" />
+                </div>
+              ))}
 
             {!isLoading && (!history || history.length === 0) && (
-              <TableRow>
-                <TableTd colSpan={6} className="text-center py-16">
-                  <div className="flex flex-col items-center gap-2 text-text-muted">
-                    <Heart size={28} className="opacity-30" />
-                    <p className="text-sm">No recovery logs yet. Log your first check-in from the Feedback page.</p>
-                  </div>
-                </TableTd>
-              </TableRow>
+              <div className="flex flex-col items-center gap-2 text-text-muted py-16 px-4 text-center">
+                <Heart size={28} className="opacity-30" />
+                <p className="text-sm">
+                  No recovery logs yet. Log your first check-in from the Feedback page.
+                </p>
+              </div>
             )}
 
-            {!isLoading && history?.map((entry) => {
-              const score = recoveryScoreFromFeedback(entry)
-              const isExpanded = expandedId === entry.id
-              const soreCount = entry.soreness.length
-
-              return (
-                <Fragment key={entry.id}>
-                  <TableRow
-                    className="cursor-pointer hover:bg-surface-2/50 transition-colors"
+            {!isLoading &&
+              history?.map((entry) => {
+                const score = recoveryScoreFromFeedback(entry)
+                const isExpanded = expandedId === entry.id
+                const soreCount = entry.soreness.length
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="w-full text-left p-4 hover:bg-surface-2/40 transition-colors"
                     onClick={() => setExpandedId(isExpanded ? null : entry.id)}
                   >
-                    <TableTd className="font-medium text-text-primary whitespace-nowrap">
-                      {fmtDate(entry.date)}
-                    </TableTd>
-                    <TableTd>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1 bg-surface-3 rounded-full">
-                          <div
-                            className={cn(
-                              'h-1 rounded-full',
-                              (entry.fatigue ?? 5) >= 7 ? 'bg-red-500' :
-                              (entry.fatigue ?? 5) >= 4 ? 'bg-yellow-500' : 'bg-primary',
-                            )}
-                            style={{ width: `${((entry.fatigue ?? 5) / 10) * 100}%` }}
-                          />
-                        </div>
-                        <span className="text-text-secondary text-sm">{entry.fatigue ?? '—'}/10</span>
-                      </div>
-                    </TableTd>
-                    <TableTd>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1 bg-surface-3 rounded-full">
-                          <div
-                            className="h-1 bg-primary rounded-full"
-                            style={{ width: `${((entry.sleep_quality ?? 5) / 10) * 100}%` }}
-                          />
-                        </div>
-                        <span className="text-text-secondary text-sm">{entry.sleep_quality ?? '—'}/10</span>
-                      </div>
-                    </TableTd>
-                    <TableTd>
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <p className="font-medium text-text-primary">{fmtDate(entry.date)}</p>
                       <ScoreBadge score={score} />
-                    </TableTd>
-                    <TableTd>
-                      {entry.pain_flag ? (
-                        <span className="text-red-400 text-xs font-semibold">⚠ Yes</span>
-                      ) : (
-                        <span className="text-text-muted text-xs">No</span>
-                      )}
-                    </TableTd>
-                    <TableTd>
-                      {soreCount > 0 ? (
-                        <button
-                          className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
-                          onClick={(e) => { e.stopPropagation(); setExpandedId(isExpanded ? null : entry.id) }}
-                        >
-                          <Activity size={12} className="text-orange-400" />
-                          {soreCount} muscle{soreCount !== 1 ? 's' : ''}
-                          <ChevronRight
-                            size={12}
-                            className={cn('transition-transform', isExpanded && 'rotate-90')}
-                          />
-                        </button>
-                      ) : (
-                        <span className="text-text-muted text-xs">None</span>
-                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-sm text-text-secondary">
+                      <p className="flex items-center gap-1">
+                        <Zap size={12} /> Fatigue {entry.fatigue ?? '—'}/10
+                      </p>
+                      <p className="flex items-center gap-1">
+                        <Moon size={12} /> Sleep {entry.sleep_quality ?? '—'}/10
+                      </p>
+                      <p>
+                        Pain:{' '}
+                        {entry.pain_flag ? (
+                          <span className="text-red-400">Yes</span>
+                        ) : (
+                          <span className="text-text-muted">No</span>
+                        )}
+                      </p>
+                      <p className="flex items-center gap-1">
+                        <Activity size={12} className="text-orange-400" />
+                        {soreCount > 0
+                          ? `${soreCount} muscle${soreCount !== 1 ? 's' : ''}`
+                          : 'No soreness'}
+                      </p>
+                    </div>
+                    {isExpanded && soreCount > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {entry.soreness.map((s) => (
+                          <div
+                            key={s.muscle_group}
+                            className="flex items-center gap-2 bg-surface-2 border border-border rounded-xl px-3 py-1.5"
+                          >
+                            <span className="text-sm text-text-secondary">{s.muscle_group}</span>
+                            <SorenessDots level={s.level} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+          </div>
+
+          {/* Desktop: table */}
+          <div className="hidden md:block overflow-x-auto">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableTh>Date</TableTh>
+                  <TableTh>
+                    <span className="flex items-center gap-1">
+                      <Zap size={11} />
+                      Fatigue
+                    </span>
+                  </TableTh>
+                  <TableTh>
+                    <span className="flex items-center gap-1">
+                      <Moon size={11} />
+                      Sleep
+                    </span>
+                  </TableTh>
+                  <TableTh>Recovery Score</TableTh>
+                  <TableTh>Pain</TableTh>
+                  <TableTh>Soreness</TableTh>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {isLoading &&
+                  Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} cols={6} />)}
+
+                {!isLoading && (!history || history.length === 0) && (
+                  <TableRow>
+                    <TableTd colSpan={6} className="text-center py-16">
+                      <div className="flex flex-col items-center gap-2 text-text-muted">
+                        <Heart size={28} className="opacity-30" />
+                        <p className="text-sm">
+                          No recovery logs yet. Log your first check-in from the Feedback page.
+                        </p>
+                      </div>
                     </TableTd>
                   </TableRow>
+                )}
 
-                  {/* Expanded soreness detail row */}
-                  {isExpanded && soreCount > 0 && (
-                    <TableRow className="bg-surface-2/30">
-                      <TableTd colSpan={6} className="px-6 py-3">
-                        <div className="flex flex-wrap gap-3">
-                          {entry.soreness.map((s) => (
-                            <div
-                              key={s.muscle_group}
-                              className="flex items-center gap-2 bg-surface-2 border border-border rounded-xl px-3 py-1.5"
-                            >
-                              <span className="text-sm text-text-secondary">{s.muscle_group}</span>
-                              <SorenessDots level={s.level} />
-                              <span className="text-[10px] text-text-muted uppercase tracking-wider">
-                                {s.level === 1 ? 'Mild' : s.level === 2 ? 'Moderate' : 'Severe'}
+                {!isLoading &&
+                  history?.map((entry) => {
+                    const score = recoveryScoreFromFeedback(entry)
+                    const isExpanded = expandedId === entry.id
+                    const soreCount = entry.soreness.length
+
+                    return (
+                      <Fragment key={entry.id}>
+                        <TableRow
+                          className="cursor-pointer hover:bg-surface-2/50 transition-colors"
+                          onClick={() => setExpandedId(isExpanded ? null : entry.id)}
+                        >
+                          <TableTd className="font-medium text-text-primary whitespace-nowrap">
+                            {fmtDate(entry.date)}
+                          </TableTd>
+                          <TableTd>
+                            <span className="text-text-secondary text-sm">
+                              {entry.fatigue ?? '—'}/10
+                            </span>
+                          </TableTd>
+                          <TableTd>
+                            <span className="text-text-secondary text-sm">
+                              {entry.sleep_quality ?? '—'}/10
+                            </span>
+                          </TableTd>
+                          <TableTd>
+                            <ScoreBadge score={score} />
+                          </TableTd>
+                          <TableTd>
+                            {entry.pain_flag ? (
+                              <span className="text-red-400 text-xs font-semibold">⚠ Yes</span>
+                            ) : (
+                              <span className="text-text-muted text-xs">No</span>
+                            )}
+                          </TableTd>
+                          <TableTd>
+                            {soreCount > 0 ? (
+                              <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+                                <Activity size={12} className="text-orange-400" />
+                                {soreCount} muscle{soreCount !== 1 ? 's' : ''}
+                                <ChevronRight
+                                  size={12}
+                                  className={cn('transition-transform', isExpanded && 'rotate-90')}
+                                />
                               </span>
-                            </div>
-                          ))}
-                        </div>
-                      </TableTd>
-                    </TableRow>
-                  )}
-                </Fragment>
-              )
-            })}
-          </TableBody>
-        </Table>
-        </div>
+                            ) : (
+                              <span className="text-text-muted text-xs">None</span>
+                            )}
+                          </TableTd>
+                        </TableRow>
+
+                        {isExpanded && soreCount > 0 && (
+                          <TableRow className="bg-surface-2/30">
+                            <TableTd colSpan={6} className="px-6 py-3">
+                              <div className="flex flex-wrap gap-3">
+                                {entry.soreness.map((s) => (
+                                  <div
+                                    key={s.muscle_group}
+                                    className="flex items-center gap-2 bg-surface-2 border border-border rounded-xl px-3 py-1.5"
+                                  >
+                                    <span className="text-sm text-text-secondary">
+                                      {s.muscle_group}
+                                    </span>
+                                    <SorenessDots level={s.level} />
+                                  </div>
+                                ))}
+                              </div>
+                            </TableTd>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
     </Card>
   )

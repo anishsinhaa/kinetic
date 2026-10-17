@@ -14,6 +14,7 @@ import { countLibraryExercises, getLibraryStats } from '../features/workout/serv
 import { importExerciseLibrary, type ImportProgress } from '../features/exercises/services/exerciseImportService'
 import { hasApiKey } from '../features/exercises/services/exercisesApiService'
 import { logout } from '../features/auth/authService'
+import { isSuperAdminEmail } from '../features/auth/superAdmin'
 import { useCurrentUser } from '../features/auth/useAuth'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +56,7 @@ function Row({
     <div className="flex items-start sm:items-center justify-between gap-3 px-4 md:px-5 py-3 md:py-4 border-b border-border last:border-0">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-text-primary">{label}</p>
-        {value && <p className="text-xs text-text-muted mt-0.5 break-words">{value}</p>}
+        {value && <p className="text-xs text-text-muted mt-0.5 wrap-break-word">{value}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -301,7 +302,9 @@ export default function Settings() {
       </Section>
 
       {/* Exercise Library + import — admin only */}
-      {user?.email === 'anishsinha4911@gmail.com' && <LibrarySection userId={userId} />}
+      {(user?.email === 'anishsinha4911@gmail.com' || isSuperAdminEmail(user?.email)) && (
+        <LibrarySection userId={userId} />
+      )}
 
       {/* About */}
       <Section title="About">

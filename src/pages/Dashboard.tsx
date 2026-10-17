@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
@@ -32,6 +32,7 @@ import {
 import { suggestNextType } from '../features/workout/lib/suggestNextType'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
+import { pluralize } from '../lib/pluralize'
 import { cn } from '../lib/utils'
 import { selectOnFocus } from '../lib/selectOnFocus'
 
@@ -82,25 +83,65 @@ function DailyLogForm({
   )
 }
 
-function MiniBars({ values, label }: { values: number[]; label: string }) {
-  const max = Math.max(...values, 1)
+function WeightSparkline({ values, label }: { values: number[]; label: string }) {
   const reduceMotion = useReducedMotion()
+  const pathD = useMemo(() => {
+    if (values.length === 0) return ''
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    const range = max - min || 1
+    const w = 120
+    const h = 48
+    const pad = 4
+    return values
+      .map((v, i) => {
+        const x = pad + (i / Math.max(values.length - 1, 1)) * (w - pad * 2)
+        const y = h - pad - ((v - min) / range) * (h - pad * 2)
+        return `${i === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`
+      })
+      .join(' ')
+  }, [values])
+
+  const last = values[values.length - 1]
+
   return (
     <Card className="p-4">
-      <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">{label}</p>
-      <div className="flex items-end gap-1.5 h-16">
-        {values.map((v, i) => (
-          <motion.div
-            key={i}
-            className="flex-1 bg-primary/80 rounded-t-sm min-h-0.5"
-            initial={reduceMotion ? false : { height: 0 }}
-            animate={{ height: `${Math.max(8, (v / max) * 100)}%` }}
-            transition={{ delay: i * 0.04, duration: 0.35 }}
-          />
-        ))}
-      </div>
+      <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">{label}</p>
+      {values.length < 2 ? (
+        <div className="h-12 flex items-center text-xs text-text-muted">Not enough data</div>
+      ) : (
+        <div className="flex items-end gap-3">
+          <svg
+            viewBox="0 0 120 48"
+            className="w-full h-12 overflow-visible text-primary"
+            aria-hidden
+          >
+            <motion.path
+              d={pathD}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+              initial={reduceMotion ? false : { pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            />
+          </svg>
+          {last != null && (
+            <span className="text-sm font-bold text-text-primary tabular-nums shrink-0">
+              {last}
+            </span>
+          )}
+        </div>
+      )}
     </Card>
   )
+}
+
+function SkeletonBlock({ className }: { className?: string }) {
+  return <div className={cn('animate-pulse rounded-xl bg-surface-3', className)} />
 }
 
 export default function Dashboard() {
@@ -112,96 +153,109 @@ export default function Dashboard() {
   const currentWorkoutId = useWorkoutStore((s) => s.currentWorkoutId)
   const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
   const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
-  const setSuggestedType = useWorkoutStore((s) => s.setSuggestedType)
-  const suggestedType = useWorkoutStore((s) => s.suggestedType)
 
-  const { log, isLoading, isSaving, save } = useDailyLog(userId)
-  const { data: todayFeedback } = useTodayFeedback()
+  const { log, isLoading: logLoading, isSaving, save } = useDailyLog(userId)
+  const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
 
-  const { data: lastWorkout } = useQuery({
+  const lastWorkoutQuery = useQuery({
     queryKey: ['workout', 'latest-completed', userId],
     queryFn: () => getLatestCompletedWorkout(userId),
   })
 
-  const { data: recentTypes } = useQuery({
+  const recentTypesQuery = useQuery({
     queryKey: ['workout', 'recent-types', userId],
     queryFn: () => getRecentWorkoutTypes(userId),
   })
 
-  const { data: stats } = useQuery({
+  const statsQuery = useQuery({
     queryKey: ['dashboard', 'stats', userId],
     queryFn: () => getDashboardStats(userId),
   })
 
-  useEffect(() => {
-    const next = suggestNextType(recentTypes ?? [], resolveWorkoutTypes(workoutTypes))
-    if (next) setSuggestedType(next)
-  }, [recentTypes, workoutTypes, setSuggestedType])
-
-  const suggestion =
-    suggestedType ??
-    suggestNextType(recentTypes ?? [], resolveWorkoutTypes(workoutTypes))
+  const suggestion = useMemo(
+    () => suggestNextType(recentTypesQuery.data ?? [], resolveWorkoutTypes(workoutTypes)),
+    [recentTypesQuery.data, workoutTypes],
+  )
 
   const weightValues = useMemo(() => {
-    const trend = stats?.weightTrend ?? []
-    if (trend.length === 0) return [0, 0, 0, 0, 0, 0, 0]
+    const trend = statsQuery.data?.weightTrend ?? []
     return trend.map((t) => t.weight)
-  }, [stats])
+  }, [statsQuery.data])
+
+  const queriesLoading =
+    lastWorkoutQuery.isLoading || recentTypesQuery.isLoading || statsQuery.isLoading
 
   const cta = currentWorkoutId
     ? { label: 'Resume workout', to: '/workout', hint: workoutLabel || 'In progress' }
-    : { label: 'Start Workout', to: '/workout?start=1', hint: suggestion ? `Suggested: ${suggestion}` : 'Pick a type' }
+    : {
+        label: 'Start Workout',
+        to: '/workout?start=1',
+        hint:
+          recentTypesQuery.isLoading || !suggestion
+            ? null
+            : `Suggested: ${suggestion}`,
+      }
 
   return (
     <div className="p-4 md:p-8 pb-28 md:pb-8">
       <div className="mb-5 md:mb-8">
         <p className="text-xs text-text-secondary uppercase tracking-widest mb-1">Home</p>
         <h1 className="text-4xl md:text-6xl font-black text-text-primary leading-none">Today</h1>
-        {cta.hint && (
-          <p className="text-sm text-text-muted mt-2">{cta.hint}</p>
+        {cta.hint && <p className="text-sm text-text-muted mt-2">{cta.hint}</p>}
+        {!cta.hint && !currentWorkoutId && recentTypesQuery.isLoading && (
+          <SkeletonBlock className="h-4 w-40 mt-3" />
         )}
       </div>
 
-      {/* Desktop primary CTA */}
+      {/* Primary CTAs — desktop + mobile */}
       <div className="hidden md:flex gap-3 mb-6">
         <Button variant="primary" size="lg" onClick={() => navigate(cta.to)}>
           <Dumbbell size={16} className="mr-2" />
           {cta.label}
         </Button>
-        {!currentWorkoutId && lastWorkout && (
-          <Button variant="secondary" size="lg" onClick={() => navigate('/workout?repeat=1')}>
-            Repeat last
-          </Button>
-        )}
+        {!currentWorkoutId &&
+          (lastWorkoutQuery.isLoading ? (
+            <SkeletonBlock className="h-11 w-32" />
+          ) : lastWorkoutQuery.data ? (
+            <Button variant="secondary" size="lg" onClick={() => navigate('/workout?repeat=1')}>
+              Repeat last
+            </Button>
+          ) : null)}
       </div>
 
       {/* Suggested type chips */}
       {!currentWorkoutId && (
         <div className="flex flex-wrap gap-2 mb-5">
-          {resolveWorkoutTypes(workoutTypes).slice(0, 9).map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => navigate(`/workout?start=1&type=${encodeURIComponent(type)}`)}
-              className={cn(
-                'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
-                (suggestedType ?? suggestion) === type
-                  ? 'bg-primary text-black border-primary'
-                  : 'border-border text-text-secondary hover:border-primary',
-              )}
-            >
-              {type}
-            </button>
-          ))}
+          {recentTypesQuery.isLoading
+            ? Array.from({ length: 6 }).map((_, i) => (
+                <SkeletonBlock key={i} className="h-11 w-16" />
+              ))
+            : resolveWorkoutTypes(workoutTypes).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => navigate(`/workout?start=1&type=${encodeURIComponent(type)}`)}
+                  className={cn(
+                    'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
+                    suggestion === type
+                      ? 'bg-primary text-black border-primary'
+                      : 'border-border text-text-secondary hover:border-primary',
+                  )}
+                >
+                  {type}
+                </button>
+              ))}
         </div>
       )}
 
       {/* Today card */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
         <Card className="p-4">
-          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">Morning weight</p>
-          {isLoading ? (
-            <Loader2 className="animate-spin text-primary" size={16} />
+          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
+            Morning weight
+          </p>
+          {logLoading ? (
+            <SkeletonBlock className="h-10 w-24" />
           ) : (
             <button
               type="button"
@@ -218,7 +272,9 @@ export default function Dashboard() {
         </Card>
         <Card className="p-4">
           <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">Recovery</p>
-          {todayFeedback ? (
+          {feedbackLoading ? (
+            <SkeletonBlock className="h-10 w-28" />
+          ) : todayFeedback ? (
             <Link to="/feedback" className="block">
               <p className="text-3xl font-black text-text-primary">
                 {recoveryScoreFromFeedback(todayFeedback)}%
@@ -237,9 +293,9 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {isLoading ? (
-        <Card className="mb-4 p-6 flex justify-center">
-          <Loader2 className="animate-spin text-primary" />
+      {logLoading ? (
+        <Card className="mb-4 p-6">
+          <SkeletonBlock className="h-20 w-full" />
         </Card>
       ) : (
         <div id="dash-weight">
@@ -254,41 +310,62 @@ export default function Dashboard() {
 
       {/* Mini charts */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-        <MiniBars values={weightValues} label="7-day weight" />
-        <Card className="p-4">
-          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
-            Workouts this week
-          </p>
-          <motion.p
-            className="text-4xl font-black text-text-primary"
-            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            {stats?.workoutsThisWeek ?? 0}
-          </motion.p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2 flex items-center gap-1">
-            <Flame size={11} /> Streak
-          </p>
-          <p className="text-4xl font-black text-primary">{stats?.streakDays ?? 0}</p>
-          <p className="text-xs text-text-muted mt-1">day{(stats?.streakDays ?? 0) === 1 ? '' : 's'}</p>
-        </Card>
+        {statsQuery.isLoading ? (
+          <>
+            <SkeletonBlock className="h-28" />
+            <SkeletonBlock className="h-28" />
+            <SkeletonBlock className="h-28" />
+          </>
+        ) : (
+          <>
+            <WeightSparkline values={weightValues} label="7-day weight" />
+            <Card className="p-4">
+              <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
+                Workouts this week
+              </p>
+              <motion.p
+                className="text-4xl font-black text-text-primary"
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                {statsQuery.data?.workoutsThisWeek ?? 0}
+              </motion.p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2 flex items-center gap-1">
+                <Flame size={11} /> Streak
+              </p>
+              <p className="text-4xl font-black text-primary">
+                {statsQuery.data?.streakDays ?? 0}
+              </p>
+              <p className="text-xs text-text-muted mt-1">
+                {(statsQuery.data?.streakDays ?? 0) === 1 ? 'day' : 'days'}
+              </p>
+            </Card>
+          </>
+        )}
       </div>
 
       {/* Last workout */}
       <Card className="p-5 mb-4">
         <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">Last workout</p>
-        {lastWorkout ? (
+        {lastWorkoutQuery.isLoading || queriesLoading ? (
+          <div className="space-y-2">
+            <SkeletonBlock className="h-6 w-32" />
+            <SkeletonBlock className="h-4 w-48" />
+            <SkeletonBlock className="h-4 w-56" />
+          </div>
+        ) : lastWorkoutQuery.data ? (
           <>
-            <p className="text-xl font-bold text-text-primary">{lastWorkout.label}</p>
+            <p className="text-xl font-bold text-text-primary">{lastWorkoutQuery.data.label}</p>
             <p className="text-text-secondary text-sm mt-0.5">
-              {formatRelativeDate(lastWorkout.date)} · {lastWorkout.durationText}
+              {formatRelativeDate(lastWorkoutQuery.data.date)} · {lastWorkoutQuery.data.durationText}
             </p>
             <p className="text-text-muted text-xs mt-1 flex items-center gap-2">
               <TrendingUp size={12} />
-              {lastWorkout.exerciseCount} exercises · {lastWorkout.setCount} sets ·{' '}
-              {lastWorkout.totalVolumeKg} kg
+              {pluralize(lastWorkoutQuery.data.exerciseCount, 'exercise')} ·{' '}
+              {pluralize(lastWorkoutQuery.data.setCount, 'set')} ·{' '}
+              {lastWorkoutQuery.data.totalVolumeKg} kg
             </p>
           </>
         ) : (
@@ -317,11 +394,21 @@ export default function Dashboard() {
       )}
 
       {/* Mobile sticky CTA */}
-      <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 px-4 py-3 bg-background/95 backdrop-blur border-t border-border">
+      <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 px-4 py-3 bg-background/95 backdrop-blur border-t border-border space-y-2">
         <Button variant="primary" size="lg" className="w-full" onClick={() => navigate(cta.to)}>
           <Dumbbell size={16} className="mr-2" />
           {cta.label}
         </Button>
+        {!currentWorkoutId && lastWorkoutQuery.data && (
+          <Button
+            variant="secondary"
+            size="md"
+            className="w-full"
+            onClick={() => navigate('/workout?repeat=1')}
+          >
+            Repeat last
+          </Button>
+        )}
       </div>
     </div>
   )

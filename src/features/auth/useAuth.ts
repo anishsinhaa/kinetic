@@ -2,11 +2,16 @@ import { useEffect } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase/client'
 import { useAppStore } from '../../store/useAppStore'
+import { getLocalSuperAdminUser } from './superAdmin'
 
 function sessionToUser(session: Session | null) {
   return session?.user
     ? { id: session.user.id, email: session.user.email }
     : null
+}
+
+function resolveUser(session: Session | null) {
+  return sessionToUser(session) ?? getLocalSuperAdminUser()
 }
 
 /**
@@ -28,6 +33,13 @@ export function useAuthListener() {
         // Ignore sign-out failures — still clear local auth state below.
       }
       if (cancelled) return
+      // Keep break-glass super-admin session if active
+      const local = getLocalSuperAdminUser()
+      if (local) {
+        setUser(local)
+        setAuthReady(true)
+        return
+      }
       setUser(null)
       setAuthReady(true)
     }
@@ -37,13 +49,25 @@ export function useAuthListener() {
       .then(({ data: { session }, error }) => {
         if (cancelled) return
         if (error) {
+          const local = getLocalSuperAdminUser()
+          if (local) {
+            setUser(local)
+            setAuthReady(true)
+            return
+          }
           void clearSessionAndShowLogin()
           return
         }
-        setUser(sessionToUser(session))
+        setUser(resolveUser(session))
         setAuthReady(true)
       })
       .catch(() => {
+        const local = getLocalSuperAdminUser()
+        if (local) {
+          setUser(local)
+          setAuthReady(true)
+          return
+        }
         void clearSessionAndShowLogin()
       })
 
@@ -58,7 +82,7 @@ export function useAuthListener() {
         return
       }
 
-      setUser(sessionToUser(session))
+      setUser(resolveUser(session))
       setAuthReady(true)
     })
 

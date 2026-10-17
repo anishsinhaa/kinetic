@@ -122,10 +122,23 @@ export const useWorkoutStore = create<WorkoutStore>()(
           weightStep: get().weightStep,
         }),
 
-      setPhase: (phase) => set({ phase }),
-      setWorkoutLabel: (label) => set({ workoutLabel: label }),
-      setWorkoutTypes: (types) => set({ workoutTypes: resolveWorkoutTypes(types) }),
-      setSuggestedType: (type) => set({ suggestedType: type }),
+      setPhase: (phase) =>
+        set((state) => (state.phase === phase ? state : { phase })),
+      setWorkoutLabel: (label) =>
+        set((state) => (state.workoutLabel === label ? state : { workoutLabel: label })),
+      setWorkoutTypes: (types) =>
+        set((state) => {
+          const next = resolveWorkoutTypes(types)
+          if (
+            next.length === state.workoutTypes.length &&
+            next.every((t, i) => t === state.workoutTypes[i])
+          ) {
+            return state
+          }
+          return { workoutTypes: next }
+        }),
+      setSuggestedType: (type) =>
+        set((state) => (state.suggestedType === type ? state : { suggestedType: type })),
 
       addWorkoutType: (label) =>
         set((state) => {

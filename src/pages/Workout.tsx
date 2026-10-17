@@ -70,29 +70,26 @@ export default function Workout() {
   const autoStart = searchParams.get('start') === '1'
   const preselectedType = searchParams.get('type')
 
-  const store = useWorkoutStore()
-  const {
-    phase,
-    currentWorkoutId,
-    workoutStartedAt,
-    workoutLabel,
-    workoutTypes,
-    suggestedType,
-    exercises,
-    warmupStartedAt,
-    warmupEndedAt,
-    warmupNote,
-    restEndsAt,
-    restTotalSeconds,
-    weightStep,
-    feel,
-    note,
-    summarySnapshot,
-  } = store
+  // Selectors only — never subscribe to the whole store (avoids update-depth loops)
+  const phase = useWorkoutStore((s) => s.phase)
+  const currentWorkoutId = useWorkoutStore((s) => s.currentWorkoutId)
+  const workoutStartedAt = useWorkoutStore((s) => s.workoutStartedAt)
+  const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
+  const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
+  const exercises = useWorkoutStore((s) => s.exercises)
+  const warmupStartedAt = useWorkoutStore((s) => s.warmupStartedAt)
+  const warmupEndedAt = useWorkoutStore((s) => s.warmupEndedAt)
+  const warmupNote = useWorkoutStore((s) => s.warmupNote)
+  const restEndsAt = useWorkoutStore((s) => s.restEndsAt)
+  const restTotalSeconds = useWorkoutStore((s) => s.restTotalSeconds)
+  const weightStep = useWorkoutStore((s) => s.weightStep)
+  const feel = useWorkoutStore((s) => s.feel)
+  const note = useWorkoutStore((s) => s.note)
+  const summarySnapshot = useWorkoutStore((s) => s.summarySnapshot)
 
   const [dbReady, setDbReady] = useState(true)
   const [saveError, setSaveError] = useState('')
-  const [tick, setTick] = useState(Date.now())
+  const [tick, setTick] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [isFinishing, setIsFinishing] = useState(false)
@@ -118,7 +115,7 @@ export default function Workout() {
           set_index: payload.setIndex,
           completed_at: setItem.completedAt ?? (setItem.completed ? new Date().toISOString() : null),
         })
-        store.updateSet(fresh.exercise.id, payload.setId, { dbSetId: payload.setId })
+        useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, { dbSetId: payload.setId })
         setSaveError('')
         setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
       } catch (err) {
@@ -142,55 +139,68 @@ export default function Workout() {
   useEffect(() => {
     void getUserSettings(userId)
       .then((s) => {
-        store.setWorkoutTypes(resolveWorkoutTypes(s.workoutTypes))
-        store.setPrefs({
+        const api = useWorkoutStore.getState()
+        api.setWorkoutTypes(resolveWorkoutTypes(s.workoutTypes))
+        api.setPrefs({
           weightStep: s.weightStep,
           restDefaultSeconds: s.restTimerSeconds,
         })
       })
-      .catch(() => store.setWorkoutTypes(resolveWorkoutTypes(null)))
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount seed only
+      .catch(() => {
+        useWorkoutStore.getState().setWorkoutTypes(resolveWorkoutTypes(null))
+      })
   }, [userId])
 
+  // Open type picker from deep links — only when still idle
   useEffect(() => {
-    const next = suggestNextType(recentTypesQuery.data ?? [], resolveWorkoutTypes(workoutTypes))
-    if (next) store.setSuggestedType(next)
-  }, [recentTypesQuery.data, workoutTypes, store])
-
-  useEffect(() => {
-    if (!currentWorkoutId && (autoStart || isRepeatMode || preselectedType)) {
-      store.setPhase('type')
-      if (preselectedType) store.setSuggestedType(preselectedType)
-      else if (isRepeatMode && latestWorkoutQuery.data) {
-        store.setSuggestedType(latestWorkoutQuery.data.label)
-      }
+    if (currentWorkoutId) return
+    if (!(autoStart || isRepeatMode || preselectedType)) return
+    if (useWorkoutStore.getState().phase === 'idle') {
+      useWorkoutStore.getState().setPhase('type')
     }
-  }, [autoStart, isRepeatMode, preselectedType, currentWorkoutId, latestWorkoutQuery.data, store])
+  }, [autoStart, isRepeatMode, preselectedType, currentWorkoutId])
 
-  // Resume: if persisted mid-session, jump to training/warmup
+  // Resume persisted session
   useEffect(() => {
-    if (currentWorkoutId && phase === 'idle') {
-      store.setPhase(warmupEndedAt || !warmupStartedAt ? 'training' : 'warmup')
-    }
-  }, [currentWorkoutId, phase, warmupEndedAt, warmupStartedAt, store])
+    if (!currentWorkoutId || phase !== 'idle') return
+    useWorkoutStore
+      .getState()
+      .setPhase(warmupEndedAt || !warmupStartedAt ? 'training' : 'warmup')
+  }, [currentWorkoutId, phase, warmupEndedAt, warmupStartedAt])
 
   useEffect(() => {
     if (!currentWorkoutId || !workoutStartedAt) return
-    const t = setInterval(() => setTick(Date.now()), 1000)
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
     return () => clearInterval(t)
   }, [currentWorkoutId, workoutStartedAt])
 
   const elapsedMs = workoutStartedAt
-    ? Math.max(0, tick - new Date(workoutStartedAt).getTime())
+    ? Math.max(0, Date.now() - new Date(workoutStartedAt).getTime())
     : 0
 
   const warmupElapsedMs = useMemo(() => {
     if (!warmupStartedAt) return 0
-    const end = warmupEndedAt ? new Date(warmupEndedAt).getTime() : tick
+    const end = warmupEndedAt ? new Date(warmupEndedAt).getTime() : Date.now()
     return Math.max(0, end - new Date(warmupStartedAt).getTime())
+    // tick forces refresh while timer runs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warmupStartedAt, warmupEndedAt, tick])
 
-  const typeChips = resolveWorkoutTypes(workoutTypes)
+  const typeChips = useMemo(() => resolveWorkoutTypes(workoutTypes), [workoutTypes])
+
+  // Derive suggestion — never write it into the store during render/effects
+  const suggestedHighlight = useMemo(() => {
+    if (preselectedType) return preselectedType
+    if (isRepeatMode && latestWorkoutQuery.data?.label) return latestWorkoutQuery.data.label
+    return suggestNextType(recentTypesQuery.data ?? [], typeChips)
+  }, [
+    preselectedType,
+    isRepeatMode,
+    latestWorkoutQuery.data?.label,
+    recentTypesQuery.data,
+    typeChips,
+  ])
+
   const canEdit = Boolean(currentWorkoutId) && dbReady && phase === 'training'
 
   const queuePersist = (
@@ -219,13 +229,14 @@ export default function Workout() {
     if (!normalizedType) return
 
     startingRef.current = true
-    store.addWorkoutType(normalizedType)
+    const api = useWorkoutStore.getState()
+    api.addWorkoutType(normalizedType)
     setDbReady(false)
     setSaveError('')
 
     const workoutId = newClientId()
     const startedAt = new Date().toISOString()
-    store.startWorkout(workoutId, today, startedAt, normalizedType)
+    api.startWorkout(workoutId, today, startedAt, normalizedType)
     setSearchParams({}, { replace: true })
 
     void (async () => {
@@ -272,7 +283,7 @@ export default function Workout() {
       ? `Target: ${targetPreview(last.weight, last.reps, 'maintain', weightStep)}`
       : undefined
 
-    store.addExercise({
+    useWorkoutStore.getState().addExercise({
       exerciseId: exercise.id,
       name: exercise.name,
       muscleGroup: exercise.muscleGroup,
@@ -311,7 +322,7 @@ export default function Workout() {
 
   const handleCompleteSet = async (exerciseLocalId: string, setLocalId: string, index: number) => {
     const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
-    store.completeSet(exerciseLocalId, setLocalId)
+    useWorkoutStore.getState().completeSet(exerciseLocalId, setLocalId)
     queuePersist(exerciseLocalId, setLocalId, ex?.dbWorkoutExerciseId, index)
     await persistQueueRef.current.flush(setLocalId)
   }
@@ -353,7 +364,7 @@ export default function Workout() {
           )
         : 0
 
-      store.setSummarySnapshot({
+      useWorkoutStore.getState().setSummarySnapshot({
         durationSec: Math.round(elapsedMs / 1000),
         warmupSec: Math.max(0, warmupSec),
         volumeKg: volume,
@@ -373,7 +384,7 @@ export default function Workout() {
         note: state.note.trim() || null,
       })
 
-      store.setPhase('summary')
+      useWorkoutStore.getState().setPhase('summary')
       setConfirmFinish(false)
       await latestWorkoutQuery.refetch()
     } catch (err) {
@@ -403,7 +414,7 @@ export default function Workout() {
                 onClick={() => beginWorkoutWithType(type)}
                 className={cn(
                   'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
-                  (suggestedType === type || preselectedType === type)
+                  suggestedHighlight === type
                     ? 'bg-primary text-black border-primary'
                     : 'border-border text-text-secondary hover:border-primary',
                 )}
@@ -413,7 +424,11 @@ export default function Workout() {
             ))}
           </div>
         ) : (
-          <Button variant="primary" size="lg" onClick={() => store.setPhase('type')}>
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={() => useWorkoutStore.getState().setPhase('type')}
+          >
             <Dumbbell size={14} className="mr-2" />
             Start Workout
           </Button>
@@ -474,7 +489,7 @@ export default function Workout() {
               <button
                 key={n}
                 type="button"
-                onClick={() => store.setFeel(n)}
+                onClick={() => useWorkoutStore.getState().setFeel(n)}
                 className={cn(
                   'flex-1 min-h-11 rounded-xl border text-sm font-bold',
                   feel === n
@@ -488,7 +503,7 @@ export default function Workout() {
           </div>
           <textarea
             value={note}
-            onChange={(e) => store.setNote(e.target.value)}
+            onChange={(e) => useWorkoutStore.getState().setNote(e.target.value)}
             placeholder="Session note…"
             rows={3}
             className="w-full mb-6 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
@@ -505,7 +520,7 @@ export default function Workout() {
                   note: note.trim() || null,
                 })
               }
-              store.finishWorkout()
+              useWorkoutStore.getState().finishWorkout()
               navigate('/')
             }}
           >
@@ -535,7 +550,7 @@ export default function Workout() {
 
         <textarea
           value={warmupNote}
-          onChange={(e) => store.setWarmupNote(e.target.value)}
+          onChange={(e) => useWorkoutStore.getState().setWarmupNote(e.target.value)}
           placeholder="Warmup note (optional)"
           rows={2}
           className="w-full mb-4 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
@@ -543,7 +558,7 @@ export default function Workout() {
 
         <div className="flex flex-col gap-2">
           {!warmupStartedAt ? (
-            <Button variant="primary" size="lg" onClick={() => store.startWarmup()}>
+            <Button variant="primary" size="lg" onClick={() => useWorkoutStore.getState().startWarmup()}>
               Start Warmup
             </Button>
           ) : (
@@ -551,7 +566,7 @@ export default function Workout() {
               variant="primary"
               size="lg"
               onClick={() => {
-                store.endWarmup()
+                useWorkoutStore.getState().endWarmup()
                 if (currentWorkoutId) {
                   void updateWorkoutMeta(currentWorkoutId, {
                     warmup_started_at: useWorkoutStore.getState().warmupStartedAt,
@@ -568,7 +583,7 @@ export default function Workout() {
             variant="ghost"
             size="md"
             onClick={() => {
-              store.skipWarmup()
+              useWorkoutStore.getState().skipWarmup()
               if (currentWorkoutId) {
                 void updateWorkoutMeta(currentWorkoutId, {
                   warmup_started_at: null,
@@ -615,7 +630,7 @@ export default function Workout() {
               type="button"
               disabled={!canEdit}
               onClick={() => {
-                store.setWorkoutLabel(type)
+                useWorkoutStore.getState().setWorkoutLabel(type)
                 if (currentWorkoutId) void updateWorkoutLabel(currentWorkoutId, type)
               }}
               className={cn(
@@ -655,14 +670,14 @@ export default function Workout() {
                     type="button"
                     disabled={!canEdit}
                     onClick={() => {
-                      store.updateExerciseMeta(ex.id, { target: value })
+                      useWorkoutStore.getState().updateExerciseMeta(ex.id, { target: value })
                       if (ex.dbWorkoutExerciseId) {
                         void updateWorkoutExercise(ex.dbWorkoutExerciseId, { target: value })
                       }
                       const last = ex.sets[0]
                       const w = last?.weight ? parseFloat(last.weight) : null
                       const r = last?.reps ? parseInt(last.reps, 10) : null
-                      store.updateExerciseMeta(ex.id, {
+                      useWorkoutStore.getState().updateExerciseMeta(ex.id, {
                         targetLabel: `Target: ${targetPreview(w, r, value, weightStep)}`,
                       })
                     }}
@@ -695,7 +710,7 @@ export default function Workout() {
                 disabled={!canEdit}
                 status={setStatusMap[set.id]}
                 onChange={(patch) => {
-                  store.updateSet(ex.id, set.id, patch)
+                  useWorkoutStore.getState().updateSet(ex.id, set.id, patch)
                   queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
                 }}
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
@@ -707,7 +722,7 @@ export default function Workout() {
               disabled={!canEdit}
               onClick={() => {
                 void persistQueueRef.current.flushAll().then(() => {
-                  store.addSet(ex.id)
+                  useWorkoutStore.getState().addSet(ex.id)
                 })
               }}
               className="w-full py-3 text-xs text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
@@ -731,9 +746,9 @@ export default function Workout() {
       <RestTimerRing
         endsAt={restEndsAt}
         totalSeconds={restTotalSeconds}
-        onSkip={() => store.clearRest()}
-        onAdjust={(d) => store.adjustRest(d)}
-        onComplete={() => store.clearRest()}
+        onSkip={() => useWorkoutStore.getState().clearRest()}
+        onAdjust={(d) => useWorkoutStore.getState().adjustRest(d)}
+        onComplete={() => useWorkoutStore.getState().clearRest()}
       />
 
       <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-3 z-30">
