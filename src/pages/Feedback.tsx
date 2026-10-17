@@ -50,16 +50,20 @@ function ScaleSelector({
   midLabel: string
   highLabel: string
 }) {
+  const selected = value != null && value >= 1 && value <= 10 ? value : null
+
   return (
     <>
       <div className="flex gap-1.5 justify-between mb-3">
         {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
           <button
             key={n}
+            type="button"
+            aria-pressed={selected === n}
             onClick={() => onChange(n)}
             className={cn(
-              'flex-1 h-10 md:h-9 rounded-xl text-sm font-semibold transition-all',
-              value === n
+              'flex-1 h-10 md:h-9 rounded-xl text-sm font-semibold transition-all focus:outline-hidden',
+              selected === n
                 ? 'bg-primary text-black scale-110 shadow-lg shadow-primary/30'
                 : 'bg-surface-2 border border-border text-text-secondary hover:border-primary hover:text-primary',
             )}
@@ -70,7 +74,7 @@ function ScaleSelector({
       </div>
       <div className="flex justify-between text-[10px] text-text-muted uppercase tracking-widest">
         <span>{lowLabel}</span>
-        <span>{midLabel}</span>
+        <span>{selected == null ? 'Not selected' : midLabel}</span>
         <span>{highLabel}</span>
       </div>
     </>
@@ -211,14 +215,17 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
   const { mutateAsync: save, isPending: isSaving, isSuccess: isSaved, isError, error } =
     useSaveFeedback()
 
-  // No fake pre-selected values when nothing is logged yet
-  const [fatigue, setFatigue] = useState<number | null>(existing?.fatigue ?? null)
-  const [sleepQuality, setSleepQuality] = useState<number | null>(
-    existing?.sleep_quality ?? null,
+  // Only hydrate from a real saved log — never invent defaults (5/7 etc.)
+  const hasSavedLog = Boolean(existing?.id)
+  const [fatigue, setFatigue] = useState<number | null>(
+    hasSavedLog ? (existing?.fatigue ?? null) : null,
   )
-  const [painFlag, setPainFlag] = useState(existing?.pain_flag ?? false)
-  const [soreness, setSoreness] = useState<Record<string, number>>(
-    () => sorenessToMap(existing?.soreness ?? []),
+  const [sleepQuality, setSleepQuality] = useState<number | null>(
+    hasSavedLog ? (existing?.sleep_quality ?? null) : null,
+  )
+  const [painFlag, setPainFlag] = useState(hasSavedLog ? (existing?.pain_flag ?? false) : false)
+  const [soreness, setSoreness] = useState<Record<string, number>>(() =>
+    hasSavedLog ? sorenessToMap(existing?.soreness ?? []) : {},
   )
 
   const buildSorenessList = (): SorenessEntry[] =>

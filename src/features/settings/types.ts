@@ -1,5 +1,6 @@
 import type { UserSettingsRow, WeightUnits } from '../../lib/supabase/database.types'
 import { DEFAULT_WORKOUT_TYPES } from '../workout/constants'
+import { resolveWorkoutTypes } from '../workout/lib/workoutTypes'
 
 export type { WeightUnits }
 
@@ -52,13 +53,13 @@ export function defaultUserSettings(userId: string): UserSettings {
 }
 
 export function mapUserSettingsRow(row: UserSettingsRow): UserSettings {
-  const types = Array.isArray(row.workout_types)
+  const rawTypes = Array.isArray(row.workout_types)
     ? row.workout_types.filter((t): t is string => typeof t === 'string')
-    : [...DEFAULT_WORKOUT_TYPES]
+    : null
 
   return {
     userId: row.user_id,
-    workoutTypes: types.length > 0 ? types : [...DEFAULT_WORKOUT_TYPES],
+    workoutTypes: resolveWorkoutTypes(rawTypes),
     reminderMorningWeightEnabled: row.reminder_morning_weight_enabled,
     reminderMorningWeightTime: row.reminder_morning_weight_time,
     reminderNightRecoveryEnabled: row.reminder_night_recovery_enabled,

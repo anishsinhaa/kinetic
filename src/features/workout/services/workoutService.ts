@@ -16,13 +16,21 @@ export async function createWorkout(
   userId: string,
   date: string,
   workoutType?: string,
+  /** Client-generated id for optimistic start */
+  workoutId?: string,
 ): Promise<{ id: string; startedAt: string }> {
   const startedAt = new Date().toISOString()
   const type = workoutType?.trim() || null
+  const id =
+    workoutId ??
+    (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : undefined)
 
   const withType = await supabase
     .from('workouts')
     .insert({
+      ...(id ? { id } : {}),
       user_id: userId,
       date,
       started_at: startedAt,
@@ -45,6 +53,7 @@ export async function createWorkout(
     const fallback = await supabase
       .from('workouts')
       .insert({
+        ...(id ? { id } : {}),
         user_id: userId,
         date,
         started_at: startedAt,
@@ -197,25 +206,34 @@ function isMissingColumnError(error: { message?: string; code?: string } | null)
   )
 }
 
-export async function addSet(
+/**
+ * Single write path for a set: upsert by primary key so rapid edits never duplicate rows.
+ */
+export async function upsertSet(
+  setId: string,
   workoutExerciseId: string,
   setData: AddSetInput,
 ): Promise<string> {
   const withV2 = {
+    id: setId,
     workout_exercise_id: workoutExerciseId,
     ...setWritePayload(setData, true),
   }
-  const first = await supabase.from('sets').insert(withV2).select('id').single()
+  const first = await supabase.from('sets').upsert(withV2, { onConflict: 'id' }).select('id').single()
 
   if (!first.error) return (first.data as Pick<SetRow, 'id'>).id
 
   if (isMissingColumnError(first.error)) {
     const fallback = await supabase
       .from('sets')
-      .insert({
-        workout_exercise_id: workoutExerciseId,
-        ...setWritePayload(setData, false),
-      })
+      .upsert(
+        {
+          id: setId,
+          workout_exercise_id: workoutExerciseId,
+          ...setWritePayload(setData, false),
+        },
+        { onConflict: 'id' },
+      )
       .select('id')
       .single()
     if (fallback.error) throw toServiceError(fallback.error)
@@ -225,10 +243,24 @@ export async function addSet(
   throw toServiceError(first.error)
 }
 
+/** @deprecated Prefer upsertSet */
+export async function addSet(
+  workoutExerciseId: string,
+  setData: AddSetInput,
+): Promise<string> {
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return upsertSet(id, workoutExerciseId, setData)
+}
+
+/** @deprecated Prefer upsertSet */
 export async function updateSet(
   setId: string,
   setData: AddSetInput,
 ): Promise<void> {
+  // Update-only path kept for callers that already have a row; still safe via upsert when weid known
   const first = await supabase
     .from('sets')
     .update(setWritePayload(setData, true))
@@ -473,10 +505,10 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
   const exerciseNames = exercises.map((e) => e.name)
 
   const allSets = exerciseRows.flatMap((we) => we.sets ?? [])
-  // Volume from every completed set (weight+reps or completed_at), not only fully synced rows
+  // Volume = sum(weight × reps) of completed sets only
   const completed = allSets.filter(isCompletedSet)
   const setCount = completed.length
-  const volume = Math.round(totalVolumeKg(allSets))
+  const volume = Math.round(totalVolumeKg(completed))
 
   return {
     label: row.workout_type || row.name || 'Workout Session',

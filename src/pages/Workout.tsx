@@ -7,7 +7,6 @@ import { Plus, Timer, Dumbbell, Loader2 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
-  addSet as addSetDb,
   addExerciseToWorkout,
   createWorkout,
   finishWorkout as finishWorkoutDb,
@@ -15,13 +14,22 @@ import {
   getLastPerformance,
   getExercisePersonalRecord,
   updateWorkoutLabel,
-  updateSet as updateSetDb,
+  upsertSet,
 } from '../features/workout/services/workoutService'
+import { getUserSettings } from '../features/settings/services/settingsService'
+import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
+import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { useCurrentUser } from '../features/auth/useAuth'
 
-/** Select existing value so typing replaces prefilled weight/reps instead of appending. */
 function selectOnFocus(e: FocusEvent<HTMLInputElement>) {
   e.target.select()
+}
+
+function newClientId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
 export default function Workout() {
@@ -43,6 +51,7 @@ export default function Workout() {
     exercises,
     startWorkout,
     setWorkoutLabel,
+    setWorkoutTypes,
     addWorkoutType,
     addSet,
     updateSet,
@@ -50,36 +59,89 @@ export default function Workout() {
     addExercise,
   } = useWorkoutStore()
 
-  const [isStarting, setIsStarting] = useState(false)
   const [isFinishing, setIsFinishing] = useState(false)
   const [showTypeSetup, setShowTypeSetup] = useState(false)
   const [selectedType, setSelectedType] = useState('')
   const [saveError, setSaveError] = useState('')
   const [typeError, setTypeError] = useState('')
   const [tick, setTick] = useState(Date.now())
+  // False only while an optimistic create is still in flight
+  const [dbReady, setDbReady] = useState(true)
   const [setStatusMap, setSetStatusMap] = useState<
     Record<string, 'idle' | 'saving' | 'saved' | 'error'>
   >({})
 
-  // Serialized per-set persist chain — last write always wins; never drop reps after weight.
-  const persistChains = useRef(new Map<string, Promise<void>>())
   const justAddedSetIdRef = useRef<string | null>(null)
+  const startingRef = useRef(false)
 
-  const canEdit = Boolean(currentWorkoutId)
+  const persistQueueRef = useRef(
+    createSetPersistQueue(async (payload) => {
+      const statusKey = payload.setId
+      setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'saving' }))
+      try {
+        // Always re-read store so weight→reps edits never overwrite with stale values
+        const fresh = useWorkoutStore
+          .getState()
+          .exercises.flatMap((e) => e.sets.map((s) => ({ exercise: e, set: s })))
+          .find(({ set }) => set.id === payload.setId)
+
+        const setItem = fresh?.set
+        const workoutExerciseId =
+          fresh?.exercise.dbWorkoutExerciseId ?? payload.workoutExerciseId
+        if (!setItem || !workoutExerciseId) return
+
+        await upsertSet(payload.setId, workoutExerciseId, {
+          reps: setItem.reps === '' ? null : parseInt(setItem.reps, 10),
+          weight: setItem.weight === '' ? null : parseFloat(setItem.weight),
+          to_failure: setItem.toFailure,
+          set_index: payload.setIndex,
+        })
+        updateSet(fresh.exercise.id, payload.setId, { dbSetId: payload.setId })
+        setSaveError('')
+        setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'saved' }))
+      } catch (err) {
+        setSaveError((err as Error).message)
+        setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'error' }))
+        throw err
+      }
+    }, 300),
+  )
+
+  const canEdit = Boolean(currentWorkoutId) && dbReady
 
   const latestWorkoutQuery = useQuery({
     queryKey: ['workout', 'latest-completed', userId],
     queryFn: () => getLatestCompletedWorkout(userId),
   })
 
-  // Dashboard / deep-link: one tap Start → land on type chips
+  // Seed / refresh type chips from user_settings (defaults when empty)
+  useEffect(() => {
+    let cancelled = false
+    void getUserSettings(userId)
+      .then((settings) => {
+        if (cancelled) return
+        setWorkoutTypes(resolveWorkoutTypes(settings.workoutTypes))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setWorkoutTypes(resolveWorkoutTypes(null))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId, setWorkoutTypes])
+
+  // Ensure persisted store always expands to full defaults on mount
+  useEffect(() => {
+    setWorkoutTypes(resolveWorkoutTypes(useWorkoutStore.getState().workoutTypes))
+  }, [setWorkoutTypes])
+
   useEffect(() => {
     if (!currentWorkoutId && (autoStart || isRepeatMode)) {
       setShowTypeSetup(true)
     }
   }, [autoStart, isRepeatMode, currentWorkoutId])
 
-  // On repeat mode: pre-highlight last workout's type chip
   useEffect(() => {
     if (isRepeatMode && !currentWorkoutId && latestWorkoutQuery.data) {
       setSelectedType(latestWorkoutQuery.data.label)
@@ -110,10 +172,31 @@ export default function Workout() {
     return `${h}:${m}:${s}`
   }, [tick, workoutStartedAt])
 
+  const queuePersist = (
+    exerciseLocalId: string,
+    setLocalId: string,
+    dbWorkoutExerciseId: string | undefined,
+    index: number,
+  ) => {
+    if (!dbWorkoutExerciseId) return
+    const exercise = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
+    const setItem = exercise?.sets.find((s) => s.id === setLocalId)
+    if (!setItem) return
+
+    persistQueueRef.current.schedule({
+      setId: setLocalId,
+      workoutExerciseId: dbWorkoutExerciseId,
+      reps: setItem.reps === '' ? null : parseInt(setItem.reps, 10),
+      weight: setItem.weight === '' ? null : parseFloat(setItem.weight),
+      toFailure: setItem.toFailure,
+      setIndex: index + 1,
+    })
+  }
+
   // ── Start / Finish ─────────────────────────────────────────────────────────
 
-  const beginWorkoutWithType = async (typeLabel: string) => {
-    if (currentWorkoutId || isStarting) return
+  const beginWorkoutWithType = (typeLabel: string) => {
+    if (currentWorkoutId || startingRef.current) return
 
     const normalizedType = typeLabel.trim()
     if (!normalizedType) {
@@ -121,77 +204,78 @@ export default function Workout() {
       return
     }
 
-    try {
-      setIsStarting(true)
-      setTypeError('')
-      setSelectedType(normalizedType)
-      addWorkoutType(normalizedType)
+    startingRef.current = true
+    setTypeError('')
+    setSelectedType(normalizedType)
+    addWorkoutType(normalizedType)
+    setSaveError('')
+    setDbReady(false)
 
-      const created = await createWorkout(userId, today, normalizedType)
-      startWorkout(created.id, today, created.startedAt)
-      setWorkoutLabel(normalizedType)
-      setShowTypeSetup(false)
-      setSaveError('')
+    // Optimistic: enter the session immediately, create the row in the background
+    const workoutId = newClientId()
+    const startedAt = new Date().toISOString()
+    startWorkout(workoutId, today, startedAt, normalizedType)
+    setWorkoutLabel(normalizedType)
+    setShowTypeSetup(false)
 
-      // Clear start/repeat query params
-      if (autoStart || isRepeatMode) {
-        setSearchParams({}, { replace: true })
-      }
-
-      if (isRepeatMode && latestWorkoutQuery.data?.exercises?.length) {
-        for (const ex of latestWorkoutQuery.data.exercises) {
-          try {
-            const dbWeId = await addExerciseToWorkout(created.id, ex.exerciseId, ex.orderIndex)
-            const lastSets = await getLastPerformance(userId, ex.exerciseId)
-            const lastPerformance =
-              lastSets.length > 0
-                ? `Last: ${lastSets
-                    .map((s) => `${s.weight ?? '-'}kg x ${s.reps ?? '-'}`)
-                    .join(' • ')}`
-                : 'No previous performance'
-            const pr = await getExercisePersonalRecord(userId, ex.exerciseId)
-            const personalRecord = pr
-              ? `PR: ${pr.weight ?? '-'}kg x ${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
-              : 'No PR yet'
-            addExercise({
-              exerciseId: ex.exerciseId,
-              name: ex.name,
-              muscleGroup: ex.muscleGroup,
-              dbWorkoutExerciseId: dbWeId,
-              lastPerformance,
-              personalRecord,
-            })
-          } catch {
-            // Non-fatal: skip this exercise if it fails
-          }
-        }
-        navigate('/workout', { replace: true })
-      }
-    } catch (err) {
-      setSaveError((err as Error).message)
-    } finally {
-      setIsStarting(false)
+    if (autoStart || isRepeatMode) {
+      setSearchParams({}, { replace: true })
     }
+
+    void (async () => {
+      try {
+        await createWorkout(userId, today, normalizedType, workoutId)
+        setDbReady(true)
+
+        if (isRepeatMode && latestWorkoutQuery.data?.exercises?.length) {
+          for (const ex of latestWorkoutQuery.data.exercises) {
+            try {
+              const dbWeId = await addExerciseToWorkout(workoutId, ex.exerciseId, ex.orderIndex)
+              const lastSets = await getLastPerformance(userId, ex.exerciseId)
+              const lastPerformance =
+                lastSets.length > 0
+                  ? `Last: ${lastSets
+                      .map((s) => `${s.weight ?? '-'}kg x ${s.reps ?? '-'}`)
+                      .join(' • ')}`
+                  : 'No previous performance'
+              const pr = await getExercisePersonalRecord(userId, ex.exerciseId)
+              const personalRecord = pr
+                ? `PR: ${pr.weight ?? '-'}kg x ${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
+                : 'No PR yet'
+              addExercise({
+                exerciseId: ex.exerciseId,
+                name: ex.name,
+                muscleGroup: ex.muscleGroup,
+                dbWorkoutExerciseId: dbWeId,
+                lastPerformance,
+                personalRecord,
+              })
+            } catch {
+              // Non-fatal
+            }
+          }
+          navigate('/workout', { replace: true })
+        }
+      } catch (err) {
+        setSaveError((err as Error).message)
+        setDbReady(false)
+      } finally {
+        startingRef.current = false
+      }
+    })()
   }
 
   const handleStartWorkout = () => {
     if (currentWorkoutId) return
-    // First tap: show type chips. Chip tap starts the workout.
     setShowTypeSetup(true)
     setTypeError('')
-  }
-
-  const flushAllPersists = async () => {
-    const pending = [...persistChains.current.values()]
-    if (pending.length === 0) return
-    await Promise.allSettled(pending)
   }
 
   const handleFinishWorkout = async () => {
     if (!currentWorkoutId) return
     try {
       setIsFinishing(true)
-      await flushAllPersists()
+      await persistQueueRef.current.flushAll()
       await finishWorkoutDb(currentWorkoutId)
       finishWorkout()
       setShowTypeSetup(false)
@@ -207,107 +291,15 @@ export default function Workout() {
   // ── Set management ─────────────────────────────────────────────────────────
 
   const handleAddSet = async (exerciseLocalId: string, dbWorkoutExerciseId?: string) => {
-    const setIndexBeforeAdd =
-      useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)?.sets.length ?? 0
+    // Flush prior set writes so copied prefill never races with the previous row
+    await persistQueueRef.current.flushAll()
 
     const newSet = addSet(exerciseLocalId)
     if (!newSet || !dbWorkoutExerciseId) return
 
     justAddedSetIdRef.current = newSet.id
-
-    const statusKey = `${exerciseLocalId}:${newSet.id}`
-    setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'saving' }))
-
-    try {
-      const latest = useWorkoutStore
-        .getState()
-        .exercises.find((e) => e.id === exerciseLocalId)
-        ?.sets.find((s) => s.id === newSet.id)
-
-      const setId = await addSetDb(dbWorkoutExerciseId, {
-        reps: !latest || latest.reps === '' ? null : parseInt(latest.reps, 10),
-        weight: !latest || latest.weight === '' ? null : parseFloat(latest.weight),
-        to_failure: latest?.toFailure ?? false,
-        set_index: setIndexBeforeAdd + 1,
-      })
-      updateSet(exerciseLocalId, newSet.id, { dbSetId: setId })
-      setSaveError('')
-      setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'saved' }))
-    } catch (err) {
-      setSaveError((err as Error).message)
-      setSetStatusMap((prev) => ({ ...prev, [statusKey]: 'error' }))
-    }
-  }
-
-  /**
-   * Persist a set using a per-set promise chain so rapid weight→reps edits
-   * never race: each save reads the latest store values and runs after the prior one.
-   */
-  const persistSet = (
-    exerciseLocalId: string,
-    setLocalId: string,
-    dbWorkoutExerciseId: string | undefined,
-    index: number,
-  ) => {
-    if (!dbWorkoutExerciseId) return Promise.resolve()
-
-    const prev = persistChains.current.get(setLocalId) ?? Promise.resolve()
-    const next = prev
-      .catch(() => {
-        // Keep the chain alive after a failed save
-      })
-      .then(async () => {
-        const exercise = useWorkoutStore
-          .getState()
-          .exercises.find((e) => e.id === exerciseLocalId)
-        const setItem = exercise?.sets.find((s) => s.id === setLocalId)
-        if (!setItem) return
-
-        const payload = {
-          reps: setItem.reps === '' ? null : parseInt(setItem.reps, 10),
-          weight: setItem.weight === '' ? null : parseFloat(setItem.weight),
-          to_failure: setItem.toFailure,
-          set_index: index + 1,
-        }
-
-        const statusKey = `${exerciseLocalId}:${setLocalId}`
-        setSetStatusMap((prevMap) => ({ ...prevMap, [statusKey]: 'saving' }))
-
-        try {
-          // Re-read dbSetId in case a prior chained insert just finished
-          const fresh = useWorkoutStore
-            .getState()
-            .exercises.find((e) => e.id === exerciseLocalId)
-            ?.sets.find((s) => s.id === setLocalId)
-
-          if (fresh?.dbSetId) {
-            await updateSetDb(fresh.dbSetId, {
-              ...payload,
-              reps: fresh.reps === '' ? null : parseInt(fresh.reps, 10),
-              weight: fresh.weight === '' ? null : parseFloat(fresh.weight),
-              to_failure: fresh.toFailure,
-            })
-          } else {
-            const createdId = await addSetDb(dbWorkoutExerciseId, {
-              ...payload,
-              reps: fresh && fresh.reps !== '' ? parseInt(fresh.reps, 10) : payload.reps,
-              weight: fresh && fresh.weight !== '' ? parseFloat(fresh.weight) : payload.weight,
-              to_failure: fresh?.toFailure ?? payload.to_failure,
-            })
-            updateSet(exerciseLocalId, setLocalId, { dbSetId: createdId })
-          }
-
-          setSaveError('')
-          setSetStatusMap((prevMap) => ({ ...prevMap, [statusKey]: 'saved' }))
-        } catch (err) {
-          setSaveError((err as Error).message)
-          setSetStatusMap((prevMap) => ({ ...prevMap, [statusKey]: 'error' }))
-          throw err
-        }
-      })
-
-    persistChains.current.set(setLocalId, next)
-    return next
+    // Do NOT upsert immediately — prefilled reps/weight are UI hints only.
+    // First save happens on edit (debounced) or blur.
   }
 
   const title = useMemo(() => {
@@ -316,10 +308,10 @@ export default function Workout() {
   }, [currentWorkoutId, workoutLabel])
 
   const headerLabel = currentWorkoutId ? 'Session Active' : 'Ready to Train'
+  const typeChips = resolveWorkoutTypes(workoutTypes)
 
   return (
     <div className="pb-28">
-      {/* Header */}
       <div className="px-4 md:px-8 pt-5 md:pt-8 pb-4 md:pb-6 border-b border-border">
         <p className="text-[10px] text-primary uppercase tracking-widest mb-1">{headerLabel}</p>
         <div className="flex items-end justify-between">
@@ -339,7 +331,7 @@ export default function Workout() {
               Workout Type
             </p>
             <div className="flex flex-wrap gap-2">
-              {workoutTypes.map((type) => (
+              {typeChips.map((type) => (
                 <button
                   key={type}
                   type="button"
@@ -369,12 +361,11 @@ export default function Workout() {
                 Workout Type {isRepeatMode && <span className="text-primary">(repeating last)</span>}
               </label>
               <div className="flex flex-wrap gap-2">
-                {workoutTypes.map((type) => (
+                {typeChips.map((type) => (
                   <button
                     key={type}
                     type="button"
-                    disabled={isStarting}
-                    onClick={() => void beginWorkoutWithType(type)}
+                    onClick={() => beginWorkoutWithType(type)}
                     className={cn(
                       'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border transition-colors min-h-11',
                       selectedType === type
@@ -420,17 +411,10 @@ export default function Workout() {
               {latestWorkoutQuery.data.setCount} sets •{' '}
               {latestWorkoutQuery.data.totalVolumeKg} kg total volume
             </p>
-            {latestWorkoutQuery.data.exerciseNames.length > 0 && (
-              <p className="mt-1 text-xs text-text-muted">
-                {latestWorkoutQuery.data.exerciseNames.slice(0, 4).join(', ')}
-                {latestWorkoutQuery.data.exerciseNames.length > 4 ? ' …' : ''}
-              </p>
-            )}
           </div>
         )}
       </div>
 
-      {/* Exercises */}
       <div className="px-4 md:px-8 pt-5 md:pt-6 space-y-4 md:space-y-5">
         {exercises.map((ex) => (
           <div key={ex.id} className="bg-surface rounded-xl border border-border overflow-hidden">
@@ -458,8 +442,7 @@ export default function Workout() {
             </div>
 
             {ex.sets.map((set, idx) => {
-              const statusKey = `${ex.id}:${set.id}`
-              const status = setStatusMap[statusKey]
+              const status = setStatusMap[set.id]
               return (
                 <div
                   key={set.id}
@@ -483,12 +466,8 @@ export default function Workout() {
                         <Loader2 size={8} className="animate-spin" />
                       </span>
                     )}
-                    {status === 'saved' && (
-                      <span className="text-[9px] text-primary">✓</span>
-                    )}
-                    {status === 'error' && (
-                      <span className="text-[9px] text-red-400">!</span>
-                    )}
+                    {status === 'saved' && <span className="text-[9px] text-primary">✓</span>}
+                    {status === 'error' && <span className="text-[9px] text-red-400">!</span>}
                   </div>
 
                   <input
@@ -504,9 +483,15 @@ export default function Workout() {
                     value={set.weight}
                     disabled={!canEdit}
                     onFocus={selectOnFocus}
-                    onChange={(e) => updateSet(ex.id, set.id, { weight: e.target.value })}
-                    onBlur={() => void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
-                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
+                    onChange={(e) => {
+                      updateSet(ex.id, set.id, { weight: e.target.value })
+                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                    }}
+                    onBlur={() => {
+                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                      void persistQueueRef.current.flush(set.id)
+                    }}
+                    className="w-full max-w-20 bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
                   />
 
                   <input
@@ -515,16 +500,23 @@ export default function Workout() {
                     value={set.reps}
                     disabled={!canEdit}
                     onFocus={selectOnFocus}
-                    onChange={(e) => updateSet(ex.id, set.id, { reps: e.target.value })}
-                    onBlur={() => void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
-                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
+                    onChange={(e) => {
+                      updateSet(ex.id, set.id, { reps: e.target.value })
+                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                    }}
+                    onBlur={() => {
+                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                      void persistQueueRef.current.flush(set.id)
+                    }}
+                    className="w-full max-w-20 bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
                   />
 
                   <Toggle
                     checked={set.toFailure}
                     onChange={(v) => {
                       updateSet(ex.id, set.id, { toFailure: v })
-                      void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                      queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                      void persistQueueRef.current.flush(set.id)
                     }}
                   />
                 </div>
@@ -554,7 +546,6 @@ export default function Workout() {
         </button>
       </div>
 
-      {/* Sticky footer CTA */}
       <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 md:px-8 py-3 md:py-4 flex items-center justify-center">
         {currentWorkoutId ? (
           <Button
@@ -573,16 +564,10 @@ export default function Workout() {
           </Button>
         ) : showTypeSetup ? (
           <p className="text-sm text-text-secondary uppercase tracking-widest">
-            {isStarting ? 'Starting…' : 'Pick a type above'}
+            Pick a type above
           </p>
         ) : (
-          <Button
-            variant="secondary"
-            size="lg"
-            className="w-64"
-            disabled={isStarting}
-            onClick={handleStartWorkout}
-          >
+          <Button variant="secondary" size="lg" className="w-64" onClick={handleStartWorkout}>
             <Dumbbell size={14} className="mr-2" />
             Start Workout
           </Button>

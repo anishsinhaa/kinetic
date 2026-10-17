@@ -635,7 +635,7 @@ export default function Exercises() {
                       onChange={(e) => setCustomInstructions(e.target.value)}
                       placeholder="How to perform the movement, cues, setup…"
                       rows={4}
-                      className="w-full resize-y min-h-[88px] bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
+                      className="w-full resize-y min-h-22 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
                     />
                   </div>
                   {createMutation.isError && (

@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
 import type { PushSubscriptionRow, UserSettingsRow } from '../../../lib/supabase/database.types'
+import { DEFAULT_WORKOUT_TYPES } from '../../workout/constants'
 import {
   defaultUserSettings,
   mapUserSettingsRow,
@@ -48,7 +49,23 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
     .maybeSingle()
 
   if (error) throw toServiceError(error)
-  if (data) return mapUserSettingsRow(data as UserSettingsRow)
+
+  if (data) {
+    const row = data as UserSettingsRow
+    const rawTypes = Array.isArray(row.workout_types) ? row.workout_types : null
+    // Seed defaults when the stored list is missing/empty
+    if (!rawTypes || rawTypes.length === 0) {
+      const { data: seeded, error: seedError } = await supabase
+        .from('user_settings')
+        .update({ workout_types: [...DEFAULT_WORKOUT_TYPES] })
+        .eq('user_id', userId)
+        .select('*')
+        .single()
+      if (seedError) throw toServiceError(seedError)
+      return mapUserSettingsRow(seeded as UserSettingsRow)
+    }
+    return mapUserSettingsRow(row)
+  }
 
   const defaults = defaultUserSettings(userId)
   const { data: created, error: insertError } = await supabase

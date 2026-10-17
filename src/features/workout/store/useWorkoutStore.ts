@@ -1,30 +1,13 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { DEFAULT_WORKOUT_TYPES } from '../constants'
 import type { WorkoutExerciseDraft, WorkoutSetDraft } from '../types'
+import { resolveWorkoutTypes } from '../lib/workoutTypes'
 
-function uid() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-}
-
-function loadWorkoutTypes(): string[] {
-  if (typeof window === 'undefined') return [...DEFAULT_WORKOUT_TYPES]
-  try {
-    const raw = window.localStorage.getItem('workout_types')
-    if (!raw) return [...DEFAULT_WORKOUT_TYPES]
-    const parsed = JSON.parse(raw) as string[]
-    if (!Array.isArray(parsed) || parsed.length === 0) return [...DEFAULT_WORKOUT_TYPES]
-    // Always keep defaults available; append any custom labels after.
-    const custom = parsed.filter(
-      (t) =>
-        typeof t === 'string' &&
-        t.trim() &&
-        !DEFAULT_WORKOUT_TYPES.some((d) => d.toLowerCase() === t.trim().toLowerCase()),
-    )
-    return [...DEFAULT_WORKOUT_TYPES, ...custom]
-  } catch {
-    return [...DEFAULT_WORKOUT_TYPES]
+function newId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
   }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
 interface WorkoutStore {
@@ -34,8 +17,9 @@ interface WorkoutStore {
   workoutLabel: string
   workoutTypes: string[]
   exercises: WorkoutExerciseDraft[]
-  startWorkout: (workoutId: string, date: string, startedAt: string) => void
+  startWorkout: (workoutId: string, date: string, startedAt: string, label?: string) => void
   setWorkoutLabel: (label: string) => void
+  setWorkoutTypes: (types: string[]) => void
   addWorkoutType: (label: string) => void
   addExercise: (exercise: {
     exerciseId: string
@@ -61,28 +45,28 @@ export const useWorkoutStore = create<WorkoutStore>()(
       workoutDate: new Date().toISOString().slice(0, 10),
       workoutStartedAt: null,
       workoutLabel: '',
-      workoutTypes: loadWorkoutTypes(),
+      workoutTypes: resolveWorkoutTypes(null),
       exercises: [],
 
-      startWorkout: (workoutId, date, startedAt) =>
+      startWorkout: (workoutId, date, startedAt, label = '') =>
         set({
           currentWorkoutId: workoutId,
           workoutDate: date,
           workoutStartedAt: startedAt,
-          workoutLabel: '',
+          workoutLabel: label,
           exercises: [],
         }),
 
       setWorkoutLabel: (label) => set({ workoutLabel: label }),
 
+      setWorkoutTypes: (types) =>
+        set({
+          workoutTypes: resolveWorkoutTypes(types),
+        }),
+
       addWorkoutType: (label) =>
         set((state) => {
-          const normalized = label.trim()
-          if (!normalized) return state
-          if (state.workoutTypes.some((t) => t.toLowerCase() === normalized.toLowerCase())) {
-            return state
-          }
-          const next = [...state.workoutTypes, normalized]
+          const next = resolveWorkoutTypes([...state.workoutTypes, label])
           if (typeof window !== 'undefined') {
             window.localStorage.setItem('workout_types', JSON.stringify(next))
           }
@@ -97,7 +81,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
             exercises: [
               ...state.exercises,
               {
-                id: uid(),
+                id: newId(),
                 exerciseId: exercise.exerciseId,
                 dbWorkoutExerciseId: exercise.dbWorkoutExerciseId,
                 name: exercise.name,
@@ -115,12 +99,14 @@ export const useWorkoutStore = create<WorkoutStore>()(
         if (!target) return null
 
         const fallback = target.sets[target.sets.length - 1]
+        // Prefill UI from previous set for speed, but id is the DB primary key for upsert.
+        const id = setData?.id ?? newId()
         const nextSet: WorkoutSetDraft = {
-          id: uid(),
+          id,
+          dbSetId: id,
           reps: setData?.reps ?? fallback?.reps ?? '',
           weight: setData?.weight ?? fallback?.weight ?? '',
           toFailure: setData?.toFailure ?? false,
-          dbSetId: setData?.dbSetId,
         }
 
         set((state) => ({
@@ -164,6 +150,15 @@ export const useWorkoutStore = create<WorkoutStore>()(
         workoutTypes: state.workoutTypes,
         exercises: state.exercises,
       }),
+      // Rehydrate must re-merge defaults so old localStorage lists like ["Upper","Pull"] expand.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<WorkoutStore>
+        return {
+          ...current,
+          ...p,
+          workoutTypes: resolveWorkoutTypes(p.workoutTypes ?? current.workoutTypes),
+        }
+      },
     },
   ),
 )
