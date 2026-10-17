@@ -66,7 +66,7 @@ export function RestTimerRing({
   if (!endsAt) return null
 
   return (
-    <div className="fixed bottom-[4.75rem] md:bottom-16 left-0 md:left-52 right-0 z-40 px-4 pointer-events-none">
+    <div className="fixed bottom-19 md:bottom-16 left-0 md:left-52 right-0 z-40 px-4 pointer-events-none">
       <div className="pointer-events-auto max-w-lg mx-auto bg-surface/95 backdrop-blur border border-border rounded-xl px-3 py-2 shadow-card flex items-center gap-3">
         <div className="tabular-nums font-black text-primary text-sm w-10 shrink-0">
           {remainingSec}s
