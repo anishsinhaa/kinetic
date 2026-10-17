@@ -93,7 +93,7 @@ function DailyLogForm({
       </div>
 
       <div className="overflow-x-auto -mx-px">
-        <table className="w-full text-sm min-w-[500px]">
+        <table className="w-full text-sm min-w-125">
           <thead>
             <tr className="border-b border-border">
               <th className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-6 py-3 font-medium">
@@ -191,7 +191,7 @@ export default function Dashboard() {
         <div className="flex items-start md:items-end justify-between gap-3">
           <h1 className="text-4xl md:text-7xl font-black text-text-primary leading-none">Today</h1>
           <div className="flex flex-col sm:flex-row gap-2 md:gap-3 shrink-0 md:mb-2">
-            <Button variant="primary" size="md" onClick={() => navigate('/workout')}>
+            <Button variant="primary" size="md" onClick={() => navigate('/workout?start=1')}>
               <Dumbbell size={14} className="mr-2" />
               Start Workout
             </Button>
@@ -359,7 +359,7 @@ export default function Dashboard() {
           <div className="flex flex-col gap-2">
             <p className="text-text-muted text-sm">No workouts logged yet.</p>
             <button
-              onClick={() => navigate('/workout')}
+              onClick={() => navigate('/workout?start=1')}
               className="text-primary text-xs font-semibold hover:underline text-left"
             >
               Start your first workout →

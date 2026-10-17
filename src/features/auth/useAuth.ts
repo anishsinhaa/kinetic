@@ -52,7 +52,7 @@ export function useAuthListener() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return
 
-      // Refresh failed or session was revoked — never leave the UI stuck on Loading.
+      // Refresh failed — sign out cleanly instead of hanging on Loading.
       if (event === 'TOKEN_REFRESHED' && !session) {
         void clearSessionAndShowLogin()
         return

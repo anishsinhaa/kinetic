@@ -44,7 +44,7 @@ function ScaleSelector({
   midLabel,
   highLabel,
 }: {
-  value: number
+  value: number | null
   onChange: (n: number) => void
   lowLabel: string
   midLabel: string
@@ -211,8 +211,11 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
   const { mutateAsync: save, isPending: isSaving, isSuccess: isSaved, isError, error } =
     useSaveFeedback()
 
-  const [fatigue, setFatigue] = useState(existing?.fatigue ?? 5)
-  const [sleepQuality, setSleepQuality] = useState(existing?.sleep_quality ?? 7)
+  // No fake pre-selected values when nothing is logged yet
+  const [fatigue, setFatigue] = useState<number | null>(existing?.fatigue ?? null)
+  const [sleepQuality, setSleepQuality] = useState<number | null>(
+    existing?.sleep_quality ?? null,
+  )
   const [painFlag, setPainFlag] = useState(existing?.pain_flag ?? false)
   const [soreness, setSoreness] = useState<Record<string, number>>(
     () => sorenessToMap(existing?.soreness ?? []),
@@ -222,6 +225,7 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
     Object.entries(soreness).map(([muscle_group, level]) => ({ muscle_group, level }))
 
   const handleSubmit = async () => {
+    if (fatigue == null || sleepQuality == null) return
     await save({
       fatigue,
       sleepQuality,
@@ -229,6 +233,8 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
       soreness: buildSorenessList(),
     })
   }
+
+  const canSubmit = fatigue != null && sleepQuality != null
 
   const soreCount = Object.keys(soreness).length
   const hasExisting = Boolean(existing)
@@ -277,11 +283,11 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
           </p>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div>
-              <p className="text-2xl font-black text-text-primary">{fatigue}</p>
+              <p className="text-2xl font-black text-text-primary">{fatigue ?? '—'}</p>
               <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Fatigue</p>
             </div>
             <div>
-              <p className="text-2xl font-black text-primary">{sleepQuality}</p>
+              <p className="text-2xl font-black text-primary">{sleepQuality ?? '—'}</p>
               <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Sleep</p>
             </div>
             <div>
@@ -322,7 +328,7 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
             size="lg"
             className="w-full"
             onClick={handleSubmit}
-            disabled={isSaving}
+            disabled={isSaving || !canSubmit}
           >
             {isSaving ? (
               <>

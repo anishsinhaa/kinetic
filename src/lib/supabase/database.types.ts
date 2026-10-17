@@ -30,9 +30,16 @@ export interface WorkoutRow {
   id: string
   user_id: string
   name: string
+  /** Workout type chip label (Push, Pull, …). Prefer this over name. */
+  workout_type: string | null
   date: string
   started_at: string | null
   ended_at: string | null
+  warmup_started_at: string | null
+  warmup_ended_at: string | null
+  warmup_note: string | null
+  feel: number | null
+  note: string | null
   created_at: string
 }
 
@@ -49,11 +56,15 @@ export interface ExerciseRow {
   created_at: string
 }
 
+export type WorkoutExerciseTarget = 'maintain' | 'increase_weight' | 'increase_reps'
+
 export interface WorkoutExerciseRow {
   id: string
   workout_id: string
   exercise_id: string
   order_index: number
+  target: WorkoutExerciseTarget | null
+  note: string | null
 }
 
 export interface SetRow {
@@ -62,7 +73,10 @@ export interface SetRow {
   set_index: number
   reps: number | null
   weight: number | null
+  /** Legacy column — kept in sync with `failed`. */
   to_failure: boolean
+  failed: boolean
+  completed_at: string | null
   created_at: string
 }
 
@@ -81,4 +95,34 @@ export interface MuscleSorenessRow {
   feedback_id: string
   muscle_group: string
   level: number | null
+}
+
+export type WeightUnits = 'kg' | 'lb'
+
+export interface UserSettingsRow {
+  user_id: string
+  workout_types: string[]
+  reminder_morning_weight_enabled: boolean
+  reminder_morning_weight_time: string | null
+  reminder_night_recovery_enabled: boolean
+  reminder_night_recovery_time: string | null
+  reminder_workout_enabled: boolean
+  reminder_workout_time: string | null
+  reminder_workout_days: number[]
+  rest_timer_seconds: number
+  weight_step: number
+  units: WeightUnits
+  created_at: string
+  updated_at: string
+}
+
+export interface PushSubscriptionRow {
+  id: string
+  user_id: string
+  endpoint: string
+  p256dh: string
+  auth: string
+  user_agent: string | null
+  created_at: string
+  updated_at: string
 }

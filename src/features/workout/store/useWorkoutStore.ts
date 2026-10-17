@@ -1,9 +1,30 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { DEFAULT_WORKOUT_TYPES } from '../constants'
 import type { WorkoutExerciseDraft, WorkoutSetDraft } from '../types'
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function loadWorkoutTypes(): string[] {
+  if (typeof window === 'undefined') return [...DEFAULT_WORKOUT_TYPES]
+  try {
+    const raw = window.localStorage.getItem('workout_types')
+    if (!raw) return [...DEFAULT_WORKOUT_TYPES]
+    const parsed = JSON.parse(raw) as string[]
+    if (!Array.isArray(parsed) || parsed.length === 0) return [...DEFAULT_WORKOUT_TYPES]
+    // Always keep defaults available; append any custom labels after.
+    const custom = parsed.filter(
+      (t) =>
+        typeof t === 'string' &&
+        t.trim() &&
+        !DEFAULT_WORKOUT_TYPES.some((d) => d.toLowerCase() === t.trim().toLowerCase()),
+    )
+    return [...DEFAULT_WORKOUT_TYPES, ...custom]
+  } catch {
+    return [...DEFAULT_WORKOUT_TYPES]
+  }
 }
 
 interface WorkoutStore {
@@ -40,10 +61,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
       workoutDate: new Date().toISOString().slice(0, 10),
       workoutStartedAt: null,
       workoutLabel: '',
-      workoutTypes:
-        typeof window !== 'undefined'
-          ? JSON.parse(window.localStorage.getItem('workout_types') ?? '[]')
-          : [],
+      workoutTypes: loadWorkoutTypes(),
       exercises: [],
 
       startWorkout: (workoutId, date, startedAt) =>
@@ -138,7 +156,6 @@ export const useWorkoutStore = create<WorkoutStore>()(
     }),
     {
       name: 'kinetic-active-workout',
-      // Only persist session state (not derived data like workoutTypes which has its own key)
       partialize: (state) => ({
         currentWorkoutId: state.currentWorkoutId,
         workoutDate: state.workoutDate,

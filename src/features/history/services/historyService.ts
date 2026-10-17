@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
+import { isCompletedSet, totalVolumeKg } from '../../workout/lib/volume'
 import type { DailyLogEntry, ExerciseHistory, ExerciseHistorySession } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,7 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
       .order('date', { ascending: false }),
     supabase
       .from('workouts')
-      .select('name, date, created_at, ended_at')
+      .select('name, date, created_at, started_at, ended_at')
       .eq('user_id', userId)
       .not('ended_at', 'is', null),
   ])
@@ -25,7 +26,13 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
   if (workoutsResult.error) throw toServiceError(workoutsResult.error)
 
   // Build a date → workouts map for O(1) join
-  type WorkoutRow = { name: string | null; date: string; created_at: string; ended_at: string }
+  type WorkoutRow = {
+    name: string | null
+    date: string
+    created_at: string
+    started_at: string | null
+    ended_at: string
+  }
   const workoutsByDate = new Map<string, WorkoutRow[]>()
   for (const w of (workoutsResult.data ?? []) as WorkoutRow[]) {
     const list = workoutsByDate.get(w.date) ?? []
@@ -36,16 +43,17 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
   return (logsResult.data ?? []).map((row) => {
     const dayWorkouts = workoutsByDate.get(row.date as string) ?? []
 
-    // Sum duration across all workouts that day
+    // Sum duration across all workouts that day (prefer started_at)
     const totalDurationMins = dayWorkouts.reduce((sum, w) => {
-      if (!w.ended_at || !w.created_at) return sum
+      if (!w.ended_at) return sum
+      const start = w.started_at ?? w.created_at
+      if (!start) return sum
       const mins = Math.round(
-        (new Date(w.ended_at).getTime() - new Date(w.created_at).getTime()) / 60000,
+        (new Date(w.ended_at).getTime() - new Date(start).getTime()) / 60000,
       )
       return sum + Math.max(0, mins)
     }, 0)
 
-    // Pick label: prefer the first named workout, fall back to count
     const label =
       dayWorkouts.find((w) => w.name?.trim())?.name?.trim() ??
       (dayWorkouts.length > 1 ? `${dayWorkouts.length} workouts` : null)
@@ -72,7 +80,12 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
 type RawWorkoutExerciseRow = {
   exercise_id: string
   exercises: { id: string; name: string; muscle_group: string } | { id: string; name: string; muscle_group: string }[] | null
-  sets: Array<{ weight: number | null; reps: number | null; set_index: number | null }> | null
+  sets: Array<{
+    weight: number | null
+    reps: number | null
+    set_index: number | null
+    completed_at?: string | null
+  }> | null
   workouts: { date: string } | { date: string }[] | null
 }
 
@@ -117,17 +130,14 @@ export async function getExerciseHistory(userId: string): Promise<ExerciseHistor
 
     const entry = exerciseMap.get(row.exercise_id)!
 
-    // Each workout_exercise row is one session entry for that date
+    // Volume from all completed sets (weight+reps or completed_at), not only "fully saved"
     const sets = (row.sets ?? [])
-      .filter((s) => s.reps != null || s.weight != null)
+      .filter(isCompletedSet)
       .sort((a, b) => (a.set_index ?? 0) - (b.set_index ?? 0))
 
     if (sets.length === 0) continue
 
-    const totalVolume = sets.reduce(
-      (sum, s) => sum + (s.weight ?? 0) * (s.reps ?? 0),
-      0,
-    )
+    const totalVolume = totalVolumeKg(sets)
     const allTimeBestWeight = Math.max(0, ...sets.map((s) => s.weight ?? 0))
 
     // Use date as key to group multiple workout_exercises from the same workout

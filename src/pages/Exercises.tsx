@@ -25,6 +25,7 @@ import {
   addExerciseToWorkout,
   getExercisePersonalRecord,
   getLastPerformance,
+  getRecentExerciseIds,
 } from '../features/workout/services/workoutService'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import { useCurrentUser } from '../features/auth/useAuth'
@@ -259,19 +260,50 @@ export default function Exercises() {
   })
   const libraryIsEmpty = (libraryCountQuery.data ?? 0) < 5
 
+  // Recent exercises first (avoids obscure alphabetical-first library ordering)
+  const recentIdsQuery = useQuery({
+    queryKey: ['exercises', 'recent-ids', userId],
+    queryFn: () => getRecentExerciseIds(userId),
+    staleTime: 5 * 60 * 1000,
+  })
+
   // ── Library search from Supabase ──────────────────────────────────────────
+  // No placeholderData across muscle filters — that left Quads results visible while All was selected.
   const libraryQuery = useQuery({
     queryKey: ['exercises', 'library', debouncedSearch, activeMuscle],
     queryFn: () =>
       searchExercisesFromDb({
         name: debouncedSearch || undefined,
         muscleGroup: activeMuscle ?? undefined,
-        limit: 40,
+        limit: 60,
       }),
     enabled: !libraryIsEmpty,
     staleTime: 5 * 60 * 1000,
-    placeholderData: (prev) => prev,
   })
+
+  const sortedLibrary = useMemo(() => {
+    const rows = libraryQuery.data ?? []
+    const recent = recentIdsQuery.data ?? []
+    const recentRank = new Map(recent.map((id, i) => [id, i]))
+    const q = debouncedSearch.trim().toLowerCase()
+
+    return [...rows].sort((a, b) => {
+      const aRecent = recentRank.has(a.id) ? recentRank.get(a.id)! : Number.MAX_SAFE_INTEGER
+      const bRecent = recentRank.has(b.id) ? recentRank.get(b.id)! : Number.MAX_SAFE_INTEGER
+      if (aRecent !== bRecent) return aRecent - bRecent
+
+      if (q) {
+        const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1
+        const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1
+        if (aStarts !== bStarts) return aStarts - bStarts
+      }
+
+      // Prefer shorter, common names over obscure long catalogue entries
+      const lenDiff = a.name.length - b.name.length
+      if (Math.abs(lenDiff) > 8) return lenDiff
+      return a.name.localeCompare(b.name)
+    }).slice(0, 40)
+  }, [libraryQuery.data, recentIdsQuery.data, debouncedSearch])
 
   // ── Custom exercises ───────────────────────────────────────────────────────
   const customQuery = useQuery({
@@ -365,7 +397,7 @@ export default function Exercises() {
 
   const addSelectedToWorkout = async () => {
     const pool = activeTab === 'library'
-      ? (libraryQuery.data ?? []).filter((e) => selectedIds.includes(e.id))
+      ? sortedLibrary.filter((e) => selectedIds.includes(e.id))
       : filteredCustom.filter((e) => selectedIds.includes(e.id))
 
     for (const ex of pool) {
@@ -438,10 +470,11 @@ export default function Exercises() {
                 {/* Muscle filter chips */}
                 <div className="flex gap-2 flex-wrap mb-5">
                   <button
+                    type="button"
                     onClick={() => setActiveMuscle(null)}
                     className={cn(
-                      'px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border transition-colors',
-                      !activeMuscle
+                      'px-3 py-1.5 rounded-xl text-xs font-semibold uppercase tracking-wider border transition-colors focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/50',
+                      activeMuscle === null
                         ? 'bg-primary text-black border-primary'
                         : 'border-border text-text-secondary hover:border-text-secondary hover:text-text-primary',
                     )}
@@ -451,9 +484,10 @@ export default function Exercises() {
                   {MUSCLE_FILTERS.map(({ label, value }) => (
                     <button
                       key={value}
-                      onClick={() => setActiveMuscle(activeMuscle === value ? null : value)}
+                      type="button"
+                      onClick={() => setActiveMuscle((prev) => (prev === value ? null : value))}
                       className={cn(
-                        'px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border transition-colors',
+                        'px-3 py-1.5 rounded-xl text-xs font-semibold uppercase tracking-wider border transition-colors focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/50',
                         activeMuscle === value
                           ? 'bg-primary text-black border-primary'
                           : 'border-border text-text-secondary hover:border-text-secondary hover:text-text-primary',
@@ -482,18 +516,21 @@ export default function Exercises() {
 
                 {!libraryQuery.isLoading && !libraryQuery.isError && (
                   <>
-                    {(libraryQuery.data?.length ?? 0) === 0 ? (
+                    {sortedLibrary.length === 0 ? (
                       <div className="text-center py-12 text-text-muted text-sm">
                         No exercises found. Try a different search or muscle filter.
                       </div>
                     ) : (
                       <>
                         <p className="text-[10px] text-text-muted uppercase tracking-widest mb-3">
-                          {libraryQuery.data!.length} results
-                          {libraryQuery.data!.length === 40 && ' (showing first 40)'}
+                          {sortedLibrary.length} results
+                          {(libraryQuery.data?.length ?? 0) > 40 && ' (showing first 40)'}
+                          {(recentIdsQuery.data?.length ?? 0) > 0 && !debouncedSearch
+                            ? ' · recent first'
+                            : ''}
                         </p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {libraryQuery.data!.map((ex) => (
+                          {sortedLibrary.map((ex) => (
                             <ExerciseCard
                               key={ex.id}
                               exercise={ex}
