@@ -1,8 +1,27 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@theme {
+  --color-primary: #CCFF00;
+  --color-primary-hover: #b8e600;
+  --color-background: #0B0B0B;
+  --color-surface: #161616;
+  --color-surface-2: #1E1E1E;
+  --color-surface-3: #252525;
+  --color-border: #2A2A2A;
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #787878;
+  --color-text-muted: #4A4A4A;
+
+  --radius-DEFAULT: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  --font-sans: Inter, system-ui, sans-serif;
+
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
 
 @layer base {
   body {

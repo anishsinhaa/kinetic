@@ -305,7 +305,7 @@ export default function Workout() {
                 void updateWorkoutLabel(currentWorkoutId, workoutLabel.trim())
               }}
               placeholder="Optional workout label (e.g. Upper, Cardio, etc.)"
-              className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+              className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
             />
           </div>
         )}
@@ -324,7 +324,7 @@ export default function Workout() {
                   if (typeError) setTypeError('')
                 }}
                 placeholder="Type or select (e.g. Upper, Cardio, Full Body)"
-                className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+                className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
               />
               <datalist id="workout-types">
                 {workoutTypes.map((type) => (
@@ -462,7 +462,7 @@ export default function Workout() {
                     disabled={!canEdit}
                     onChange={(e) => updateSet(ex.id, set.id, { weight: e.target.value })}
                     onBlur={() => void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
-                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-none focus:border-primary transition-colors"
+                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
                   />
 
                   {/* Col 3: reps */}
@@ -473,7 +473,7 @@ export default function Workout() {
                     disabled={!canEdit}
                     onChange={(e) => updateSet(ex.id, set.id, { reps: e.target.value })}
                     onBlur={() => void persistSet(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
-                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-none focus:border-primary transition-colors"
+                    className="w-full max-w-[5rem] bg-surface-2 border border-border rounded-lg px-2 py-2 text-sm text-center text-text-primary focus:outline-hidden focus:border-primary transition-colors"
                   />
 
                   {/* Col 4: failure toggle */}

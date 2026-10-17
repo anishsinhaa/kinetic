@@ -19,6 +19,7 @@ export async function createWorkout(
     .insert({
       user_id: userId,
       date,
+      started_at: new Date().toISOString(),
     })
     .select('id, created_at')
     .single()

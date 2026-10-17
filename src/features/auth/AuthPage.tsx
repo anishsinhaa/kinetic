@@ -183,7 +183,7 @@ export default function AuthPage() {
                     value={email}
                     onChange={(e) => { setEmail(e.target.value); clearError() }}
                     placeholder="you@example.com"
-                    className="w-full bg-surface-2 border border-border rounded-xl px-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
+                    className="w-full bg-surface-2 border border-border rounded-xl px-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary transition-colors"
                   />
                 </div>
 
@@ -197,7 +197,7 @@ export default function AuthPage() {
                     value={password}
                     onChange={(e) => { setPassword(e.target.value); clearError() }}
                     placeholder="Min. 6 characters"
-                    className="w-full bg-surface-2 border border-border rounded-xl px-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
+                    className="w-full bg-surface-2 border border-border rounded-xl px-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary transition-colors"
                   />
                 </div>
 

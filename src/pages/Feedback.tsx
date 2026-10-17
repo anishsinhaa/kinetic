@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Zap, Moon, AlertTriangle, Activity, CheckCircle2, Loader2 } from 'lucide-react'
@@ -7,6 +7,7 @@ import { useTodayFeedback, useSaveFeedback } from '../features/feedback/hooks/us
 import {
   MUSCLE_GROUPS,
   SORENESS_LEVELS,
+  type BodyFeedback,
   type SorenessEntry,
 } from '../features/feedback/types'
 
@@ -195,33 +196,27 @@ function SorenessLegend() {
 }
 
 // ---------------------------------------------------------------------------
-// Main Feedback Page
+// Feedback form — keyed by existing id so initial values seed without an effect
 // ---------------------------------------------------------------------------
 
-export default function Feedback() {
-  const { data: existing, isLoading } = useTodayFeedback()
-  const { mutateAsync: save, isPending: isSaving, isSuccess: isSaved, isError, error } = useSaveFeedback()
+function sorenessToMap(entries: SorenessEntry[]): Record<string, number> {
+  const map: Record<string, number> = {}
+  for (const s of entries) {
+    map[s.muscle_group] = s.level
+  }
+  return map
+}
 
-  const [fatigue, setFatigue] = useState(5)
-  const [sleepQuality, setSleepQuality] = useState(7)
-  const [painFlag, setPainFlag] = useState(false)
-  const [soreness, setSoreness] = useState<Record<string, number>>({})
-  const [seeded, setSeeded] = useState(false)
+function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined }) {
+  const { mutateAsync: save, isPending: isSaving, isSuccess: isSaved, isError, error } =
+    useSaveFeedback()
 
-  // Pre-fill from existing today's feedback
-  useEffect(() => {
-    if (existing && !seeded) {
-      setSeeded(true)
-      setFatigue(existing.fatigue ?? 5)
-      setSleepQuality(existing.sleep_quality ?? 7)
-      setPainFlag(existing.pain_flag ?? false)
-      const sorenessMap: Record<string, number> = {}
-      for (const s of existing.soreness) {
-        sorenessMap[s.muscle_group] = s.level
-      }
-      setSoreness(sorenessMap)
-    }
-  }, [existing, seeded])
+  const [fatigue, setFatigue] = useState(existing?.fatigue ?? 5)
+  const [sleepQuality, setSleepQuality] = useState(existing?.sleep_quality ?? 7)
+  const [painFlag, setPainFlag] = useState(existing?.pain_flag ?? false)
+  const [soreness, setSoreness] = useState<Record<string, number>>(
+    () => sorenessToMap(existing?.soreness ?? []),
+  )
 
   const buildSorenessList = (): SorenessEntry[] =>
     Object.entries(soreness).map(([muscle_group, level]) => ({ muscle_group, level }))
@@ -233,10 +228,136 @@ export default function Feedback() {
       painFlag,
       soreness: buildSorenessList(),
     })
-    setSeeded(false) // allow re-seeding on next fetch
   }
 
   const soreCount = Object.keys(soreness).length
+  const hasExisting = Boolean(existing)
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+      {/* Left column */}
+      <div className="space-y-5">
+        {/* Fatigue */}
+        <Card className="p-6">
+          <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-6">
+            <Zap size={15} className="text-primary" />
+            Fatigue Level
+          </h3>
+          <ScaleSelector
+            value={fatigue}
+            onChange={setFatigue}
+            lowLabel="Fresh"
+            midLabel="Neutral"
+            highLabel="Exhausted"
+          />
+        </Card>
+
+        {/* Sleep quality */}
+        <Card className="p-6">
+          <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-6">
+            <Moon size={15} className="text-primary" />
+            Sleep Quality
+          </h3>
+          <ScaleSelector
+            value={sleepQuality}
+            onChange={setSleepQuality}
+            lowLabel="Restless"
+            midLabel="Standard"
+            highLabel="Deep"
+          />
+        </Card>
+
+        {/* Pain flag */}
+        <PainToggle value={painFlag} onChange={setPainFlag} />
+
+        {/* Recovery preview */}
+        <Card className="p-4">
+          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">
+            Recovery Preview
+          </p>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div>
+              <p className="text-2xl font-black text-text-primary">{fatigue}</p>
+              <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Fatigue</p>
+            </div>
+            <div>
+              <p className="text-2xl font-black text-primary">{sleepQuality}</p>
+              <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Sleep</p>
+            </div>
+            <div>
+              <p className={cn('text-2xl font-black', soreCount > 0 ? 'text-orange-400' : 'text-text-primary')}>
+                {soreCount}
+              </p>
+              <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Sore</p>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Right column */}
+      <div className="space-y-5">
+        {/* Muscle soreness */}
+        <Card className="p-6">
+          <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-1">
+            <Activity size={15} className="text-primary" />
+            Muscle Soreness
+          </h3>
+          <SorenessLegend />
+          <div className="mt-4">
+            <SorenessSelector soreness={soreness} onChange={setSoreness} />
+          </div>
+        </Card>
+
+        {/* Submit */}
+        <div className="space-y-3">
+          {isError && error && (
+            <div className="flex items-center gap-2 text-red-400 text-sm bg-red-900/20 border border-red-800/50 rounded-xl px-4 py-3">
+              <AlertTriangle size={14} className="shrink-0" />
+              {(error as Error).message}
+            </div>
+          )}
+
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full"
+            onClick={handleSubmit}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 size={14} className="mr-2 animate-spin" />
+                Saving…
+              </>
+            ) : isSaved ? (
+              <>
+                <CheckCircle2 size={14} className="mr-2" />
+                Log Saved!
+              </>
+            ) : hasExisting ? (
+              'Update Log'
+            ) : (
+              'Submit Log'
+            )}
+          </Button>
+
+          <p className="text-center text-[10px] text-text-muted uppercase tracking-widest">
+            {hasExisting
+              ? `Last saved: ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+              : 'Estimated time: ~8s'}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main Feedback Page
+// ---------------------------------------------------------------------------
+
+export default function Feedback() {
+  const { data: existing, isLoading } = useTodayFeedback()
 
   return (
     <div className="p-4 md:p-8">
@@ -271,121 +392,7 @@ export default function Feedback() {
           Loading today's recovery data…
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
-          {/* Left column */}
-          <div className="space-y-5">
-            {/* Fatigue */}
-            <Card className="p-6">
-              <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-6">
-                <Zap size={15} className="text-primary" />
-                Fatigue Level
-              </h3>
-              <ScaleSelector
-                value={fatigue}
-                onChange={setFatigue}
-                lowLabel="Fresh"
-                midLabel="Neutral"
-                highLabel="Exhausted"
-              />
-            </Card>
-
-            {/* Sleep quality */}
-            <Card className="p-6">
-              <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-6">
-                <Moon size={15} className="text-primary" />
-                Sleep Quality
-              </h3>
-              <ScaleSelector
-                value={sleepQuality}
-                onChange={setSleepQuality}
-                lowLabel="Restless"
-                midLabel="Standard"
-                highLabel="Deep"
-              />
-            </Card>
-
-            {/* Pain flag */}
-            <PainToggle value={painFlag} onChange={setPainFlag} />
-
-            {/* Recovery preview */}
-            <Card className="p-4">
-              <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-3">
-                Recovery Preview
-              </p>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div>
-                  <p className="text-2xl font-black text-text-primary">{fatigue}</p>
-                  <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Fatigue</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-black text-primary">{sleepQuality}</p>
-                  <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Sleep</p>
-                </div>
-                <div>
-                  <p className={cn('text-2xl font-black', soreCount > 0 ? 'text-orange-400' : 'text-text-primary')}>
-                    {soreCount}
-                  </p>
-                  <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">Sore</p>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          {/* Right column */}
-          <div className="space-y-5">
-            {/* Muscle soreness */}
-            <Card className="p-6">
-              <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-1">
-                <Activity size={15} className="text-primary" />
-                Muscle Soreness
-              </h3>
-              <SorenessLegend />
-              <div className="mt-4">
-                <SorenessSelector soreness={soreness} onChange={setSoreness} />
-              </div>
-            </Card>
-
-            {/* Submit */}
-            <div className="space-y-3">
-              {isError && error && (
-                <div className="flex items-center gap-2 text-red-400 text-sm bg-red-900/20 border border-red-800/50 rounded-xl px-4 py-3">
-                  <AlertTriangle size={14} className="shrink-0" />
-                  {(error as Error).message}
-                </div>
-              )}
-
-              <Button
-                variant="primary"
-                size="lg"
-                className="w-full"
-                onClick={handleSubmit}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 size={14} className="mr-2 animate-spin" />
-                    Saving…
-                  </>
-                ) : isSaved ? (
-                  <>
-                    <CheckCircle2 size={14} className="mr-2" />
-                    Log Saved!
-                  </>
-                ) : existing ? (
-                  'Update Log'
-                ) : (
-                  'Submit Log'
-                )}
-              </Button>
-
-              <p className="text-center text-[10px] text-text-muted uppercase tracking-widest">
-                {existing
-                  ? `Last saved: ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
-                  : 'Estimated time: ~8s'}
-              </p>
-            </div>
-          </div>
-        </div>
+        <FeedbackForm key={existing?.id ?? 'new-feedback'} existing={existing} />
       )}
     </div>
   )

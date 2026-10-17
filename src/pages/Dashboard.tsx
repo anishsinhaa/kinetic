@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '../components/ui/Button'
@@ -15,6 +15,13 @@ import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { getLatestCompletedWorkout } from '../features/workout/services/workoutService'
+
+const NUMERIC_FIELDS = [
+  { key: 'weight', label: 'Weight (kg)' },
+  { key: 'calories', label: 'Calories (kcal)' },
+  { key: 'protein', label: 'Protein (g)+' },
+  { key: 'sleep', label: 'Sleep (hrs)' },
+] as const
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-component: save status indicator
@@ -53,6 +60,95 @@ function SaveStatus({
   )
 }
 
+// Mounted with a key so initialForm seeds local state without an effect.
+function DailyLogForm({
+  initialForm,
+  isSaving,
+  isError,
+  error,
+  onSave,
+}: {
+  initialForm: DailyLogFormState
+  isSaving: boolean
+  isError: boolean
+  error: Error | null
+  onSave: (payload: ReturnType<typeof formStateToPayload>) => Promise<unknown>
+}) {
+  const [form, setForm] = useState(initialForm)
+
+  const handleChange = (field: keyof DailyLogFormState, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleBlur = () => {
+    onSave(formStateToPayload(form)).catch(() => {
+      // error is already reflected in `isError` from the hook
+    })
+  }
+
+  return (
+    <Card className="mb-6">
+      <div className="px-6 pt-4 pb-2 border-b border-border flex items-center justify-between">
+        <SaveStatus isSaving={isSaving} isError={isError} error={error} />
+      </div>
+
+      <div className="overflow-x-auto -mx-px">
+        <table className="w-full text-sm min-w-[500px]">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-6 py-3 font-medium">
+                Metric
+              </th>
+              {NUMERIC_FIELDS.map(({ key, label }) => (
+                <th
+                  key={key}
+                  className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-4 py-3 font-medium"
+                >
+                  {label}
+                </th>
+              ))}
+              <th className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-4 py-3 font-medium">
+                Quick Notes
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="px-6 py-4 text-text-secondary text-xs uppercase tracking-widest font-medium">
+                Daily Log
+              </td>
+              {NUMERIC_FIELDS.map(({ key }) => (
+                <td key={key} className="px-4 py-4">
+                  <input
+                    type="number"
+                    value={form[key]}
+                    onChange={(e) => handleChange(key, e.target.value)}
+                    onBlur={handleBlur}
+                    placeholder="—"
+                    className={`w-24 bg-transparent text-center text-base font-semibold focus:outline-hidden border-b border-transparent focus:border-primary transition-colors placeholder:text-text-muted ${
+                      key === 'protein' ? 'text-primary' : 'text-text-primary'
+                    }`}
+                  />
+                </td>
+              ))}
+              <td className="px-4 py-4">
+                <input
+                  type="text"
+                  value={form.notes}
+                  onChange={(e) => handleChange('notes', e.target.value)}
+                  onBlur={handleBlur}
+                  placeholder="Add note…"
+                  className="bg-transparent text-text-secondary text-sm focus:outline-hidden border-b border-transparent focus:border-primary transition-colors w-40 placeholder:text-text-muted"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,40 +180,6 @@ export default function Dashboard() {
     queryFn: () => getLatestCompletedWorkout(userId),
     enabled: Boolean(userId),
   })
-
-  // Local form state — strings so number inputs stay fully controlled
-  const [form, setForm] = useState<DailyLogFormState>(emptyFormState)
-
-  // Track whether we've seeded the form from the fetched log
-  const seededRef = useRef(false)
-
-  useEffect(() => {
-    if (log !== undefined && !seededRef.current) {
-      seededRef.current = true
-      setForm(log ? logToFormState(log) : emptyFormState())
-    }
-  }, [log])
-
-  // ── Field handlers ──────────────────────────────────────────────────────
-  const handleChange = (field: keyof DailyLogFormState, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }))
-  }
-
-  // Persist on blur — fires once per field when the user leaves it.
-  // Debouncing is acceptable here; blur is already a natural debounce.
-  const handleBlur = () => {
-    save(formStateToPayload(form)).catch(() => {
-      // error is already reflected in `isError` from the hook
-    })
-  }
-
-  // ── Numeric fields rendered in the table ──────────────────────────────
-  const numericFields = [
-    { key: 'weight', label: 'Weight (kg)' },
-    { key: 'calories', label: 'Calories (kcal)' },
-    { key: 'protein', label: 'Protein (g)+' },
-    { key: 'sleep', label: 'Sleep (hrs)' },
-  ] as const
 
   return (
     <div className="p-4 md:p-8">
@@ -151,72 +213,23 @@ export default function Dashboard() {
       </div>
 
       {/* ── Daily Log Table ─────────────────────────────────────────────────── */}
-      <Card className="mb-6">
-        <div className="px-6 pt-4 pb-2 border-b border-border flex items-center justify-between">
-          <SaveStatus isSaving={isSaving} isError={isError} error={error} />
-        </div>
-
-        {isLoading ? (
+      {isLoading ? (
+        <Card className="mb-6">
           <div className="flex items-center justify-center py-10 gap-2 text-text-secondary text-sm">
             <Loader2 size={16} className="animate-spin" />
             Loading today's log…
           </div>
-        ) : (
-          <div className="overflow-x-auto -mx-px">
-            <table className="w-full text-sm min-w-[500px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-6 py-3 font-medium">
-                    Metric
-                  </th>
-                  {numericFields.map(({ key, label }) => (
-                    <th
-                      key={key}
-                      className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-4 py-3 font-medium"
-                    >
-                      {label}
-                    </th>
-                  ))}
-                  <th className="text-left text-[10px] text-text-secondary uppercase tracking-widest px-4 py-3 font-medium">
-                    Quick Notes
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="px-6 py-4 text-text-secondary text-xs uppercase tracking-widest font-medium">
-                    Daily Log
-                  </td>
-                  {numericFields.map(({ key }) => (
-                    <td key={key} className="px-4 py-4">
-                      <input
-                        type="number"
-                        value={form[key]}
-                        onChange={(e) => handleChange(key, e.target.value)}
-                        onBlur={handleBlur}
-                        placeholder="—"
-                        className={`w-24 bg-transparent text-center text-base font-semibold focus:outline-none border-b border-transparent focus:border-primary transition-colors placeholder:text-text-muted ${
-                          key === 'protein' ? 'text-primary' : 'text-text-primary'
-                        }`}
-                      />
-                    </td>
-                  ))}
-                  <td className="px-4 py-4">
-                    <input
-                      type="text"
-                      value={form.notes}
-                      onChange={(e) => handleChange('notes', e.target.value)}
-                      onBlur={handleBlur}
-                      placeholder="Add note…"
-                      className="bg-transparent text-text-secondary text-sm focus:outline-none border-b border-transparent focus:border-primary transition-colors w-40 placeholder:text-text-muted"
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+        </Card>
+      ) : (
+        <DailyLogForm
+          key={log?.id ?? 'new-log'}
+          initialForm={log ? logToFormState(log) : emptyFormState()}
+          isSaving={isSaving}
+          isError={isError}
+          error={error}
+          onSave={save}
+        />
+      )}
 
       {/* ── Insights ─────────────────────────────────────────────────────────── */}
       <div className="mb-4 md:mb-6">

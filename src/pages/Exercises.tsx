@@ -115,7 +115,7 @@ function ExerciseCard({
         onClick={onSelect}
         disabled={isPending}
       >
-        <div className="w-11 h-11 rounded-lg bg-surface-3 border border-border flex-shrink-0 flex items-center justify-center">
+        <div className="w-11 h-11 rounded-lg bg-surface-3 border border-border shrink-0 flex items-center justify-center">
           {isPending ? (
             <Loader2 size={13} className="animate-spin text-primary" />
           ) : isSelected ? (
@@ -423,7 +423,7 @@ export default function Exercises() {
                     placeholder="Search exercises…"
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
-                    className="w-full bg-surface border border-border rounded-xl pl-11 pr-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
+                    className="w-full bg-surface border border-border rounded-xl pl-11 pr-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary transition-colors"
                   />
                   {searchInput && (
                     <button
@@ -538,7 +538,7 @@ export default function Exercises() {
                         }
                       }}
                       placeholder="e.g. Cable Pull-Through"
-                      className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+                      className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
                     />
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -547,7 +547,7 @@ export default function Exercises() {
                       <select
                         value={customMuscle}
                         onChange={(e) => setCustomMuscle(e.target.value)}
-                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-hidden focus:border-primary"
                       >
                         {MUSCLE_FILTERS.map(({ label, value }) => (
                           <option key={value} value={value}>{label}</option>
@@ -561,7 +561,7 @@ export default function Exercises() {
                         value={customEquipment}
                         onChange={(e) => setCustomEquipment(e.target.value)}
                         placeholder="e.g. Barbell, cable machine"
-                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
                       />
                     </div>
                   </div>
@@ -571,7 +571,7 @@ export default function Exercises() {
                       <select
                         value={customDifficulty}
                         onChange={(e) => setCustomDifficulty(e.target.value)}
-                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-hidden focus:border-primary"
                       >
                         {DIFFICULTY_OPTIONS.map(({ label, value }) => (
                           <option key={label} value={value}>{label}</option>
@@ -583,7 +583,7 @@ export default function Exercises() {
                       <select
                         value={customExerciseType}
                         onChange={(e) => setCustomExerciseType(e.target.value)}
-                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary"
+                        className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-hidden focus:border-primary"
                       >
                         {EXERCISE_TYPE_OPTIONS.map(({ label, value }) => (
                           <option key={label} value={value}>{label}</option>
@@ -598,7 +598,7 @@ export default function Exercises() {
                       onChange={(e) => setCustomInstructions(e.target.value)}
                       placeholder="How to perform the movement, cues, setup…"
                       rows={4}
-                      className="w-full resize-y min-h-[88px] bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+                      className="w-full resize-y min-h-[88px] bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
                     />
                   </div>
                   {createMutation.isError && (
@@ -648,7 +648,7 @@ export default function Exercises() {
                 placeholder="Search your exercises…"
                 value={customSearch}
                 onChange={(e) => setCustomSearch(e.target.value)}
-                className="w-full bg-surface border border-border rounded-xl pl-10 pr-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary"
+                className="w-full bg-surface border border-border rounded-xl pl-10 pr-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
               />
             </div>
 

@@ -41,7 +41,7 @@ export function MainLayout() {
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       {/* ── Desktop sidebar (hidden on mobile) ── */}
-      <aside className="hidden md:flex w-52 flex-shrink-0 flex-col bg-surface border-r border-border">
+      <aside className="hidden md:flex w-52 shrink-0 flex-col bg-surface border-r border-border">
         {/* Logo */}
         <div className="px-5 pt-5 pb-6">
           <img
@@ -101,7 +101,7 @@ export function MainLayout() {
       {/* ── Main area ── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Desktop topbar (hidden on mobile) */}
-        <header className="hidden md:flex h-14 items-center justify-between px-6 border-b border-border bg-surface flex-shrink-0">
+        <header className="hidden md:flex h-14 items-center justify-between px-6 border-b border-border bg-surface shrink-0">
           <div className="flex items-center gap-6">
             <nav className="flex items-center gap-5 text-sm">
               {navItems.map(({ label, to }) => (
@@ -138,7 +138,7 @@ export function MainLayout() {
         </header>
 
         {/* Mobile topbar (hidden on desktop) */}
-        <header className="md:hidden h-12 flex items-center justify-between px-4 border-b border-border bg-surface flex-shrink-0">
+        <header className="md:hidden h-12 flex items-center justify-between px-4 border-b border-border bg-surface shrink-0">
           <img src={fullLogo} alt="Kinetic" className="h-7 w-auto" />
           <Link
             to="/settings"

@@ -24,9 +24,9 @@ The app is designed around a daily workflow:
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18 + TypeScript |
+| Frontend | React 19 + TypeScript |
 | Build Tool | Vite |
-| Styling | Tailwind CSS (dark mode, custom theme) |
+| Styling | Tailwind CSS v4 (custom theme) |
 | State Management | Zustand (with localStorage persistence) |
 | Data Fetching | TanStack Query (React Query v5) |
 | Backend / Database | Supabase (PostgreSQL + Auth + RLS) |

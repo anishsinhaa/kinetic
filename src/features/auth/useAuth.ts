@@ -1,38 +1,71 @@
 import { useEffect } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase/client'
 import { useAppStore } from '../../store/useAppStore'
+
+function sessionToUser(session: Session | null) {
+  return session?.user
+    ? { id: session.user.id, email: session.user.email }
+    : null
+}
 
 /**
  * useAuthListener — call ONCE at the app root (App.tsx).
  * Sets up the Supabase auth state listener and syncs to the Zustand store.
+ * On session/refresh failure, signs out and marks auth ready so the login page shows.
  */
 export function useAuthListener() {
   const setUser = useAppStore((s) => s.setUser)
   const setAuthReady = useAppStore((s) => s.setAuthReady)
 
   useEffect(() => {
-    // Resolve the initial session before showing any UI
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(
-        session?.user
-          ? { id: session.user.id, email: session.user.email }
-          : null,
-      )
+    let cancelled = false
+
+    const clearSessionAndShowLogin = async () => {
+      try {
+        await supabase.auth.signOut()
+      } catch {
+        // Ignore sign-out failures — still clear local auth state below.
+      }
+      if (cancelled) return
+      setUser(null)
+      setAuthReady(true)
+    }
+
+    supabase.auth
+      .getSession()
+      .then(({ data: { session }, error }) => {
+        if (cancelled) return
+        if (error) {
+          void clearSessionAndShowLogin()
+          return
+        }
+        setUser(sessionToUser(session))
+        setAuthReady(true)
+      })
+      .catch(() => {
+        void clearSessionAndShowLogin()
+      })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return
+
+      // Refresh failed or session was revoked — never leave the UI stuck on Loading.
+      if (event === 'TOKEN_REFRESHED' && !session) {
+        void clearSessionAndShowLogin()
+        return
+      }
+
+      setUser(sessionToUser(session))
       setAuthReady(true)
     })
 
-    // Keep store in sync on sign-in / sign-out / token refresh
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(
-        session?.user
-          ? { id: session.user.id, email: session.user.email }
-          : null,
-      )
-    })
-
-    return () => subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [setUser, setAuthReady])
 }
 

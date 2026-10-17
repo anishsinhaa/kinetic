@@ -13,7 +13,7 @@ export function Toggle({ checked, onChange, className }: ToggleProps) {
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none',
+        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-hidden',
         checked ? 'bg-primary' : 'bg-surface-3 border border-border',
         className,
       )}
