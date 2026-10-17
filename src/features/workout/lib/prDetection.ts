@@ -8,16 +8,9 @@ export type PersonalRecord = {
   reps: number
 }
 
-/** Estimated 1RM via Epley — used to compare sets when weights differ. */
-export function estimated1RM(weight: number, reps: number): number {
-  if (reps <= 0 || weight <= 0) return 0
-  if (reps === 1) return weight
-  return weight * (1 + reps / 30)
-}
-
 /**
- * True when `set` beats the previous PR by heavier weight, or same weight with more reps,
- * or higher estimated 1RM.
+ * True when `set` beats the previous PR by heavier weight, or same weight with more reps.
+ * Shared by finish-summary celebration and History all-time best.
  */
 export function isPersonalRecord(set: SetLike, previous: PersonalRecord | null): boolean {
   if (set.weight == null || set.reps == null) return false
@@ -28,7 +21,20 @@ export function isPersonalRecord(set: SetLike, previous: PersonalRecord | null):
   if (set.weight > previous.weight) return true
   if (set.weight === previous.weight && set.reps > previous.reps) return true
 
-  return estimated1RM(set.weight, set.reps) > estimated1RM(previous.weight, previous.reps)
+  return false
+}
+
+/** Pick the best set among candidates using the same PR rules. */
+export function bestPersonalRecord(sets: SetLike[]): PersonalRecord | null {
+  let best: PersonalRecord | null = null
+  for (const set of sets) {
+    if (set.weight == null || set.reps == null) continue
+    if (set.weight <= 0 || set.reps <= 0) continue
+    if (isPersonalRecord(set, best)) {
+      best = { weight: set.weight, reps: set.reps }
+    }
+  }
+  return best
 }
 
 export function detectPrHits(

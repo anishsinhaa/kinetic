@@ -189,7 +189,9 @@ export default function Dashboard() {
     ? { label: 'Resume workout', to: '/workout', hint: workoutLabel || 'In progress' }
     : {
         label: 'Start Workout',
-        to: '/workout?start=1',
+        to: suggestion
+          ? `/workout?start=1&type=${encodeURIComponent(suggestion)}`
+          : '/workout?start=1',
         hint:
           recentTypesQuery.isLoading || !suggestion
             ? null

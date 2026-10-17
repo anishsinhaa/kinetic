@@ -68,7 +68,18 @@ interface WorkoutStore {
   }) => void
   updateExerciseMeta: (
     exerciseLocalId: string,
-    patch: { target?: WorkoutExerciseTarget | null; note?: string | null; targetLabel?: string },
+    patch: Partial<
+      Pick<
+        WorkoutExerciseDraft,
+        | 'dbWorkoutExerciseId'
+        | 'lastPerformance'
+        | 'personalRecord'
+        | 'targetLabel'
+        | 'target'
+        | 'note'
+        | 'sets'
+      >
+    >,
   ) => void
   addSet: (exerciseLocalId: string, set?: Partial<WorkoutSetDraft>) => WorkoutSetDraft | null
   updateSet: (
@@ -77,6 +88,8 @@ interface WorkoutStore {
     updates: Partial<WorkoutSetDraft>,
   ) => void
   completeSet: (exerciseLocalId: string, setLocalId: string) => void
+  uncompleteSet: (exerciseLocalId: string, setLocalId: string) => void
+  removeSet: (exerciseLocalId: string, setLocalId: string) => void
   finishWorkout: () => void
   resetToIdle: () => void
 }
@@ -290,6 +303,33 @@ export const useWorkoutStore = create<WorkoutStore>()(
           ),
         }))
         get().startRest()
+      },
+
+      uncompleteSet: (exerciseLocalId, setLocalId) => {
+        set((state) => ({
+          exercises: state.exercises.map((e) =>
+            e.id !== exerciseLocalId
+              ? e
+              : {
+                  ...e,
+                  sets: e.sets.map((s) =>
+                    s.id === setLocalId
+                      ? { ...s, completed: false, completedAt: null }
+                      : s,
+                  ),
+                },
+          ),
+        }))
+      },
+
+      removeSet: (exerciseLocalId, setLocalId) => {
+        set((state) => ({
+          exercises: state.exercises.map((e) =>
+            e.id !== exerciseLocalId
+              ? e
+              : { ...e, sets: e.sets.filter((s) => s.id !== setLocalId) },
+          ),
+        }))
       },
 
       finishWorkout: () =>

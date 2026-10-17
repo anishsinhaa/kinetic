@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '../../../components/ui/Button'
 
 type RestTimerRingProps = {
@@ -27,6 +26,7 @@ function vibrateDone() {
   }
 }
 
+/** Compact rest bar — sits above the Finish bar without covering Add set. */
 export function RestTimerRing({
   endsAt,
   totalSeconds,
@@ -34,7 +34,6 @@ export function RestTimerRing({
   onAdjust,
   onComplete,
 }: RestTimerRingProps) {
-  const reduceMotion = useReducedMotion()
   const [remainingSec, setRemainingSec] = useState(totalSeconds)
   const completedFor = useRef<string | null>(null)
 
@@ -64,60 +63,29 @@ export function RestTimerRing({
   const progress =
     totalSeconds > 0 ? 1 - Math.min(1, Math.max(0, remainingSec / totalSeconds)) : 1
 
-  const size = 140
-  const stroke = 8
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  const dash = useMemo(() => c * Math.min(1, Math.max(0, progress)), [c, progress])
-
   if (!endsAt) return null
 
   return (
-    <div className="fixed bottom-20 md:bottom-6 left-0 md:left-52 right-0 z-40 flex justify-center pointer-events-none px-4">
-      <div className="pointer-events-auto bg-surface/95 backdrop-blur border border-border rounded-2xl px-5 py-4 shadow-card flex items-center gap-4">
-        <div className="relative" style={{ width: size, height: size }}>
-          <svg width={size} height={size} className="-rotate-90">
-            <circle
-              cx={size / 2}
-              cy={size / 2}
-              r={r}
-              fill="none"
-              stroke="currentColor"
-              className="text-surface-3"
-              strokeWidth={stroke}
-            />
-            <motion.circle
-              cx={size / 2}
-              cy={size / 2}
-              r={r}
-              fill="none"
-              stroke="currentColor"
-              className="text-primary"
-              strokeWidth={stroke}
-              strokeLinecap="round"
-              strokeDasharray={c}
-              animate={{ strokeDashoffset: c - dash }}
-              transition={{ duration: reduceMotion ? 0 : 0.2 }}
-            />
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-3xl font-black text-text-primary tabular-nums">
-              {remainingSec}
-            </span>
-            <span className="text-[10px] uppercase tracking-widest text-text-muted">Rest</span>
-          </div>
+    <div className="fixed bottom-[4.75rem] md:bottom-16 left-0 md:left-52 right-0 z-40 px-4 pointer-events-none">
+      <div className="pointer-events-auto max-w-lg mx-auto bg-surface/95 backdrop-blur border border-border rounded-xl px-3 py-2 shadow-card flex items-center gap-3">
+        <div className="tabular-nums font-black text-primary text-sm w-10 shrink-0">
+          {remainingSec}s
         </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => onAdjust(-15)}>
-              −15s
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => onAdjust(15)}>
-              +15s
-            </Button>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onSkip}>
-            Skip rest
+        <div className="flex-1 h-1.5 bg-surface-3 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-[width] duration-200"
+            style={{ width: `${Math.round(progress * 100)}%` }}
+          />
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button variant="ghost" size="sm" onClick={() => onAdjust(-15)}>
+            −15
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => onAdjust(15)}>
+            +15
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onSkip}>
+            Skip
           </Button>
         </div>
       </div>

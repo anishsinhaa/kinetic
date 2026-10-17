@@ -2,34 +2,27 @@ import { describe, expect, it } from 'vitest'
 import { isCompletedSet, setVolumeKg, totalVolumeKg } from './volume'
 
 describe('volume', () => {
-  it('treats only weight+reps sets as completed', () => {
+  it('requires completion when completed flag / completed_at is present', () => {
+    expect(isCompletedSet({ weight: 90, reps: 5, completed: true })).toBe(true)
+    expect(isCompletedSet({ weight: 90, reps: 5, completed: false })).toBe(false)
+    expect(isCompletedSet({ weight: 90, reps: 5, completed_at: '2026-01-01T00:00:00Z' })).toBe(true)
+    expect(isCompletedSet({ weight: 90, reps: 5, completed_at: null })).toBe(false)
+  })
+
+  it('legacy rows without completion metadata still count by weight+reps', () => {
     expect(isCompletedSet({ weight: 90, reps: 5 })).toBe(true)
     expect(isCompletedSet({ weight: 90, reps: null })).toBe(false)
-    expect(isCompletedSet({ weight: null, reps: 5 })).toBe(false)
-    expect(isCompletedSet({ weight: null, reps: null })).toBe(false)
   })
 
-  it('computes volume as weight × reps for completed sets only', () => {
-    expect(setVolumeKg({ weight: 90, reps: 5 })).toBe(450)
-    expect(setVolumeKg({ weight: 90, reps: null })).toBe(0)
+  it('computes volume for completed sets only', () => {
+    expect(setVolumeKg({ weight: 90, reps: 5, completed: true })).toBe(450)
+    expect(setVolumeKg({ weight: 90, reps: 5, completed: false })).toBe(0)
 
     const sets = [
-      { weight: 50, reps: 10 },
-      { weight: 50, reps: 10 },
-      { weight: 90, reps: 5 },
-      { weight: 100, reps: null },
+      { weight: 50, reps: 10, completed: true },
+      { weight: 50, reps: 10, completed: false },
+      { weight: 90, reps: 5, completed: true },
     ]
-    expect(totalVolumeKg(sets)).toBe(50 * 10 + 50 * 10 + 90 * 5)
-  })
-
-  it('does not double-count when summing completed sets', () => {
-    const completed = [
-      { weight: 50, reps: 10 },
-      { weight: 50, reps: 10 },
-    ]
-    expect(totalVolumeKg(completed)).toBe(1000)
-    expect(totalVolumeKg(completed)).toBe(
-      completed.reduce((sum, s) => sum + (s.weight ?? 0) * (s.reps ?? 0), 0),
-    )
+    expect(totalVolumeKg(sets)).toBe(50 * 10 + 90 * 5)
   })
 })

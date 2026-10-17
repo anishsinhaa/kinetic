@@ -20,6 +20,7 @@ import { useFeedbackHistory } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import type { ExerciseHistory } from '../features/history/types'
 import { cn } from '../lib/utils'
+import { pluralize } from '../lib/pluralize'
 
 type Tab = 'daily' | 'exercise' | 'recovery'
 
@@ -165,7 +166,9 @@ function DailyLogsTab() {
           Daily Activity Log
         </h2>
         {logs && logs.length > 0 && (
-          <span className="text-xs text-text-muted">{logs.length} entries</span>
+          <span className="text-xs text-text-muted">
+            {pluralize(logs.length, 'entry', 'entries')}
+          </span>
         )}
       </div>
 
@@ -226,10 +229,24 @@ function DailyLogsTab() {
                 <TableTd>{fmtCalories(row.calories)}</TableTd>
                 <TableTd>{fmtSleep(row.sleep)}</TableTd>
                 <TableTd className="max-w-50">
-                  {row.notes ? (
-                    <span title={row.notes} className="text-text-secondary text-xs truncate block">
-                      {row.notes}
-                    </span>
+                  {row.notes || row.workoutNotes.length > 0 || row.workoutFeels.length > 0 ? (
+                    <div className="text-text-secondary text-xs space-y-0.5">
+                      {row.workoutFeels.length > 0 && (
+                        <p className="text-primary font-medium">
+                          Feel {row.workoutFeels.map((f) => `${f}/5`).join(', ')}
+                        </p>
+                      )}
+                      {row.workoutNotes.map((n, i) => (
+                        <p key={i} title={n} className="truncate">
+                          {n}
+                        </p>
+                      ))}
+                      {row.notes && (
+                        <p title={row.notes} className="truncate text-text-muted">
+                          {row.notes}
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-text-muted text-xs">—</span>
                   )}
@@ -270,14 +287,20 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
               }`}
             />
             <div className="flex-1">
-              <div className="flex items-baseline gap-3 mb-2">
+              <div className="flex items-baseline gap-3 mb-2 flex-wrap">
                 <p className="font-semibold text-text-primary">{fmtDateLong(session.date)}</p>
                 {session.totalVolume > 0 && (
                   <span className="text-xs text-text-muted">
                     Volume: {fmtVolume(Math.round(session.totalVolume))}
                   </span>
                 )}
+                {session.feel != null && (
+                  <span className="text-xs text-primary font-medium">Feel {session.feel}/5</span>
+                )}
               </div>
+              {session.note && (
+                <p className="text-xs text-text-secondary mb-2">{session.note}</p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {session.sets.map((set, j) => (
                   <div
@@ -419,7 +442,10 @@ function ExerciseHistoryTab() {
               {selected.allTimeBest != null && (
                 <div className="text-right">
                   <p className="text-[9px] text-text-muted uppercase tracking-widest mb-0.5">All-time best</p>
-                  <p className="text-primary font-bold text-lg">{selected.allTimeBest} kg</p>
+                  <p className="text-primary font-bold text-lg">
+                    {selected.allTimeBest} kg
+                    {selected.allTimeBestReps != null ? ` × ${selected.allTimeBestReps}` : ''}
+                  </p>
                 </div>
               )}
             </div>
@@ -487,7 +513,9 @@ function RecoveryTab() {
           Recovery Log
         </h2>
         {history && history.length > 0 && (
-          <span className="text-xs text-text-muted">{history.length} entries</span>
+          <span className="text-xs text-text-muted">
+            {pluralize(history.length, 'entry', 'entries')}
+          </span>
         )}
       </div>
 

@@ -9,6 +9,7 @@ import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   addExerciseToWorkout,
   createWorkout,
+  deleteSet,
   finishWorkout as finishWorkoutDb,
   getLatestCompletedWorkout,
   getLastPerformance,
@@ -151,10 +152,11 @@ export default function Workout() {
       })
   }, [userId])
 
-  // Open type picker from deep links — only when still idle
+  // Open type picker only when Start has no type (chips / suggested type auto-start below)
   useEffect(() => {
     if (currentWorkoutId) return
-    if (!(autoStart || isRepeatMode || preselectedType)) return
+    if (preselectedType || isRepeatMode) return
+    if (!autoStart) return
     if (useWorkoutStore.getState().phase === 'idle') {
       useWorkoutStore.getState().setPhase('type')
     }
@@ -247,11 +249,22 @@ export default function Workout() {
         if (isRepeatMode && latestWorkoutQuery.data?.exercises?.length) {
           for (const ex of latestWorkoutQuery.data.exercises) {
             try {
-              await addExerciseFromLibrary({
-                id: ex.exerciseId,
-                name: ex.name,
-                muscleGroup: ex.muscleGroup,
-              } as Exercise)
+              await addExerciseFromLibrary(
+                {
+                  id: ex.exerciseId,
+                  name: ex.name,
+                  muscleGroup: ex.muscleGroup,
+                } as Exercise,
+                {
+                  initialSets:
+                    ex.sets.length > 0
+                      ? ex.sets.map((s) => ({
+                          weight: s.weight != null ? String(s.weight) : '',
+                          reps: s.reps != null ? String(s.reps) : '',
+                        }))
+                      : undefined,
+                },
+              )
             } catch {
               // skip
             }
@@ -265,59 +278,120 @@ export default function Workout() {
     })()
   }
 
-  const addExerciseFromLibrary = async (exercise: Exercise) => {
-    if (!currentWorkoutId) return
-    const orderIndex = useWorkoutStore.getState().exercises.length
-    const dbWeId = await addExerciseToWorkout(currentWorkoutId, exercise.id, orderIndex)
-    const lastSets = await getLastPerformance(userId, exercise.id)
-    const pr = await getExercisePersonalRecord(userId, exercise.id)
-    const lastPerformance =
-      lastSets.length > 0
-        ? `Last: ${lastSets.map((s) => `${s.weight ?? '-'}x${s.reps ?? '-'}`).join(' · ')}`
-        : 'No previous performance'
-    const personalRecord = pr
-      ? `PR: ${pr.weight ?? '-'}x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
-      : 'No PR yet'
-    const last = lastSets[0]
-    const targetLabel = last
-      ? `Target: ${targetPreview(last.weight, last.reps, 'maintain', weightStep)}`
-      : undefined
+  // Dashboard chip / Start with suggested type — skip the second "Pick a type" tap
+  useEffect(() => {
+    if (currentWorkoutId || startingRef.current) return
+    const type = preselectedType?.trim()
+    if (!type) return
+    if (!(autoStart || Boolean(preselectedType))) return
+    beginWorkoutWithType(type)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per deep link
+  }, [autoStart, preselectedType, currentWorkoutId])
 
+  // Repeat last — start with last type as soon as latest workout loads
+  useEffect(() => {
+    if (currentWorkoutId || startingRef.current) return
+    if (!isRepeatMode) return
+    const label = latestWorkoutQuery.data?.label?.trim()
+    if (!label) return
+    beginWorkoutWithType(label)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRepeatMode, latestWorkoutQuery.data?.label, currentWorkoutId])
+
+  const addExerciseFromLibrary = async (
+    exercise: Exercise,
+    options?: { initialSets?: Array<{ weight: string; reps: string }> },
+  ) => {
+    const workoutId = useWorkoutStore.getState().currentWorkoutId
+    if (!workoutId) return
+
+    // Optimistic card — render immediately
     useWorkoutStore.getState().addExercise({
       exerciseId: exercise.id,
       name: exercise.name,
       muscleGroup: exercise.muscleGroup,
-      dbWorkoutExerciseId: dbWeId,
-      lastPerformance,
-      personalRecord,
-      targetLabel,
+      lastPerformance: 'Loading…',
+      personalRecord: '…',
       target: 'maintain',
-      initialSets:
-        lastSets.length > 0
-          ? lastSets.map((s) => ({
-              weight: s.weight != null ? String(s.weight) : '',
-              reps: s.reps != null ? String(s.reps) : '',
-            }))
-          : [{ weight: '', reps: '' }],
+      initialSets: options?.initialSets ?? [{ weight: '', reps: '' }],
     })
 
-    // Persist prefilled sets
     const added = useWorkoutStore.getState().exercises.find((e) => e.exerciseId === exercise.id)
-    if (added) {
-      for (let i = 0; i < added.sets.length; i++) {
-        queuePersist(added.id, added.sets[i].id, dbWeId, i)
-      }
-      await persistQueueRef.current.flushAll()
-    }
-  }
+    if (!added) return
 
-  const handlePickExercise = async (exercise: Exercise) => {
-    setPickerOpen(false)
     try {
-      await addExerciseFromLibrary(exercise)
+      const orderIndex = useWorkoutStore.getState().exercises.findIndex((e) => e.id === added.id)
+      const dbWeId = await addExerciseToWorkout(workoutId, exercise.id, Math.max(0, orderIndex))
+      useWorkoutStore.getState().updateExerciseMeta(added.id, { dbWorkoutExerciseId: dbWeId })
+
+      const lastSets =
+        options?.initialSets != null
+          ? options.initialSets.map((s) => ({
+              weight: s.weight === '' ? null : parseFloat(s.weight),
+              reps: s.reps === '' ? null : parseInt(s.reps, 10),
+            }))
+          : await getLastPerformance(userId, exercise.id)
+
+      const pr = await getExercisePersonalRecord(userId, exercise.id, workoutId)
+      const lastPerformance =
+        lastSets.length > 0
+          ? `Last: ${lastSets.map((s) => `${s.weight ?? '-'}x${s.reps ?? '-'}`).join(' · ')}`
+          : 'No previous performance'
+      const personalRecord = pr
+        ? `PR: ${pr.weight ?? '-'}x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
+        : 'No PR yet'
+      const last = lastSets[0]
+      const targetLabel = last
+        ? `Target: ${targetPreview(last.weight, last.reps, 'maintain', weightStep)}`
+        : undefined
+
+      // Prefill sets if we didn't already (optimistic empty row)
+      if (options?.initialSets == null && lastSets.length > 0) {
+        const newSets = lastSets.map((s) => {
+          const id =
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+          return {
+            id,
+            dbSetId: id,
+            weight: s.weight != null ? String(s.weight) : '',
+            reps: s.reps != null ? String(s.reps) : '',
+            toFailure: false,
+            completed: false,
+            completedAt: null as string | null,
+          }
+        })
+        useWorkoutStore.getState().updateExerciseMeta(added.id, {
+          dbWorkoutExerciseId: dbWeId,
+          lastPerformance,
+          personalRecord,
+          targetLabel,
+          sets: newSets,
+        })
+      } else {
+        useWorkoutStore.getState().updateExerciseMeta(added.id, {
+          lastPerformance,
+          personalRecord,
+          targetLabel,
+        })
+      }
+
+      const fresh = useWorkoutStore.getState().exercises.find((e) => e.id === added.id)
+      if (fresh?.dbWorkoutExerciseId) {
+        for (let i = 0; i < fresh.sets.length; i++) {
+          queuePersist(fresh.id, fresh.sets[i].id, fresh.dbWorkoutExerciseId, i)
+        }
+        await persistQueueRef.current.flushAll()
+      }
     } catch (err) {
       setSaveError((err as Error).message)
     }
+  }
+
+  const handlePickExercise = (exercise: Exercise) => {
+    setPickerOpen(false)
+    void addExerciseFromLibrary(exercise)
   }
 
   const handleCompleteSet = async (exerciseLocalId: string, setLocalId: string, index: number) => {
@@ -327,6 +401,22 @@ export default function Workout() {
     await persistQueueRef.current.flush(setLocalId)
   }
 
+  const handleUncompleteSet = async (
+    exerciseLocalId: string,
+    setLocalId: string,
+    index: number,
+  ) => {
+    const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
+    useWorkoutStore.getState().uncompleteSet(exerciseLocalId, setLocalId)
+    queuePersist(exerciseLocalId, setLocalId, ex?.dbWorkoutExerciseId, index)
+    await persistQueueRef.current.flush(setLocalId)
+  }
+
+  const incompleteSetCount = useMemo(
+    () => exercises.reduce((n, e) => n + e.sets.filter((s) => !s.completed).length, 0),
+    [exercises],
+  )
+
   const handleFinishConfirm = async () => {
     if (!currentWorkoutId) return
     setIsFinishing(true)
@@ -334,32 +424,49 @@ export default function Workout() {
       await persistQueueRef.current.flushAll()
 
       const state = useWorkoutStore.getState()
-      const allSets = state.exercises.flatMap((e) =>
-        e.sets.map((s) => ({
-          exerciseId: e.exerciseId,
-          exerciseName: e.name,
-          weight: s.weight === '' ? null : parseFloat(s.weight),
-          reps: s.reps === '' ? null : parseInt(s.reps, 10),
-          completed: s.completed,
-        })),
+
+      // Drop unchecked / empty rows from DB and store before totals
+      for (const ex of state.exercises) {
+        for (const s of ex.sets) {
+          if (s.completed) continue
+          try {
+            await deleteSet(s.id)
+          } catch {
+            // ignore — row may never have been persisted
+          }
+          useWorkoutStore.getState().removeSet(ex.id, s.id)
+        }
+      }
+
+      const fresh = useWorkoutStore.getState()
+      const completedSets = fresh.exercises.flatMap((e) =>
+        e.sets
+          .filter((s) => s.completed)
+          .map((s) => ({
+            exerciseId: e.exerciseId,
+            exerciseName: e.name,
+            weight: s.weight === '' ? null : parseFloat(s.weight),
+            reps: s.reps === '' ? null : parseInt(s.reps, 10),
+            completed: true as const,
+          })),
       )
-      const completedSets = allSets.filter((s) => s.completed || (s.weight != null && s.reps != null))
       const volume = Math.round(totalVolumeKg(completedSets))
 
+      // Exclude current workout so already-upserted sets don't mask new PRs
       const prevPrs: Record<string, { weight: number; reps: number } | null> = {}
-      for (const ex of state.exercises) {
-        const pr = await getExercisePersonalRecord(userId, ex.exerciseId)
+      for (const ex of fresh.exercises) {
+        const pr = await getExercisePersonalRecord(userId, ex.exerciseId, currentWorkoutId)
         prevPrs[ex.exerciseId] =
           pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
       }
       const hits = detectPrHits(completedSets, prevPrs)
 
-      const warmupSec = state.warmupStartedAt
+      const warmupSec = fresh.warmupStartedAt
         ? Math.round(
-            ((state.warmupEndedAt
-              ? new Date(state.warmupEndedAt).getTime()
+            ((fresh.warmupEndedAt
+              ? new Date(fresh.warmupEndedAt).getTime()
               : Date.now()) -
-              new Date(state.warmupStartedAt).getTime()) /
+              new Date(fresh.warmupStartedAt).getTime()) /
               1000,
           )
         : 0
@@ -373,15 +480,15 @@ export default function Workout() {
       })
 
       await finishWorkoutDb(currentWorkoutId, {
-        feel: state.feel,
-        note: state.note.trim() || null,
+        feel: fresh.feel,
+        note: fresh.note.trim() || null,
       })
       await updateWorkoutMeta(currentWorkoutId, {
-        warmup_started_at: state.warmupStartedAt,
-        warmup_ended_at: state.warmupEndedAt,
-        warmup_note: state.warmupNote.trim() || null,
-        feel: state.feel,
-        note: state.note.trim() || null,
+        warmup_started_at: fresh.warmupStartedAt,
+        warmup_ended_at: fresh.warmupEndedAt,
+        warmup_note: fresh.warmupNote.trim() || null,
+        feel: fresh.feel,
+        note: fresh.note.trim() || null,
       })
 
       useWorkoutStore.getState().setPhase('summary')
@@ -714,6 +821,7 @@ export default function Workout() {
                   queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
                 }}
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
+                onUncomplete={() => void handleUncompleteSet(ex.id, set.id, idx)}
               />
             ))}
 
@@ -741,6 +849,9 @@ export default function Workout() {
           <Plus size={16} />
           <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
         </button>
+
+        {/* Spacer so Add set / Finish stay clear of compact rest bar */}
+        {restEndsAt && <div className="h-14" aria-hidden />}
       </div>
 
       <RestTimerRing
@@ -753,19 +864,27 @@ export default function Workout() {
 
       <div className="fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-3 z-30">
         {confirmFinish ? (
-          <div className="flex gap-2 max-w-md mx-auto">
-            <Button variant="ghost" size="md" className="flex-1" onClick={() => setConfirmFinish(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="md"
-              className="flex-1"
-              disabled={isFinishing}
-              onClick={() => void handleFinishConfirm()}
-            >
-              {isFinishing ? <Loader2 size={14} className="animate-spin" /> : 'Confirm finish'}
-            </Button>
+          <div className="max-w-md mx-auto space-y-2">
+            {incompleteSetCount > 0 && (
+              <p className="text-xs text-text-muted text-center">
+                Discard {incompleteSetCount} incomplete set
+                {incompleteSetCount === 1 ? '' : 's'}?
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button variant="ghost" size="md" className="flex-1" onClick={() => setConfirmFinish(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                className="flex-1"
+                disabled={isFinishing}
+                onClick={() => void handleFinishConfirm()}
+              >
+                {isFinishing ? <Loader2 size={14} className="animate-spin" /> : 'Confirm finish'}
+              </Button>
+            </div>
           </div>
         ) : (
           <Button
@@ -786,7 +905,7 @@ export default function Workout() {
         userId={userId}
         workoutType={workoutLabel}
         excludeExerciseIds={exercises.map((e) => e.exerciseId)}
-        onPick={(ex) => void handlePickExercise(ex)}
+        onPick={handlePickExercise}
       />
     </div>
   )

@@ -177,7 +177,6 @@ export async function updateWorkoutExercise(
 
 function setWritePayload(setData: AddSetInput, includeV2Fields: boolean) {
   const failed = setData.failed ?? setData.to_failure
-  const hasData = setData.reps != null || setData.weight != null
   const base = {
     reps: setData.reps,
     weight: setData.weight,
@@ -188,12 +187,8 @@ function setWritePayload(setData: AddSetInput, includeV2Fields: boolean) {
   return {
     ...base,
     failed,
-    completed_at:
-      setData.completed_at !== undefined
-        ? setData.completed_at
-        : hasData
-          ? new Date().toISOString()
-          : null,
+    // Never auto-complete — only checked sets get a completed_at timestamp
+    completed_at: setData.completed_at !== undefined ? setData.completed_at : null,
   }
 }
 
@@ -241,6 +236,11 @@ export async function upsertSet(
   }
 
   throw toServiceError(first.error)
+}
+
+export async function deleteSet(setId: string): Promise<void> {
+  const { error } = await supabase.from('sets').delete().eq('id', setId)
+  if (error) throw toServiceError(error)
 }
 
 /** @deprecated Prefer upsertSet */
@@ -313,45 +313,73 @@ export async function getLastPerformance(
 type PRSetRow = {
   weight: number | null
   reps: number | null
+  completed_at?: string | null
   workout_exercises: {
-    workouts: { date: string } | { date: string }[] | null
+    workout_id?: string
+    workouts:
+      | { id?: string; date: string; ended_at?: string | null }
+      | { id?: string; date: string; ended_at?: string | null }[]
+      | null
   } | null
 }
 
 export async function getExercisePersonalRecord(
   userId: string,
   exerciseId: string,
+  /** Exclude the in-progress workout so finish summary can detect new PRs */
+  excludeWorkoutId?: string | null,
 ): Promise<ExercisePR | null> {
   const { data, error } = await supabase
     .from('sets')
     .select(`
       weight,
       reps,
+      completed_at,
       workout_exercises!inner (
-        workouts!inner ( date, user_id ),
+        workout_id,
+        workouts!inner ( id, date, user_id, ended_at ),
         exercise_id
       )
     `)
     .eq('workout_exercises.exercise_id', exerciseId)
     .eq('workout_exercises.workouts.user_id', userId)
     .not('weight', 'is', null)
+    .not('reps', 'is', null)
     .order('weight', { ascending: false })
     .order('reps', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(40)
 
   if (error) throw toServiceError(error)
-  if (!data) return null
 
-  const row = data as unknown as PRSetRow
-  const workouts = row.workout_exercises?.workouts
-  const date = Array.isArray(workouts) ? workouts[0]?.date ?? null : workouts?.date ?? null
+  const rows = (data ?? []) as unknown as PRSetRow[]
+  const candidates = rows.filter((row) => {
+    const we = row.workout_exercises
+    const workouts = we?.workouts
+    const workout = Array.isArray(workouts) ? workouts[0] : workouts
+    const workoutId = we?.workout_id ?? workout?.id
+    if (excludeWorkoutId && workoutId === excludeWorkoutId) return false
+    // Exclude explicitly incomplete rows; keep legacy rows where completed_at is absent
+    if (row.completed_at === null) return false
+    return true
+  })
 
-  return {
-    weight: row.weight,
-    reps: row.reps,
-    date,
+  // Pick best by shared PR rules (heavier, or more reps at same weight)
+  let best: { weight: number; reps: number; date: string | null } | null = null
+  for (const row of candidates) {
+    if (row.weight == null || row.reps == null) continue
+    const workouts = row.workout_exercises?.workouts
+    const workout = Array.isArray(workouts) ? workouts[0] : workouts
+    const date = workout?.date ?? null
+    if (
+      !best ||
+      row.weight > best.weight ||
+      (row.weight === best.weight && row.reps > best.reps)
+    ) {
+      best = { weight: row.weight, reps: row.reps, date }
+    }
   }
+
+  return best
 }
 
 /** Recent completed workout types (most recent first). */
@@ -424,10 +452,10 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
     .filter((r) => r.weight != null)
     .map((r) => ({ date: r.date as string, weight: Number(r.weight) }))
 
-  const workoutDates = new Set(
-    (workouts.data ?? []).map((r) => r.date as string),
-  )
-  const workoutsThisWeek = [...workoutDates].filter((d) => d >= weekAgoStr).length
+  const workoutRows = workouts.data ?? []
+  const workoutDates = new Set(workoutRows.map((r) => r.date as string))
+  // Count every completed session this week (not unique days)
+  const workoutsThisWeek = workoutRows.filter((r) => (r.date as string) >= weekAgoStr).length
 
   // Streak: consecutive calendar days with a completed workout ending today/yesterday
   let streakDays = 0
@@ -485,6 +513,7 @@ export type LatestWorkoutExercise = {
   name: string
   muscleGroup: string
   orderIndex: number
+  sets: Array<{ weight: number | null; reps: number | null }>
 }
 
 export type LatestCompletedWorkout = {
@@ -589,20 +618,22 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
     .map((we) => {
       const ex = Array.isArray(we.exercises) ? we.exercises[0] : we.exercises
       if (!ex) return null
+      const sets = (we.sets ?? [])
+        .filter((s) => isCompletedSet(s))
+        .map((s) => ({ weight: s.weight, reps: s.reps }))
       return {
         exerciseId: we.exercise_id,
         name: ex.name,
         muscleGroup: ex.muscle_group,
         orderIndex: we.order_index ?? 0,
+        sets,
       }
     })
     .filter((e): e is LatestWorkoutExercise => e !== null)
 
   const exerciseNames = exercises.map((e) => e.name)
 
-  const allSets = exerciseRows.flatMap((we) => we.sets ?? [])
-  // Volume = sum(weight × reps) of completed sets only
-  const completed = allSets.filter(isCompletedSet)
+  const completed = exercises.flatMap((e) => e.sets)
   const setCount = completed.length
   const volume = Math.round(totalVolumeKg(completed))
 

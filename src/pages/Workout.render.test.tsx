@@ -106,22 +106,34 @@ describe('Workout page render', () => {
     errorSpy.mockRestore()
   })
 
-  it('renders deep-link entries without looping', async () => {
+  it('shows type picker for bare start=1 without looping', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const entries = ['/workout?start=1', '/workout?repeat=1', '/workout?type=Push']
+    renderWorkout('/workout?start=1')
 
-    for (const entry of entries) {
-      useWorkoutStore.setState({ phase: 'idle', currentWorkoutId: null, suggestedType: null })
-      const { unmount } = renderWorkout(entry)
+    await waitFor(() => {
+      expect(screen.getByText('Pick a type')).toBeInTheDocument()
+    })
+    await new Promise((r) => setTimeout(r, 30))
+    assertNoUpdateDepthLoop(errorSpy)
+    errorSpy.mockRestore()
+  })
 
-      await waitFor(() => {
-        expect(screen.getByText('Pick a type')).toBeInTheDocument()
-      })
-      await new Promise((r) => setTimeout(r, 30))
-      assertNoUpdateDepthLoop(errorSpy)
-      unmount()
-    }
+  it('auto-starts when type is in the URL without looping', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(createWorkout).mockClear()
 
+    renderWorkout('/workout?start=1&type=Push')
+
+    await waitFor(() => {
+      expect(useWorkoutStore.getState().currentWorkoutId).toBeTruthy()
+      expect(useWorkoutStore.getState().phase).toBe('warmup')
+    })
+    expect(await screen.findByRole('heading', { name: 'Warmup' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(createWorkout).toHaveBeenCalled()
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    assertNoUpdateDepthLoop(errorSpy)
     errorSpy.mockRestore()
   })
 

@@ -14,6 +14,10 @@ export interface DailyLogEntry {
   workoutType: string | null      // label, e.g. "Push", "Upper Body"
   workoutDurationMins: number | null
   workoutCount: number            // 0 = rest day
+  /** Feel scores from workouts that day (1–5), most recent last */
+  workoutFeels: number[]
+  /** Notes from workouts that day */
+  workoutNotes: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -29,12 +33,16 @@ export interface ExerciseHistorySession {
   date: string         // "YYYY-MM-DD"
   totalVolume: number
   sets: SetRecord[]
+  feel: number | null
+  note: string | null
 }
 
 export interface ExerciseHistory {
   exerciseId: string
   exerciseName: string
   muscleGroup: string
-  allTimeBest: number | null  // highest weight ever lifted (kg)
+  /** Highest weight (kg) among completed sets — same PR rules as finish summary */
+  allTimeBest: number | null
+  allTimeBestReps: number | null
   sessions: ExerciseHistorySession[]
 }

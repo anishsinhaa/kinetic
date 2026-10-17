@@ -12,6 +12,7 @@ type SetStepperRowProps = {
   status?: 'idle' | 'saving' | 'saved' | 'error'
   onChange: (patch: Partial<WorkoutSetDraft>) => void
   onComplete: () => void
+  onUncomplete: () => void
 }
 
 function parseNum(v: string): number {
@@ -27,10 +28,12 @@ export function SetStepperRow({
   status,
   onChange,
   onComplete,
+  onUncomplete,
 }: SetStepperRowProps) {
   const reduceMotion = useReducedMotion()
   const weight = parseNum(set.weight)
   const reps = parseInt(set.reps || '0', 10) || 0
+  const locked = Boolean(disabled)
 
   return (
     <motion.div
@@ -58,7 +61,7 @@ export function SetStepperRow({
       <div className="flex items-center gap-1">
         <button
           type="button"
-          disabled={disabled || set.completed}
+          disabled={locked || set.completed}
           className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() =>
             onChange({ weight: String(Math.max(0, +(weight - weightStep).toFixed(2))) })
@@ -69,7 +72,7 @@ export function SetStepperRow({
         <input
           type="number"
           inputMode="decimal"
-          disabled={disabled || set.completed}
+          disabled={locked || set.completed}
           value={set.weight}
           onFocus={selectOnFocus}
           onChange={(e) => onChange({ weight: e.target.value })}
@@ -77,7 +80,7 @@ export function SetStepperRow({
         />
         <button
           type="button"
-          disabled={disabled || set.completed}
+          disabled={locked || set.completed}
           className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() => onChange({ weight: String(+(weight + weightStep).toFixed(2)) })}
         >
@@ -88,7 +91,7 @@ export function SetStepperRow({
       <div className="flex items-center gap-1">
         <button
           type="button"
-          disabled={disabled || set.completed}
+          disabled={locked || set.completed}
           className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() => onChange({ reps: String(Math.max(0, reps - 1)) })}
         >
@@ -97,7 +100,7 @@ export function SetStepperRow({
         <input
           type="number"
           inputMode="numeric"
-          disabled={disabled || set.completed}
+          disabled={locked || set.completed}
           value={set.reps}
           onFocus={selectOnFocus}
           onChange={(e) => onChange({ reps: e.target.value })}
@@ -105,7 +108,7 @@ export function SetStepperRow({
         />
         <button
           type="button"
-          disabled={disabled || set.completed}
+          disabled={locked || set.completed}
           className="min-h-11 min-w-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40"
           onClick={() => onChange({ reps: String(reps + 1) })}
         >
@@ -115,15 +118,15 @@ export function SetStepperRow({
 
       <button
         type="button"
-        disabled={disabled || set.completed || set.weight === '' || set.reps === ''}
-        onClick={onComplete}
+        disabled={locked || (!set.completed && (set.weight === '' || set.reps === ''))}
+        onClick={() => (set.completed ? onUncomplete() : onComplete())}
         className={cn(
           'min-h-11 min-w-11 rounded-xl flex items-center justify-center border transition-colors',
           set.completed
             ? 'bg-primary text-black border-primary'
             : 'bg-surface-2 border-border text-text-secondary hover:border-primary hover:text-primary disabled:opacity-40',
         )}
-        aria-label={set.completed ? 'Set complete' : 'Complete set'}
+        aria-label={set.completed ? 'Uncomplete set' : 'Complete set'}
       >
         <Check size={18} strokeWidth={3} />
       </button>

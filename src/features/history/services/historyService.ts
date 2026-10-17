@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
 import { isCompletedSet, totalVolumeKg } from '../../workout/lib/volume'
+import { bestPersonalRecord } from '../../workout/lib/prDetection'
 import { deriveDayWorkoutSummary } from '../lib/deriveDayWorkoutSummary'
 import type { DailyLogEntry, ExerciseHistory, ExerciseHistorySession } from '../types'
 
@@ -15,10 +16,11 @@ type WorkoutDayRow = {
   created_at: string
   started_at: string | null
   ended_at: string
+  feel?: number | null
+  note?: string | null
 }
 
 export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
-  // Fetch daily logs and completed workouts in parallel
   const [logsResult, workoutsResult] = await Promise.all([
     supabase
       .from('daily_logs')
@@ -27,7 +29,7 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
       .order('date', { ascending: false }),
     supabase
       .from('workouts')
-      .select('name, workout_type, date, created_at, started_at, ended_at')
+      .select('name, workout_type, date, created_at, started_at, ended_at, feel, note')
       .eq('user_id', userId)
       .not('ended_at', 'is', null),
   ])
@@ -35,7 +37,6 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
   if (logsResult.error) throw toServiceError(logsResult.error)
 
   let workoutRows = (workoutsResult.data ?? []) as WorkoutDayRow[]
-  // Pre-migration: workout_type may be missing from schema cache
   if (workoutsResult.error) {
     const legacy = await supabase
       .from('workouts')
@@ -76,7 +77,6 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
     })
   }
 
-  // Union of log dates + workout dates so multi-workout days always appear
   const allDates = new Set<string>([...logByDate.keys(), ...workoutsByDate.keys()])
   const dates = [...allDates].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
 
@@ -84,6 +84,9 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
     const log = logByDate.get(date)
     const dayWorkouts = workoutsByDate.get(date) ?? []
     const summary = deriveDayWorkoutSummary(dayWorkouts)
+    const sorted = [...dayWorkouts].sort(
+      (a, b) => new Date(a.ended_at).getTime() - new Date(b.ended_at).getTime(),
+    )
 
     return {
       id: log?.id ?? `workout-day-${date}`,
@@ -96,6 +99,12 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
       workoutType: summary.typeLabel,
       workoutDurationMins: summary.count > 0 ? summary.durationMins : null,
       workoutCount: summary.count,
+      workoutFeels: sorted
+        .map((w) => w.feel)
+        .filter((f): f is number => typeof f === 'number'),
+      workoutNotes: sorted
+        .map((w) => (w.note ?? '').trim())
+        .filter(Boolean),
     }
   })
 }
@@ -111,8 +120,12 @@ type RawWorkoutExerciseRow = {
     weight: number | null
     reps: number | null
     set_index: number | null
+    completed_at?: string | null
   }> | null
-  workouts: { date: string } | { date: string }[] | null
+  workouts:
+    | { date: string; feel?: number | null; note?: string | null }
+    | { date: string; feel?: number | null; note?: string | null }[]
+    | null
 }
 
 export async function getExerciseHistory(userId: string): Promise<ExerciseHistory[]> {
@@ -121,21 +134,40 @@ export async function getExerciseHistory(userId: string): Promise<ExerciseHistor
     .select(`
       exercise_id,
       exercises ( id, name, muscle_group ),
-      sets ( weight, reps, set_index ),
-      workouts!inner ( date, user_id, ended_at )
+      sets ( weight, reps, set_index, completed_at ),
+      workouts!inner ( date, user_id, ended_at, feel, note )
     `)
     .eq('workouts.user_id', userId)
     .not('workouts.ended_at', 'is', null)
     .order('date', { ascending: false, foreignTable: 'workouts' })
 
-  if (error) throw toServiceError(error)
+  if (error) {
+    // Fallback without feel/note/completed_at for older schemas
+    const legacy = await supabase
+      .from('workout_exercises')
+      .select(`
+        exercise_id,
+        exercises ( id, name, muscle_group ),
+        sets ( weight, reps, set_index ),
+        workouts!inner ( date, user_id, ended_at )
+      `)
+      .eq('workouts.user_id', userId)
+      .not('workouts.ended_at', 'is', null)
+      .order('date', { ascending: false, foreignTable: 'workouts' })
+    if (legacy.error) throw toServiceError(legacy.error)
+    return buildExerciseHistory((legacy.data ?? []) as unknown as RawWorkoutExerciseRow[])
+  }
 
+  return buildExerciseHistory((data ?? []) as unknown as RawWorkoutExerciseRow[])
+}
+
+function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] {
   const exerciseMap = new Map<
     string,
     { name: string; muscleGroup: string; sessions: Map<string, ExerciseHistorySession> }
   >()
 
-  for (const row of (data ?? []) as unknown as RawWorkoutExerciseRow[]) {
+  for (const row of rows) {
     const exercisesField = row.exercises
     const exercise = Array.isArray(exercisesField) ? exercisesField[0] : exercisesField
     if (!exercise) continue
@@ -162,19 +194,23 @@ export async function getExerciseHistory(userId: string): Promise<ExerciseHistor
     if (sets.length === 0) continue
 
     const totalVolume = totalVolumeKg(sets)
-    const allTimeBestWeight = Math.max(0, ...sets.map((s) => s.weight ?? 0))
+    const feel = workout?.feel ?? null
+    const note = (workout?.note ?? '').trim() || null
 
     if (!entry.sessions.has(date)) {
       entry.sessions.set(date, {
         date,
         totalVolume,
         sets: sets.map((s) => ({ weight: s.weight, reps: s.reps })),
+        feel,
+        note,
       })
     } else {
       const existing = entry.sessions.get(date)!
       existing.sets.push(...sets.map((s) => ({ weight: s.weight, reps: s.reps })))
       existing.totalVolume += totalVolume
-      void allTimeBestWeight
+      if (feel != null) existing.feel = feel
+      if (note) existing.note = note
     }
   }
 
@@ -184,16 +220,14 @@ export async function getExerciseHistory(userId: string): Promise<ExerciseHistor
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
     )
 
-    const allTimeBest =
-      sessions.length > 0
-        ? Math.max(...sessions.flatMap((s) => s.sets.map((set) => set.weight ?? 0)))
-        : null
+    const best = bestPersonalRecord(sessions.flatMap((s) => s.sets))
 
     result.push({
       exerciseId,
       exerciseName: entry.name,
       muscleGroup: entry.muscleGroup,
-      allTimeBest: allTimeBest !== null && allTimeBest > 0 ? allTimeBest : null,
+      allTimeBest: best?.weight ?? null,
+      allTimeBestReps: best?.reps ?? null,
       sessions,
     })
   }
