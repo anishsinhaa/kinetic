@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase/client'
 import { useAppStore } from '../../store/useAppStore'
+import { syncPushSubscriptionIfGranted } from '../settings/lib/pushNotifications'
 
 function sessionToUser(session: Session | null) {
   return session?.user
@@ -32,6 +33,13 @@ export function useAuthListener() {
       setAuthReady(true)
     }
 
+    const resyncPush = (userId: string | undefined) => {
+      if (!userId || cancelled) return
+      void syncPushSubscriptionIfGranted(userId).catch((err) => {
+        console.warn('[push] background re-sync failed', err)
+      })
+    }
+
     supabase.auth
       .getSession()
       .then(({ data: { session }, error }) => {
@@ -42,6 +50,7 @@ export function useAuthListener() {
         }
         setUser(sessionToUser(session))
         setAuthReady(true)
+        resyncPush(session?.user?.id)
       })
       .catch(() => {
         void clearSessionAndShowLogin()
@@ -60,6 +69,9 @@ export function useAuthListener() {
 
       setUser(sessionToUser(session))
       setAuthReady(true)
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        resyncPush(session?.user?.id)
+      }
     })
 
     return () => {

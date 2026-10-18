@@ -33,6 +33,7 @@ import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   getVapidPublicKey,
   pushSupported,
+  sendTestPushNotification,
   subscribeUserPush,
   unsubscribeUserPush,
 } from '../features/settings/lib/pushNotifications'
@@ -450,6 +451,24 @@ function PreferencesSection({ userId }: { userId: string }) {
     saveMutation.mutate(patch)
   }
 
+  /** Turning a reminder on also ensures Web Push is subscribed + saved. */
+  const persistReminder = (patch: UserSettingsUpdate, enabling: boolean) => {
+    persist(patch)
+    if (!enabling) return
+    setPushBusy(true)
+    setPushOk(false)
+    void subscribeUserPush(userId)
+      .then(() => {
+        setPushMsg('Reminder on — push subscription saved to push_subscriptions.')
+        setPushOk(true)
+      })
+      .catch((err) => {
+        setPushMsg(err instanceof Error ? err.message : String(err))
+        setPushOk(false)
+      })
+      .finally(() => setPushBusy(false))
+  }
+
   const handleEnablePush = async () => {
     setPushBusy(true)
     setPushMsg('')
@@ -472,6 +491,23 @@ function PreferencesSection({ userId }: { userId: string }) {
     try {
       await unsubscribeUserPush(userId)
       setPushMsg('Push subscription removed')
+      setPushOk(true)
+    } catch (err) {
+      setPushMsg(err instanceof Error ? err.message : String(err))
+      setPushOk(false)
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
+  const handleTestPush = async () => {
+    setPushBusy(true)
+    setPushOk(false)
+    try {
+      // Ensure DB row exists before asking the function to send.
+      await subscribeUserPush(userId)
+      const { sent } = await sendTestPushNotification(userId)
+      setPushMsg(`Test notification sent (${sent}). Check this device.`)
       setPushOk(true)
     } catch (err) {
       setPushMsg(err instanceof Error ? err.message : String(err))
@@ -540,13 +576,16 @@ function PreferencesSection({ userId }: { userId: string }) {
               />
               <Toggle
                 checked={local.reminderMorningWeightEnabled}
-                disabled={saveMutation.isPending}
+                disabled={saveMutation.isPending || pushBusy}
                 onChange={(v) =>
-                  persist({
-                    reminderMorningWeightEnabled: v,
-                    reminderMorningWeightTime:
-                      local.reminderMorningWeightTime ?? '08:00:00',
-                  })
+                  persistReminder(
+                    {
+                      reminderMorningWeightEnabled: v,
+                      reminderMorningWeightTime:
+                        local.reminderMorningWeightTime ?? '08:00:00',
+                    },
+                    v,
+                  )
                 }
               />
             </div>
@@ -570,13 +609,16 @@ function PreferencesSection({ userId }: { userId: string }) {
               />
               <Toggle
                 checked={local.reminderNightRecoveryEnabled}
-                disabled={saveMutation.isPending}
+                disabled={saveMutation.isPending || pushBusy}
                 onChange={(v) =>
-                  persist({
-                    reminderNightRecoveryEnabled: v,
-                    reminderNightRecoveryTime:
-                      local.reminderNightRecoveryTime ?? '21:00:00',
-                  })
+                  persistReminder(
+                    {
+                      reminderNightRecoveryEnabled: v,
+                      reminderNightRecoveryTime:
+                        local.reminderNightRecoveryTime ?? '21:00:00',
+                    },
+                    v,
+                  )
                 }
               />
             </div>
@@ -600,12 +642,15 @@ function PreferencesSection({ userId }: { userId: string }) {
               />
               <Toggle
                 checked={local.reminderWorkoutEnabled}
-                disabled={saveMutation.isPending}
+                disabled={saveMutation.isPending || pushBusy}
                 onChange={(v) =>
-                  persist({
-                    reminderWorkoutEnabled: v,
-                    reminderWorkoutTime: local.reminderWorkoutTime ?? '17:00:00',
-                  })
+                  persistReminder(
+                    {
+                      reminderWorkoutEnabled: v,
+                      reminderWorkoutTime: local.reminderWorkoutTime ?? '17:00:00',
+                    },
+                    v,
+                  )
                 }
               />
             </div>
@@ -641,27 +686,33 @@ function PreferencesSection({ userId }: { userId: string }) {
         )}
         <div className="px-4 md:px-5 py-4 border-t border-border space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-text-primary flex items-center gap-2">
                 <Bell size={14} className="text-primary" />
                 Web Push
               </p>
               <p className="text-xs text-text-muted mt-0.5">
-                {!pushSupported()
-                  ? 'Not supported in this browser.'
-                  : !vapidPresent
-                    ? 'VITE_VAPID_PUBLIC_KEY missing from this build — rebuild with the env var set.'
-                    : 'Save a subscription so scheduled reminders can reach this device.'}
+                {pushSupported()
+                  ? 'Enable saves this device to push_subscriptions so reminders can be delivered.'
+                  : 'Not supported in this browser.'}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 justify-end">
               <Button
                 variant="secondary"
                 size="sm"
-                disabled={!pushSupported() || !vapidPresent || pushBusy}
+                disabled={!pushSupported() || pushBusy}
                 onClick={() => void handleEnablePush()}
               >
                 {pushBusy ? <Loader2 size={13} className="animate-spin" /> : 'Enable'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!pushSupported() || pushBusy}
+                onClick={() => void handleTestPush()}
+              >
+                Send test notification
               </Button>
               <Button
                 variant="ghost"
@@ -673,8 +724,17 @@ function PreferencesSection({ userId }: { userId: string }) {
               </Button>
             </div>
           </div>
+          {!vapidPresent && (
+            <p className="text-xs text-red-400" role="alert">
+              VITE_VAPID_PUBLIC_KEY is missing from this build. Set it on the host (e.g. Netlify
+              env) and redeploy — Enable will fail until then.
+            </p>
+          )}
           {pushMsg && (
-            <p className={cn('text-xs', pushOk ? 'text-text-secondary' : 'text-red-400')}>
+            <p
+              className={cn('text-xs', pushOk ? 'text-text-secondary' : 'text-red-400')}
+              role={pushOk ? 'status' : 'alert'}
+            >
               {pushMsg}
             </p>
           )}

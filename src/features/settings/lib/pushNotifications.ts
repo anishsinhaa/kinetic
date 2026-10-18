@@ -1,4 +1,5 @@
 import { upsertPushSubscription, deletePushSubscription } from '../services/settingsService'
+import { sendTestReminderPush } from '../services/pushTestService'
 
 export class PushSubscribeError extends Error {
   readonly step: string
@@ -10,13 +11,14 @@ export class PushSubscribeError extends Error {
   }
 }
 
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+/** Chrome/Android PushManager expects an ArrayBuffer, not a Uint8Array view. */
+function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
   const raw = atob(base64)
   const out = new Uint8Array(raw.length)
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
-  return out
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength)
 }
 
 export function getVapidPublicKey(): string | null {
@@ -30,7 +32,7 @@ export function requireVapidPublicKey(): string {
   if (!key) {
     throw new PushSubscribeError(
       'vapid',
-      'VITE_VAPID_PUBLIC_KEY is missing from this build. Add it to .env (or the host env) and rebuild — Vite only inlines VITE_* vars at build time.',
+      'VITE_VAPID_PUBLIC_KEY is missing from this build. Set it in the host env (e.g. Netlify) and rebuild — Vite only inlines VITE_* vars at build time.',
     )
   }
   // Uncompressed P-256 VAPID keys are ~87 URL-safe base64 chars.
@@ -76,27 +78,72 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
-  const existing = await navigator.serviceWorker.getRegistration()
-  if (existing?.active || existing?.waiting || existing?.installing) {
+  // Prefer an explicit registration — ready can hang if nothing is registered yet.
+  let existing = await navigator.serviceWorker.getRegistration()
+  if (!existing) {
+    // PWA plugin registers asynchronously; wait briefly for it.
+    for (let i = 0; i < 20 && !existing; i++) {
+      await new Promise((r) => window.setTimeout(r, 250))
+      existing = await navigator.serviceWorker.getRegistration()
+    }
+  }
+
+  if (existing) {
     try {
-      return await withTimeout(navigator.serviceWorker.ready, 8000)
+      return await withTimeout(navigator.serviceWorker.ready, 10000)
     } catch {
-      if (existing) return existing
+      return existing
     }
   }
 
   try {
-    return await withTimeout(navigator.serviceWorker.ready, 8000)
+    return await withTimeout(navigator.serviceWorker.ready, 10000)
   } catch {
     throw new PushSubscribeError(
       'service_worker',
-      'No active service worker. Web Push needs a production/preview build with the PWA service worker registered (dev server has SW disabled).',
+      'No active service worker. Web Push needs a production/preview build with the PWA service worker registered (Vite dev has SW disabled).',
     )
   }
 }
 
-/** Subscribe to Web Push and persist the subscription for the user. */
+async function ensureBrowserPushSubscription(
+  reg: ServiceWorkerRegistration,
+  vapid: string,
+): Promise<PushSubscription> {
+  let sub = await reg.pushManager.getSubscription()
+  if (sub) {
+    console.info('[push] reusing existing browser subscription', sub.endpoint.slice(-32))
+    return sub
+  }
+
+  console.info('[push] pushManager.subscribe…')
+  try {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToArrayBuffer(vapid),
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new PushSubscribeError(
+      'subscribe',
+      `pushManager.subscribe failed: ${msg}. Check that VITE_VAPID_PUBLIC_KEY matches the server VAPID public key.`,
+    )
+  }
+
+  if (!sub) {
+    throw new PushSubscribeError('subscribe', 'pushManager.subscribe returned no subscription.')
+  }
+  console.info('[push] browser subscribe ok', sub.endpoint.slice(-32))
+  return sub
+}
+
+/**
+ * Ensure a browser PushSubscription exists and upsert it into push_subscriptions.
+ * Always writes to the DB even when permission was already granted or a browser sub already exists.
+ */
 export async function subscribeUserPush(userId: string): Promise<PushSubscription> {
+  console.info('[push] enable start', { userId: userId.slice(0, 8) })
+
   if (!pushSupported()) {
     throw new PushSubscribeError(
       'support',
@@ -105,8 +152,10 @@ export async function subscribeUserPush(userId: string): Promise<PushSubscriptio
   }
 
   const vapid = requireVapidPublicKey()
+  console.info('[push] vapid present', { length: vapid.length })
 
   const permission = await ensureNotificationPermission()
+  console.info('[push] permission', permission)
   if (permission !== 'granted') {
     throw new PushSubscribeError(
       'permission',
@@ -119,6 +168,10 @@ export async function subscribeUserPush(userId: string): Promise<PushSubscriptio
   let reg: ServiceWorkerRegistration
   try {
     reg = await getPushRegistration()
+    console.info('[push] service worker ready', {
+      active: Boolean(reg.active),
+      scope: reg.scope,
+    })
   } catch (err) {
     if (err instanceof PushSubscribeError) throw err
     throw new PushSubscribeError(
@@ -127,26 +180,7 @@ export async function subscribeUserPush(userId: string): Promise<PushSubscriptio
     )
   }
 
-  let sub: PushSubscription | null
-  try {
-    sub = await reg.pushManager.getSubscription()
-    if (!sub) {
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapid) as BufferSource,
-      })
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    throw new PushSubscribeError(
-      'subscribe',
-      `pushManager.subscribe failed: ${msg}. Check that VITE_VAPID_PUBLIC_KEY matches the server VAPID public key.`,
-    )
-  }
-
-  if (!sub) {
-    throw new PushSubscribeError('subscribe', 'pushManager.subscribe returned no subscription.')
-  }
+  const sub = await ensureBrowserPushSubscription(reg, vapid)
 
   const json = sub.toJSON()
   const p256dh = json.keys?.p256dh
@@ -159,12 +193,13 @@ export async function subscribeUserPush(userId: string): Promise<PushSubscriptio
   }
 
   try {
-    await upsertPushSubscription(userId, {
+    const id = await upsertPushSubscription(userId, {
       endpoint: json.endpoint,
       p256dh,
       auth,
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
     })
+    console.info('[push] upserted push_subscriptions row', id)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     throw new PushSubscribeError(
@@ -174,6 +209,22 @@ export async function subscribeUserPush(userId: string): Promise<PushSubscriptio
   }
 
   return sub
+}
+
+/**
+ * If the browser already granted notifications, re-sync the current subscription to the DB.
+ * No-ops (without throwing) when permission is not granted or push is unsupported.
+ * Throws on real sync failures so callers can surface them.
+ */
+export async function syncPushSubscriptionIfGranted(userId: string): Promise<boolean> {
+  if (!pushSupported()) return false
+  if (!('Notification' in window) || Notification.permission !== 'granted') return false
+  if (!getVapidPublicKey()) {
+    console.warn('[push] skip sync — VITE_VAPID_PUBLIC_KEY missing from build')
+    return false
+  }
+  await subscribeUserPush(userId)
+  return true
 }
 
 export async function unsubscribeUserPush(userId: string): Promise<void> {
@@ -187,6 +238,11 @@ export async function unsubscribeUserPush(userId: string): Promise<void> {
     await sub.unsubscribe()
     await deletePushSubscription(userId, endpoint)
   }
+}
+
+/** Invoke send-reminders in test mode for the signed-in user only. */
+export async function sendTestPushNotification(userId: string): Promise<{ sent: number }> {
+  return sendTestReminderPush(userId)
 }
 
 /** Local rest-timer notification via service worker (works when tab is backgrounded). */

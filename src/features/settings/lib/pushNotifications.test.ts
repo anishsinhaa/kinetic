@@ -20,6 +20,7 @@ describe('VAPID public key (build-time)', () => {
       expect(err).toBeInstanceOf(PushSubscribeError)
       expect((err as PushSubscribeError).step).toBe('vapid')
       expect((err as PushSubscribeError).message).toMatch(/missing from this build/i)
+      expect((err as PushSubscribeError).message).toMatch(/Netlify|rebuild/i)
     }
   })
 
