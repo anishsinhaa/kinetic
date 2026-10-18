@@ -1,5 +1,7 @@
-import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
+import { Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import fullLogo from '../assets/full_logo.png'
 import { cn } from '../lib/utils'
 import {
@@ -11,6 +13,8 @@ import {
   Settings,
   LogOut,
   Bell,
+  TrendingUp,
+  Loader2,
 } from 'lucide-react'
 import { logout } from '../features/auth/authService'
 import { useCurrentUser } from '../features/auth/useAuth'
@@ -22,12 +26,24 @@ const navItems = [
   { label: 'Workouts', icon: Dumbbell, to: '/workout' },
   { label: 'Exercises', icon: ListChecks, to: '/exercises' },
   { label: 'History', icon: History, to: '/history' },
+  { label: 'Progress', icon: TrendingUp, to: '/progress' },
   { label: 'Feedback', icon: MessageSquare, to: '/feedback' },
 ]
 
+function PageFallback() {
+  return (
+    <div className="flex items-center justify-center py-24 gap-3 text-text-secondary">
+      <Loader2 size={20} className="animate-spin text-primary" />
+      <span className="text-sm uppercase tracking-widest">Loading…</span>
+    </div>
+  )
+}
+
 export function MainLayout() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useCurrentUser()
+  const reduceMotion = useReducedMotion()
 
   // Prefetch exercise library + recents so Add Exercise opens instantly
   useQuery({
@@ -106,7 +122,7 @@ export function MainLayout() {
           </NavLink>
           <button
             onClick={() => void handleLogout()}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-text-secondary hover:text-red-400 hover:bg-surface-2 transition-colors w-full"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-text-secondary hover:text-red-400 hover:bg-surface-2 transition-colors w-full min-h-11"
           >
             <LogOut size={16} strokeWidth={1.8} />
             Logout
@@ -164,9 +180,22 @@ export function MainLayout() {
           </Link>
         </header>
 
-        {/* Page content — extra bottom padding on mobile for the tab bar */}
+        {/* Page content — route transitions */}
         <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
-          <Outlet />
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={location.pathname}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              style={{ height: '100%' }}
+            >
+              <Suspense fallback={<PageFallback />}>
+                <Outlet />
+              </Suspense>
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
 
@@ -179,13 +208,13 @@ export function MainLayout() {
             end={to === '/'}
             className={({ isActive }) =>
               cn(
-                'flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors',
+                'flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors min-w-0',
                 isActive ? 'text-primary' : 'text-text-muted',
               )
             }
           >
             <Icon size={20} strokeWidth={1.8} />
-            <span className="text-[9px] uppercase tracking-wider font-semibold">{label}</span>
+            <span className="text-[9px] uppercase tracking-wider font-semibold truncate">{label}</span>
           </NavLink>
         ))}
       </nav>

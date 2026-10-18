@@ -31,6 +31,10 @@ The app is designed around a daily workflow:
 | Data Fetching | TanStack Query (React Query v5) |
 | Backend / Database | Supabase (PostgreSQL + Auth + RLS) |
 | Authentication | Supabase Auth (Google OAuth + email) |
+| Charts | Recharts |
+| Excel I/O | SheetJS (xlsx) |
+| Animations | Framer Motion |
+| Push Notifications | Web Push API + Supabase Edge Functions |
 | Exercise Library | API Ninjas Exercises API (one-time bulk import) |
 | Deployment | Netlify (CI/CD via GitHub) |
 
@@ -46,11 +50,15 @@ src/
 │   ├── workout/       # Workout sessions, exercises, sets
 │   ├── exercises/     # Exercise library (API + custom)
 │   ├── feedback/      # Body feedback and muscle soreness
-│   └── history/       # Historical data queries
-├── pages/             # Route-level page components
-├── layouts/           # Main app layout (sidebar + topbar)
+│   ├── history/       # Historical data queries
+│   ├── progress/      # Progress aggregators, charts, PRs
+│   └── settings/      # User preferences, push notifications, data I/O
+├── pages/             # Code-split route-level page components
+├── layouts/           # Main app layout (sidebar + topbar + route transitions)
 ├── components/ui/     # Reusable UI primitives
-├── lib/supabase/      # Supabase client + types
+├── lib/
+│   ├── supabase/      # Supabase client + types
+│   └── offline/       # Offline mutation queue (localStorage)
 └── store/             # Zustand global store
 ```
 
@@ -98,6 +106,17 @@ Row Level Security (RLS) is enabled on all tables — users can only access thei
 - **Exercise History tab** — per-exercise history showing all logged sets across sessions
 - **Recovery tab** — all body feedback entries with fatigue, sleep quality, and muscle soreness by date
 
+### Progress
+- **Per-exercise charts** — select any exercise to see a time series of best set weight and session volume (Recharts area/bar charts)
+- **Weekly Volume** — total kg lifted per ISO week across all exercises
+- **Body Weight trend** — area chart of logged morning weights over time
+- **All-Time PRs** — flat list of every exercise's personal record, sorted by weight, with the date achieved
+- PR rules: heavier weight wins; same weight + more reps wins
+
+### Data Import / Export (Settings → Data)
+- **Export** — download all workout history and daily logs as JSON, CSV, or Excel (.xlsx)
+- **Import** — upload an Excel or CSV file with daily log data (columns: date, weight, calories, protein, sleep, notes); shows a preview with row count before applying
+
 ### Feedback (Recovery)
 - Log daily body feedback: fatigue level (1–10), sleep quality (1–10), pain flag
 - Select sore muscle groups with severity level
@@ -137,7 +156,11 @@ VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 VITE_EXERCISES_API_KEY=your_api_ninjas_key
 VITE_ADMIN_EMAILS=you@example.com
+# Required for Web Push notifications — generate with web-push generate-vapid-keys
+VITE_VAPID_PUBLIC_KEY=your_vapid_public_key
 ```
+
+> **Note:** A production build will fail if `VITE_VAPID_PUBLIC_KEY` is missing. Set it in your Netlify environment variables dashboard along with `VAPID_PRIVATE_KEY` in your Supabase Edge Function secrets.
 
 Run the SQL schema in your Supabase SQL Editor:
 
@@ -168,14 +191,20 @@ Environment variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_EXER
 
 ---
 
+## CI
+
+GitHub Actions runs on every push to `main` and on PRs:
+1. `npx tsc --noEmit` — type check
+2. `npx vitest run` — 58 unit tests across aggregators, sync queue, push, history, and PR detection
+3. `npm run build` — production Vite build (fails if VAPID key is missing)
+4. `npm audit --audit-level=high` — security check
+
+---
+
 ## Roadmap
 
-### Coming Soon (Web)
-- Progressive overload tracking and volume charts
-- Body weight trend graph
-- Personal records (PRs) per exercise
-- Weekly summary view
-- Dark/light theme toggle
+### Mobile App
+A native mobile app for KINETIC is planned. The goal is full feature parity with the web app — log workouts, track recovery, and review history from your phone. The same Supabase backend will power both platforms, so your data syncs seamlessly between web and mobile.
 
 ### Mobile App
 A native mobile app for KINETIC is planned. The goal is full feature parity with the web app — log workouts, track recovery, and review history from your phone. The same Supabase backend will power both platforms, so your data syncs seamlessly between web and mobile.

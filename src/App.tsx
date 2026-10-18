@@ -1,16 +1,21 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { MainLayout } from './layouts/MainLayout'
-import Dashboard from './pages/Dashboard'
-import Workout from './pages/Workout'
-import History from './pages/History'
-import Exercises from './pages/Exercises'
-import Feedback from './pages/Feedback'
-import Settings from './pages/Settings'
-import AuthPage from './features/auth/AuthPage'
 import { useAuthListener, useCurrentUser } from './features/auth/useAuth'
+
+// Code-split all pages — only the auth page is eager (tiny and always needed)
+import AuthPage from './features/auth/AuthPage'
+
+const Dashboard  = lazy(() => import('./pages/Dashboard'))
+const Workout    = lazy(() => import('./pages/Workout'))
+const History    = lazy(() => import('./pages/History'))
+const Exercises  = lazy(() => import('./pages/Exercises'))
+const Progress   = lazy(() => import('./pages/Progress'))
+const Feedback   = lazy(() => import('./pages/Feedback'))
+const Settings   = lazy(() => import('./pages/Settings'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,18 +51,28 @@ function AppShell() {
     return <AuthPage />
   }
 
-  // Logged in → show main app
+  // Logged in → show main app with lazy routes
   return (
-    <Routes>
-      <Route element={<MainLayout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/workout" element={<Workout />} />
-        <Route path="/history" element={<History />} />
-        <Route path="/exercises" element={<Exercises />} />
-        <Route path="/feedback" element={<Feedback />} />
-        <Route path="/settings" element={<Settings />} />
-      </Route>
-    </Routes>
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background flex items-center justify-center gap-3 text-text-secondary">
+          <Loader2 size={20} className="animate-spin text-primary" />
+          <span className="text-sm uppercase tracking-widest">Loading…</span>
+        </div>
+      }
+    >
+      <Routes>
+        <Route element={<MainLayout />}>
+          <Route path="/"          element={<Dashboard />} />
+          <Route path="/workout"   element={<Workout />} />
+          <Route path="/history"   element={<History />} />
+          <Route path="/exercises" element={<Exercises />} />
+          <Route path="/progress"  element={<Progress />} />
+          <Route path="/feedback"  element={<Feedback />} />
+          <Route path="/settings"  element={<Settings />} />
+        </Route>
+      </Routes>
+    </Suspense>
   )
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '../components/ui/Button'
@@ -15,6 +15,8 @@ import {
   Eye,
   EyeOff,
   Bell,
+  Download,
+  Upload,
 } from 'lucide-react'
 import { countLibraryExercises, getLibraryStats } from '../features/workout/services/exerciseService'
 import { importExerciseLibrary, type ImportProgress } from '../features/exercises/services/exerciseImportService'
@@ -39,6 +41,14 @@ import {
 } from '../features/settings/lib/pushNotifications'
 import { detectBrowserTimezone } from '../features/settings/lib/reminderTimezone'
 import { cn } from '../lib/utils'
+import {
+  exportJson,
+  exportCsv,
+  exportExcel,
+  parseImportFile,
+  type ImportPreview,
+} from '../features/settings/lib/dataExport'
+import { upsertDailyLog } from '../features/dailyLog/services/dailyLogService'
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -824,6 +834,199 @@ function PreferencesSection({ userId }: { userId: string }) {
   )
 }
 
+// ─── Data import / export section ────────────────────────────────────────────
+
+function DataSection({ userId }: { userId: string }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [exporting, setExporting] = useState<'json' | 'csv' | 'xlsx' | null>(null)
+  const [importState, setImportState] = useState<
+    | { status: 'idle' }
+    | { status: 'preview'; preview: ImportPreview }
+    | { status: 'applying'; done: number; total: number }
+    | { status: 'done'; count: number }
+    | { status: 'error'; message: string }
+  >({ status: 'idle' })
+
+  const queryClient = useQueryClient()
+
+  // We use the history hooks but this is Settings, so we lazily fetch on demand
+  const handleExport = async (fmt: 'json' | 'csv' | 'xlsx') => {
+    setExporting(fmt)
+    try {
+      const { getExerciseHistory, getDailyLogs } = await import('../features/history/services/historyService')
+      const [histories, logs] = await Promise.all([getExerciseHistory(userId), getDailyLogs(userId)])
+      if (fmt === 'json') exportJson(histories, logs)
+      else if (fmt === 'csv') exportCsv(histories, logs)
+      else exportExcel(histories, logs)
+    } catch (err) {
+      alert(`Export failed: ${(err as Error).message}`)
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // Reset input so same file can be re-selected
+    e.target.value = ''
+    setImportState({ status: 'idle' })
+    try {
+      const preview = await parseImportFile(file)
+      if (preview.rows.length === 0) {
+        setImportState({ status: 'error', message: 'No valid rows found in file.' })
+        return
+      }
+      setImportState({ status: 'preview', preview })
+    } catch (err) {
+      setImportState({ status: 'error', message: (err as Error).message })
+    }
+  }
+
+  const handleApplyImport = async () => {
+    if (importState.status !== 'preview') return
+    const { rows } = importState.preview
+    setImportState({ status: 'applying', done: 0, total: rows.length })
+    let done = 0
+    const errors: string[] = []
+    for (const row of rows) {
+      try {
+        await upsertDailyLog(userId, {
+          weight: row.weight ?? null,
+          calories: row.calories ?? null,
+          protein: row.protein ?? null,
+          sleep: row.sleep ?? null,
+          notes: row.notes ?? '',
+        }, row.date)
+      } catch (err) {
+        errors.push(`${row.date}: ${(err as Error).message}`)
+      }
+      done++
+      setImportState({ status: 'applying', done, total: rows.length })
+    }
+    await queryClient.invalidateQueries({ queryKey: ['history'] })
+    if (errors.length > 0) {
+      setImportState({
+        status: 'error',
+        message: `Imported ${done - errors.length}/${rows.length} rows. Errors:\n${errors.slice(0, 5).join('\n')}`,
+      })
+    } else {
+      setImportState({ status: 'done', count: done })
+    }
+  }
+
+  return (
+    <Section title="Data">
+      {/* Export row */}
+      <div className="flex items-start sm:items-center justify-between gap-3 px-4 md:px-5 py-3 md:py-4 border-b border-border">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Export data</p>
+          <p className="text-xs text-text-muted mt-0.5">Download all your workout and daily log data</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {(['json', 'csv', 'xlsx'] as const).map((fmt) => (
+            <Button
+              key={fmt}
+              variant="outlined"
+              size="sm"
+              disabled={exporting !== null}
+              onClick={() => void handleExport(fmt)}
+            >
+              {exporting === fmt ? (
+                <Loader2 size={12} className="animate-spin mr-1" />
+              ) : (
+                <Download size={12} className="mr-1" />
+              )}
+              {fmt.toUpperCase()}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* Import row */}
+      <div className="px-4 md:px-5 py-3 md:py-4">
+        <div className="flex items-start sm:items-center justify-between gap-3 mb-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Import daily logs</p>
+            <p className="text-xs text-text-muted mt-0.5">
+              Upload an Excel (.xlsx) or CSV file with columns: date, weight, calories, protein, sleep, notes
+            </p>
+          </div>
+          <div className="shrink-0">
+            <Button
+              variant="outlined"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importState.status === 'applying'}
+            >
+              <Upload size={12} className="mr-1" />
+              Choose file
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => void handleFileChange(e)}
+            />
+          </div>
+        </div>
+
+        {/* Preview */}
+        {importState.status === 'preview' && (
+          <div className="rounded-lg border border-border bg-surface-2 p-3 mt-2">
+            {importState.preview.warnings.map((w, i) => (
+              <p key={i} className="text-xs text-amber-400 mb-1">{w}</p>
+            ))}
+            <p className="text-xs text-text-muted mb-2">
+              Preview: {importState.preview.rows.length} rows to import (daily logs only)
+            </p>
+            <div className="max-h-40 overflow-y-auto rounded border border-border bg-background text-xs font-mono p-2 mb-3">
+              {importState.preview.rows.slice(0, 10).map((r, i) => (
+                <div key={i} className="text-text-muted">
+                  {r.date} · wt={r.weight ?? '-'} kcal={r.calories ?? '-'} prot={r.protein ?? '-'}g
+                </div>
+              ))}
+              {importState.preview.rows.length > 10 && (
+                <div className="text-text-muted">… and {importState.preview.rows.length - 10} more</div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="primary" onClick={() => void handleApplyImport()}>
+                Apply {importState.preview.rows.length} rows
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setImportState({ status: 'idle' })}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {importState.status === 'applying' && (
+          <div className="flex items-center gap-2 text-xs text-text-muted mt-2">
+            <Loader2 size={12} className="animate-spin text-primary" />
+            Importing {importState.done} / {importState.total}…
+          </div>
+        )}
+
+        {importState.status === 'done' && (
+          <p className="text-xs text-green-400 mt-2 flex items-center gap-1">
+            <CheckCircle2 size={12} />
+            Imported {importState.count} rows successfully.
+          </p>
+        )}
+
+        {importState.status === 'error' && (
+          <p className="text-xs text-red-400 mt-2 whitespace-pre-wrap flex gap-1">
+            <AlertCircle size={12} className="shrink-0 mt-0.5" />
+            {importState.message}
+          </p>
+        )}
+      </div>
+    </Section>
+  )
+}
+
 export default function Settings() {
   const { user } = useCurrentUser()
   const userId = user!.id
@@ -876,6 +1079,8 @@ export default function Settings() {
       </Section>
 
       <PreferencesSection userId={userId} />
+
+      <DataSection userId={userId} />
 
       {isAdminEmail(user?.email) && <LibrarySection userId={userId} />}
 
