@@ -403,7 +403,9 @@ function PreferencesSection({ userId }: { userId: string }) {
   const [local, setLocal] = useState<UserSettings | null>(null)
   const [pushBusy, setPushBusy] = useState(false)
   const [pushMsg, setPushMsg] = useState('')
+  const [pushOk, setPushOk] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
+  const vapidPresent = Boolean(getVapidPublicKey())
 
   useEffect(() => {
     if (settings) setLocal(settings)
@@ -451,15 +453,14 @@ function PreferencesSection({ userId }: { userId: string }) {
   const handleEnablePush = async () => {
     setPushBusy(true)
     setPushMsg('')
+    setPushOk(false)
     try {
-      if (!getVapidPublicKey()) {
-        setPushMsg('Set VITE_VAPID_PUBLIC_KEY in .env (see manual steps).')
-        return
-      }
-      const sub = await subscribeUserPush(userId)
-      setPushMsg(sub ? 'Push notifications enabled' : 'Permission denied or unsupported')
+      await subscribeUserPush(userId)
+      setPushMsg('Push enabled — subscription saved to push_subscriptions.')
+      setPushOk(true)
     } catch (err) {
-      setPushMsg((err as Error).message)
+      setPushMsg(err instanceof Error ? err.message : String(err))
+      setPushOk(false)
     } finally {
       setPushBusy(false)
     }
@@ -467,11 +468,14 @@ function PreferencesSection({ userId }: { userId: string }) {
 
   const handleDisablePush = async () => {
     setPushBusy(true)
+    setPushOk(false)
     try {
       await unsubscribeUserPush(userId)
       setPushMsg('Push subscription removed')
+      setPushOk(true)
     } catch (err) {
-      setPushMsg((err as Error).message)
+      setPushMsg(err instanceof Error ? err.message : String(err))
+      setPushOk(false)
     } finally {
       setPushBusy(false)
     }
@@ -643,16 +647,18 @@ function PreferencesSection({ userId }: { userId: string }) {
                 Web Push
               </p>
               <p className="text-xs text-text-muted mt-0.5">
-                {pushSupported()
-                  ? 'Save a subscription so scheduled reminders can reach this device.'
-                  : 'Not supported in this browser.'}
+                {!pushSupported()
+                  ? 'Not supported in this browser.'
+                  : !vapidPresent
+                    ? 'VITE_VAPID_PUBLIC_KEY missing from this build — rebuild with the env var set.'
+                    : 'Save a subscription so scheduled reminders can reach this device.'}
               </p>
             </div>
             <div className="flex gap-2">
               <Button
                 variant="secondary"
                 size="sm"
-                disabled={!pushSupported() || pushBusy}
+                disabled={!pushSupported() || !vapidPresent || pushBusy}
                 onClick={() => void handleEnablePush()}
               >
                 {pushBusy ? <Loader2 size={13} className="animate-spin" /> : 'Enable'}
@@ -667,7 +673,11 @@ function PreferencesSection({ userId }: { userId: string }) {
               </Button>
             </div>
           </div>
-          {pushMsg && <p className="text-xs text-text-secondary">{pushMsg}</p>}
+          {pushMsg && (
+            <p className={cn('text-xs', pushOk ? 'text-text-secondary' : 'text-red-400')}>
+              {pushMsg}
+            </p>
+          )}
         </div>
       </Section>
 

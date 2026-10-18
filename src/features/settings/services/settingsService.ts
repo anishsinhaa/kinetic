@@ -154,27 +154,96 @@ export async function updateUserSettings(
   return mapUserSettingsRow(data as UserSettingsRow)
 }
 
+function isRlsError(err: { message?: string; code?: string }): boolean {
+  const code = err.code ?? ''
+  const message = err.message ?? ''
+  return (
+    code === '42501' ||
+    /row-level security/i.test(message) ||
+    /violates row-level security/i.test(message)
+  )
+}
+
 export async function upsertPushSubscription(
   userId: string,
   input: PushSubscriptionInput,
 ): Promise<string> {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession()
+
+  if (sessionError) throw toServiceError(sessionError)
+  if (!session?.user) {
+    throw toServiceError({
+      message: 'Not signed in — cannot save push subscription.',
+      code: 'AUTH',
+    })
+  }
+  if (session.user.id !== userId) {
+    throw toServiceError({
+      message: `Signed-in user (${session.user.id}) does not match settings user (${userId}).`,
+      code: 'AUTH',
+    })
+  }
+
+  const row = {
+    user_id: userId,
+    endpoint: input.endpoint,
+    p256dh: input.p256dh,
+    auth: input.auth,
+    user_agent: input.userAgent ?? null,
+  }
+
   const { data, error } = await supabase
     .from('push_subscriptions')
-    .upsert(
-      {
-        user_id: userId,
-        endpoint: input.endpoint,
-        p256dh: input.p256dh,
-        auth: input.auth,
-        user_agent: input.userAgent ?? null,
-      },
-      { onConflict: 'user_id,endpoint' },
-    )
+    .upsert(row, { onConflict: 'user_id,endpoint' })
     .select('id')
-    .single()
+    .maybeSingle()
 
-  if (error) throw toServiceError(error)
-  return (data as Pick<PushSubscriptionRow, 'id'>).id
+  if (error) {
+    if (isRlsError(error)) {
+      throw toServiceError({
+        message:
+          'Insert into push_subscriptions was blocked by RLS. Confirm you are signed in and the owner INSERT/UPDATE policies exist on push_subscriptions.',
+        code: error.code,
+        details: error.message,
+      })
+    }
+    throw toServiceError(error)
+  }
+
+  if (data?.id) return (data as Pick<PushSubscriptionRow, 'id'>).id
+
+  // Upsert wrote but SELECT returned nothing — verify via a follow-up read.
+  const { data: existing, error: readError } = await supabase
+    .from('push_subscriptions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('endpoint', input.endpoint)
+    .maybeSingle()
+
+  if (readError) {
+    if (isRlsError(readError)) {
+      throw toServiceError({
+        message:
+          'push_subscriptions row may have been written but SELECT is blocked by RLS.',
+        code: readError.code,
+        details: readError.message,
+      })
+    }
+    throw toServiceError(readError)
+  }
+
+  if (!existing?.id) {
+    throw toServiceError({
+      message:
+        'push_subscriptions upsert returned no row. Check table exists, grants for authenticated, and RLS INSERT policy (auth.uid() = user_id).',
+      code: 'NO_ROW',
+    })
+  }
+
+  return (existing as Pick<PushSubscriptionRow, 'id'>).id
 }
 
 export async function deletePushSubscription(
