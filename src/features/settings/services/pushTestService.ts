@@ -1,16 +1,40 @@
+import { FunctionsHttpError, FunctionsRelayError, FunctionsFetchError } from '@supabase/supabase-js'
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
 
 type TestPushResult = {
-  sent: number
+  sent?: number
   matched?: number
   subscriptionsFound?: number
   error?: string
+  failures?: Array<{ message?: string; statusCode?: number | null }>
+}
+
+async function messageFromFunctionsError(error: unknown): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    try {
+      const body = (await error.context.json()) as TestPushResult | string
+      if (typeof body === 'string' && body.trim()) return body
+      if (body && typeof body === 'object') {
+        if (body.error) return body.error
+        if (body.failures?.[0]?.message) return body.failures[0].message!
+        return JSON.stringify(body)
+      }
+    } catch {
+      // fall through
+    }
+    return error.message || `Edge function HTTP error`
+  }
+  if (error instanceof FunctionsRelayError || error instanceof FunctionsFetchError) {
+    return error.message || 'Failed to reach send-reminders (network/CORS). Redeploy the function with CORS headers.'
+  }
+  if (error instanceof Error && error.message) return error.message
+  return String(error)
 }
 
 /**
- * Call the send-reminders Edge Function in test mode for the current user only.
- * Uses the user's JWT (not CRON_SECRET).
+ * Call send-reminders in test mode for the signed-in user only.
+ * Uses supabase.functions.invoke (apikey + user access token from the session).
  */
 export async function sendTestReminderPush(userId: string): Promise<{ sent: number }> {
   const {
@@ -29,48 +53,29 @@ export async function sendTestReminderPush(userId: string): Promise<{ sent: numb
     })
   }
 
-  const base = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, '')
-  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
-  if (!base || !anon) {
-    throw toServiceError({
-      message: 'VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY missing from this build.',
-      code: 'ENV',
-    })
-  }
-
-  const res = await fetch(`${base}/functions/v1/send-reminders`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-      apikey: anon,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ test: true, userId }),
+  const { data, error } = await supabase.functions.invoke<TestPushResult>('send-reminders', {
+    body: { test: true, userId },
   })
 
-  let payload: TestPushResult | null = null
-  try {
-    payload = (await res.json()) as TestPushResult
-  } catch {
-    payload = null
+  if (error) {
+    const message = await messageFromFunctionsError(error)
+    throw toServiceError({ message, code: 'FUNCTIONS' })
   }
 
-  if (!res.ok) {
-    throw toServiceError({
-      message:
-        payload?.error ||
-        `Test notification failed (HTTP ${res.status}). Deploy send-reminders with test-mode support and confirm a push_subscriptions row exists.`,
-      code: String(res.status),
-    })
+  const payload = data ?? null
+  if (payload?.error) {
+    throw toServiceError({ message: payload.error, code: 'FUNCTIONS' })
   }
 
   const sent = typeof payload?.sent === 'number' ? payload.sent : 0
   if (sent === 0) {
+    const failMsg = payload?.failures?.[0]?.message
     throw toServiceError({
       message:
-        payload?.subscriptionsFound === 0 || payload?.matched === 0
+        failMsg ||
+        (payload?.subscriptionsFound === 0
           ? 'No push_subscriptions row for this user — tap Enable first, then try again.'
-          : 'Test notification returned sent=0. Check Edge Function logs.',
+          : 'Test notification returned sent=0. Check Edge Function logs.'),
       code: 'NO_SEND',
     })
   }

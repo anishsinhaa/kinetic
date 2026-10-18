@@ -97,6 +97,19 @@ function endpointTail(endpoint: string): string {
   return endpoint.length > 48 ? `…${endpoint.slice(-40)}` : endpoint
 }
 
+const corsHeaders: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
 async function deliver(
   supabase: ReturnType<typeof createClient>,
   due: DueItem[],
@@ -196,15 +209,22 @@ async function deliver(
 }
 
 Deno.serve(async (req) => {
+  // Browser preflight (pg_cron never sends OPTIONS)
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders })
+  }
+
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, 405)
+  }
+
   const cronSecret = Deno.env.get('CRON_SECRET')
   const authHeader = req.headers.get('Authorization') ?? ''
   const token = authHeader.replace(/^Bearer\s+/i, '').trim()
 
   let body: { test?: boolean; userId?: string } = {}
   try {
-    if (req.method !== 'GET' && req.headers.get('content-type')?.includes('application/json')) {
-      body = (await req.json()) as { test?: boolean; userId?: string }
-    }
+    body = (await req.json()) as { test?: boolean; userId?: string }
   } catch {
     body = {}
   }
@@ -222,21 +242,22 @@ Deno.serve(async (req) => {
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate)
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  // ── Test mode: authenticated user JWT, current user only ───────────────────
+  // ── Test mode: verify caller JWT inside the function (--no-verify-jwt) ─────
   if (isTest) {
     if (isCron) {
-      // Cron may target a specific user for ops debugging
       if (!body.userId) {
-        return new Response(JSON.stringify({ error: 'test mode with CRON_SECRET requires userId' }), {
-          status: 400,
-        })
+        return jsonResponse({ error: 'test mode with CRON_SECRET requires userId' }, 400)
       }
     } else {
       if (!token) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+        return jsonResponse({ error: 'Unauthorized — missing Bearer token' }, 401)
       }
-      const userClient = createClient(supabaseUrl, anonKey || serviceKey, {
+      if (!anonKey) {
+        return jsonResponse({ error: 'SUPABASE_ANON_KEY not configured on function' }, 500)
+      }
+      const userClient = createClient(supabaseUrl, anonKey, {
         global: { headers: { Authorization: `Bearer ${token}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
       })
       const {
         data: { user },
@@ -244,12 +265,13 @@ Deno.serve(async (req) => {
       } = await userClient.auth.getUser(token)
       if (userError || !user) {
         console.error('[send-reminders] test auth failed', userError?.message)
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+        return jsonResponse(
+          { error: userError?.message || 'Unauthorized — invalid or expired JWT' },
+          401,
+        )
       }
       if (body.userId && body.userId !== user.id) {
-        return new Response(JSON.stringify({ error: 'userId does not match session' }), {
-          status: 403,
-        })
+        return jsonResponse({ error: 'userId does not match session' }, 403)
       }
       body.userId = user.id
     }
@@ -275,20 +297,18 @@ Deno.serve(async (req) => {
         failures: result.failures.slice(0, 10),
       }
       console.log('[send-reminders] test done', JSON.stringify(summary))
-      return new Response(JSON.stringify(summary), {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      return jsonResponse(summary)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[send-reminders] test deliver failed', message)
-      return new Response(JSON.stringify({ error: message }), { status: 500 })
+      return jsonResponse({ error: message }, 500)
     }
   }
 
-  // ── Cron mode ──────────────────────────────────────────────────────────────
+  // ── Cron mode (Bearer CRON_SECRET) — unchanged auth contract ───────────────
   if (cronSecret && !isCron) {
     console.error('[send-reminders] unauthorized')
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+    return jsonResponse({ error: 'Unauthorized' }, 401)
   }
 
   const at = new Date()
@@ -303,7 +323,7 @@ Deno.serve(async (req) => {
 
   if (settingsError) {
     console.error('[send-reminders] settings query failed', settingsError.message)
-    return new Response(JSON.stringify({ error: settingsError.message }), { status: 500 })
+    return jsonResponse({ error: settingsError.message }, 500)
   }
 
   const rows = (settings ?? []) as SettingsRow[]
@@ -365,9 +385,7 @@ Deno.serve(async (req) => {
   )
 
   if (due.length === 0) {
-    return new Response(JSON.stringify({ sent: 0, matched: 0, usersChecked: rows.length }), {
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse({ sent: 0, matched: 0, usersChecked: rows.length })
   }
 
   try {
@@ -381,12 +399,10 @@ Deno.serve(async (req) => {
       failures: result.failures.slice(0, 10),
     }
     console.log('[send-reminders] done', JSON.stringify(summary))
-    return new Response(JSON.stringify(summary), {
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse(summary)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[send-reminders] deliver failed', message)
-    return new Response(JSON.stringify({ error: message }), { status: 500 })
+    return jsonResponse({ error: message }, 500)
   }
 })
