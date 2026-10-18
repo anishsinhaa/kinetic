@@ -69,6 +69,7 @@ interface WorkoutStore {
     targetLabel?: string
     target?: WorkoutExerciseTarget | null
     note?: string | null
+    prefillStatus?: WorkoutExerciseDraft['prefillStatus']
     initialSets?: Array<{ weight: string; reps: string }>
   }) => void
   updateExerciseMeta: (
@@ -83,6 +84,7 @@ interface WorkoutStore {
         | 'target'
         | 'note'
         | 'sets'
+        | 'prefillStatus'
       >
     >,
   ) => void
@@ -244,6 +246,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
                 targetLabel: exercise.targetLabel,
                 target: exercise.target ?? null,
                 note: exercise.note ?? null,
+                prefillStatus: exercise.prefillStatus ?? 'ready',
                 sets: initialSets,
               },
             ],

@@ -33,25 +33,34 @@ async function syncPending() {
 
 /**
  * Register the PWA service worker.
- * registerType: autoUpdate + skipWaiting/clientsClaim in sw.ts means a new
- * deploy activates immediately; we reload once so tabs never keep a removed chunk.
+ * autoUpdate + skipWaiting/clientsClaim: a new deploy activates on first visit;
+ * controllerchange reloads so the tab never keeps a removed hashed chunk.
  */
 export function registerPwa() {
   let refreshing = false
+  // Distinguish first install (no prior controller) from an update after deploy
+  const hadControllerOnLoad =
+    typeof navigator !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    Boolean(navigator.serviceWorker.controller)
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (refreshing) return
+      // First-ever install: page already has current assets — no reload.
+      // After deploy: old controller was present → reload onto the new precache.
+      if (!hadControllerOnLoad) return
       refreshing = true
       window.location.reload()
     })
   }
 
-  registerSW({
+  const updateSW = registerSW({
     immediate: true,
     onRegisteredSW(_swUrl, registration) {
       if (!registration) return
-      // Check for updates on focus + hourly
+      // Immediate update check on this load (not only on next focus)
+      void registration.update()
       const check = () => {
         void registration.update()
       }
@@ -59,7 +68,8 @@ export function registerPwa() {
       window.setInterval(check, 60 * 60 * 1000)
     },
     onNeedRefresh() {
-      // autoUpdate already calls skipWaiting; controllerchange reloads the page
+      // autoUpdate: tell waiting worker to activate; controllerchange reloads
+      void updateSW(true)
     },
   })
 

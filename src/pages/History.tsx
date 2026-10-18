@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Card } from '../components/ui/Card'
 import { Table, TableHead, TableBody, TableRow, TableTh, TableTd } from '../components/ui/Table'
 import { Button } from '../components/ui/Button'
+import { BottomSheet } from '../components/ui/BottomSheet'
 import {
   Calendar,
   ChevronRight,
@@ -20,7 +21,7 @@ import {
 import { useDailyLogs, useExerciseHistory } from '../features/history/hooks/useHistory'
 import { useFeedbackHistory } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
-import type { ExerciseHistory } from '../features/history/types'
+import type { ExerciseHistory, HistoryDayWorkout } from '../features/history/types'
 import { deleteWorkout } from '../features/workout/services/workoutService'
 import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
 import { formatVolume, formatWeight } from '../features/settings/lib/units'
@@ -80,6 +81,30 @@ function fmtSleep(v: number | null): string {
 
 function fmtVolume(v: number, units: WeightUnits): string {
   return formatVolume(v, units)
+}
+
+function fmtTime(iso: string | null): string {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return ''
+  }
+}
+
+/** Distinct label: date + type + time (and duration when known). */
+function workoutDeleteLabel(date: string, w: HistoryDayWorkout): string {
+  const type = w.label?.trim() || 'Workout'
+  const time = fmtTime(w.endedAt)
+  const dur =
+    w.durationMins != null && w.durationMins > 0 ? `${w.durationMins}m` : null
+  const parts = [fmtDate(date), type]
+  if (time) parts.push(time)
+  if (dur) parts.push(dur)
+  return parts.join(' · ')
 }
 
 async function invalidateHistoryCaches(queryClient: ReturnType<typeof useQueryClient>) {
@@ -174,16 +199,20 @@ function DailyLogsTab() {
   const { data: logs, isLoading, error } = useDailyLogs()
   const units = useWeightUnits()
   const queryClient = useQueryClient()
-  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string
+    label: string
+  } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
-  const handleDelete = async (workoutId: string) => {
+  const handleDelete = async () => {
+    if (!pendingDelete) return
     setDeleting(true)
     setDeleteError('')
     try {
-      await deleteWorkout(workoutId)
-      setConfirmId(null)
+      await deleteWorkout(pendingDelete.id)
+      setPendingDelete(null)
       await invalidateHistoryCaches(queryClient)
     } catch (err) {
       setDeleteError((err as Error).message)
@@ -193,6 +222,7 @@ function DailyLogsTab() {
   }
 
   return (
+    <>
     <Card>
       <div className="flex items-center justify-between px-5 py-4 border-b border-border">
         <h2 className="font-semibold text-text-primary flex items-center gap-2">
@@ -230,7 +260,7 @@ function DailyLogsTab() {
               <TableTh>Calories</TableTh>
               <TableTh>Sleep</TableTh>
               <TableTh>Notes</TableTh>
-              <TableTh className="w-24"> </TableTh>
+              <TableTh className="min-w-36">Delete</TableTh>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -296,43 +326,22 @@ function DailyLogsTab() {
                   {row.workouts.length === 0 ? (
                     <span className="text-text-muted text-xs">—</span>
                   ) : (
-                    <div className="flex flex-col gap-1">
-                      {row.workouts.map((w) =>
-                        confirmId === w.id ? (
-                          <div key={w.id} className="flex flex-col gap-1 min-w-28">
-                            <p className="text-[10px] text-text-muted">Delete {w.label ?? 'workout'}?</p>
-                            <div className="flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={deleting}
-                                onClick={() => setConfirmId(null)}
-                              >
-                                Cancel
-                              </Button>
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                disabled={deleting}
-                                onClick={() => void handleDelete(w.id)}
-                              >
-                                {deleting ? <Loader2 size={12} className="animate-spin" /> : 'Delete'}
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
+                    <div className="flex flex-col gap-2 py-1">
+                      {row.workouts.map((w) => {
+                        const label = workoutDeleteLabel(row.date, w)
+                        return (
                           <button
                             key={w.id}
                             type="button"
-                            onClick={() => setConfirmId(w.id)}
-                            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-red-400 min-h-11 px-1"
-                            title={`Delete ${w.label ?? 'workout'}`}
+                            onClick={() => setPendingDelete({ id: w.id, label })}
+                            className="inline-flex items-center gap-2 text-left text-xs text-text-muted hover:text-red-400 min-h-11 min-w-11 px-2 py-2 rounded-xl border border-border hover:border-red-800/50"
+                            aria-label={`Delete workout ${label}`}
                           >
-                            <Trash2 size={12} />
-                            <span className="hidden sm:inline">Delete</span>
+                            <Trash2 size={18} className="shrink-0" />
+                            <span className="leading-snug">{label}</span>
                           </button>
-                        ),
-                      )}
+                        )
+                      })}
                     </div>
                   )}
                 </TableTd>
@@ -343,6 +352,46 @@ function DailyLogsTab() {
         </div>
       )}
     </Card>
+
+    <BottomSheet
+      open={Boolean(pendingDelete)}
+      onClose={() => {
+        if (!deleting) setPendingDelete(null)
+      }}
+      title="Delete workout"
+    >
+      <div className="p-4 pb-8 space-y-4">
+        <p className="text-sm text-text-secondary">
+          Remove this workout and all of its sets? This cannot be undone.
+        </p>
+        {pendingDelete && (
+          <p className="text-sm font-semibold text-text-primary rounded-xl border border-border bg-surface-2 px-3 py-3">
+            {pendingDelete.label}
+          </p>
+        )}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Button
+            variant="ghost"
+            size="lg"
+            className="flex-1 min-h-11"
+            disabled={deleting}
+            onClick={() => setPendingDelete(null)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            className="flex-1 min-h-11"
+            disabled={deleting}
+            onClick={() => void handleDelete()}
+          >
+            {deleting ? <Loader2 size={16} className="animate-spin" /> : 'Delete workout'}
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
+    </>
   )
 }
 

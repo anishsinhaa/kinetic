@@ -36,6 +36,11 @@ import {
   roundDisplayWeight,
   toStoredKg,
 } from '../features/settings/lib/units'
+import {
+  buildPrefillDraftSets,
+  isExerciseUntouched,
+  shouldApplySetPrefill,
+} from '../features/workout/lib/exercisePrefill'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
@@ -369,14 +374,17 @@ export default function Workout() {
     const workoutId = useWorkoutStore.getState().currentWorkoutId
     if (!workoutId) return
 
-    // Optimistic card — render immediately
+    const needsAsyncPrefill = options?.initialSets == null
+
+    // Optimistic card — set edits blocked until prefill settles (pending)
     useWorkoutStore.getState().addExercise({
       exerciseId: exercise.id,
       name: exercise.name,
       muscleGroup: exercise.muscleGroup,
-      lastPerformance: 'Loading…',
-      personalRecord: '…',
+      lastPerformance: needsAsyncPrefill ? 'Loading…' : undefined,
+      personalRecord: needsAsyncPrefill ? '…' : undefined,
       target: 'maintain',
+      prefillStatus: needsAsyncPrefill ? 'pending' : 'ready',
       initialSets: options?.initialSets ?? [{ weight: '', reps: '' }],
     })
 
@@ -393,7 +401,6 @@ export default function Workout() {
       const lastSetsKg =
         options?.initialSets != null
           ? options.initialSets.map((s) => ({
-              // initialSets already in display units (e.g. repeat last)
               weight:
                 s.weight === ''
                   ? null
@@ -414,10 +421,7 @@ export default function Workout() {
       const lastPerformance =
         lastSetsKg.length > 0
           ? `Last: ${lastSetsKg
-              .map(
-                (s) =>
-                  `${s.displayWeight ?? '-'}x${s.reps ?? '-'}`,
-              )
+              .map((s) => `${s.displayWeight ?? '-'}x${s.reps ?? '-'}`)
               .join(' · ')} ${displayUnits}`
           : 'No previous performance'
       const personalRecord = pr
@@ -432,38 +436,44 @@ export default function Workout() {
         ? `Target: ${targetPreview(last.displayWeight, last.reps, 'maintain', weightStep)}`
         : undefined
 
-      // Prefill sets if we didn't already (optimistic empty row)
-      if (options?.initialSets == null && lastSetsKg.length > 0) {
-        const newSets = lastSetsKg.map((s) => {
-          const id =
-            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-              ? crypto.randomUUID()
-              : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-          return {
-            id,
-            dbSetId: id,
-            weight: s.displayWeight != null ? String(s.displayWeight) : '',
-            reps: s.reps != null ? String(s.reps) : '',
-            toFailure: false,
-            completed: false,
-            completedAt: null as string | null,
-          }
-        })
+      // Re-read card: only replace sets if still untouched (never overwrite typed values)
+      const current = useWorkoutStore.getState().exercises.find((e) => e.id === added.id)
+      const untouched = current ? isExerciseUntouched(current.sets) : false
+      const applySets = shouldApplySetPrefill({
+        untouched,
+        hasPrefillRows: needsAsyncPrefill && lastSetsKg.length > 0,
+        alreadyApplied: current?.prefillStatus === 'ready',
+      })
+
+      if (applySets) {
+        const oldIds = current?.sets.map((s) => s.id) ?? []
+        const newSets = buildPrefillDraftSets(lastSetsKg, newClientId)
         useWorkoutStore.getState().updateExerciseMeta(added.id, {
           dbWorkoutExerciseId: dbWeId,
           lastPerformance,
           personalRecord,
           targetLabel,
+          prefillStatus: 'ready',
           sets: newSets,
         })
+        // Drop any optimistic empty rows that may have been persisted mid-flight
+        for (const id of oldIds) {
+          try {
+            await deleteSet(id)
+          } catch {
+            /* may not exist */
+          }
+        }
       } else {
         useWorkoutStore.getState().updateExerciseMeta(added.id, {
           lastPerformance,
           personalRecord,
           targetLabel,
+          prefillStatus: 'ready',
         })
       }
 
+      // Persist only after prefill decision — avoids duplicate set rows in history
       const fresh = useWorkoutStore.getState().exercises.find((e) => e.id === added.id)
       if (fresh?.dbWorkoutExerciseId) {
         for (let i = 0; i < fresh.sets.length; i++) {
@@ -472,6 +482,7 @@ export default function Workout() {
         await persistQueueRef.current.flushAll()
       }
     } catch (err) {
+      useWorkoutStore.getState().updateExerciseMeta(added.id, { prefillStatus: 'ready' })
       setSaveError((err as Error).message)
     }
   }
@@ -519,8 +530,10 @@ export default function Workout() {
   const invalidateAfterWorkout = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] }),
       queryClient.invalidateQueries({ queryKey: ['workout'] }),
       queryClient.invalidateQueries({ queryKey: ['history'] }),
+      queryClient.refetchQueries({ queryKey: ['dashboard', 'stats', userId] }),
       latestWorkoutQuery.refetch(),
     ])
   }
@@ -752,14 +765,22 @@ export default function Workout() {
             size="lg"
             className="w-full"
             onClick={() => {
-              if (currentWorkoutId) {
-                void updateWorkoutMeta(currentWorkoutId, {
-                  feel,
-                  note: note.trim() || null,
-                })
-              }
-              useWorkoutStore.getState().finishWorkout()
-              navigate('/')
+              void (async () => {
+                if (currentWorkoutId) {
+                  try {
+                    await updateWorkoutMeta(currentWorkoutId, {
+                      feel,
+                      note: note.trim() || null,
+                    })
+                  } catch {
+                    /* still leave summary */
+                  }
+                }
+                // Ensure dashboard "Workouts this week" refetches before home mounts
+                await invalidateAfterWorkout()
+                useWorkoutStore.getState().finishWorkout()
+                navigate('/')
+              })()
             }}
           >
             Done
@@ -940,15 +961,22 @@ export default function Workout() {
               <span />
             </div>
 
+            {ex.prefillStatus === 'pending' && (
+              <p className="px-3 py-2 text-[11px] text-text-muted border-b border-border">
+                Loading last session…
+              </p>
+            )}
+
             {ex.sets.map((set, idx) => (
               <SetStepperRow
                 key={set.id}
                 index={idx}
                 set={set}
                 weightStep={weightStep}
-                disabled={!canEdit}
+                disabled={!canEdit || ex.prefillStatus === 'pending'}
                 status={setStatusMap[set.id]}
                 onChange={(patch) => {
+                  if (ex.prefillStatus === 'pending') return
                   useWorkoutStore.getState().updateSet(ex.id, set.id, patch)
                   queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
                 }}
@@ -961,7 +989,7 @@ export default function Workout() {
 
             <button
               type="button"
-              disabled={!canEdit}
+              disabled={!canEdit || ex.prefillStatus === 'pending'}
               onClick={() => handleAddSet(ex.id)}
               className="w-full py-3 text-xs text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
             >

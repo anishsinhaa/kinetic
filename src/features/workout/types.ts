@@ -12,6 +12,8 @@ export interface WorkoutSetDraft {
   completedAt?: string | null
 }
 
+export type ExercisePrefillStatus = 'pending' | 'ready'
+
 export interface WorkoutExerciseDraft {
   id: string
   dbWorkoutExerciseId?: string
@@ -23,6 +25,8 @@ export interface WorkoutExerciseDraft {
   targetLabel?: string
   target?: WorkoutExerciseTarget | null
   note?: string | null
+  /** Blocks set edits until last-session prefill resolves (or is skipped). */
+  prefillStatus?: ExercisePrefillStatus
   sets: WorkoutSetDraft[]
 }
 

@@ -99,7 +99,7 @@ describe('bodyWeightSeries', () => {
     workoutCount: 0,
     workoutFeels: [],
     workoutNotes: [],
-    workouts: [],
+    workouts: [] as DailyLogEntry['workouts'],
   })
 
   it('filters null weights and sorts ascending', () => {

@@ -6,6 +6,35 @@
   command = "npm run build"
   publish = "dist"
 
+# SPA shell + SW must never be long-cached — first visit after deploy must fetch
+# a fresh index that points at the new hashed bundles and register the new SW.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Document requests (including SPA fallback for / and client routes)
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Hashed assets under /assets/ can be immutable (Vite fingerprinting)
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
 # Redirect all routes to index.html for React Router SPA
 [[redirects]]
   from = "/*"

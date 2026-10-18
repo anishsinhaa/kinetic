@@ -39,6 +39,8 @@ vi.mock('../features/workout/services/workoutService', () => ({
   updateWorkoutMeta: vi.fn(async () => undefined),
   updateWorkoutExercise: vi.fn(async () => undefined),
   upsertSet: vi.fn(async () => undefined),
+  deleteSet: vi.fn(async () => undefined),
+  deleteWorkout: vi.fn(async () => undefined),
 }))
 
 function renderWorkout(initialEntry = '/workout') {
