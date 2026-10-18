@@ -197,87 +197,78 @@ function isMissingColumnError(error: { message?: string; code?: string; details?
   )
 }
 
+/** Columns written by the sets upsert — must match public.sets (+ v2 migration). */
+export const SETS_UPSERT_COLUMNS = [
+  'id',
+  'workout_exercise_id',
+  'reps',
+  'weight',
+  'to_failure',
+  'failed',
+  'completed_at',
+  'set_index',
+] as const
+
+export type SetUpsertPayload = {
+  id: string
+  workout_exercise_id: string
+  reps: number | null
+  weight: number | null
+  to_failure: boolean
+  failed: boolean
+  completed_at: string | null
+  set_index: number
+}
+
+/** Full sets row payload — never strip fields on failure. */
+export function buildSetUpsertPayload(
+  setId: string,
+  workoutExerciseId: string,
+  setData: AddSetInput,
+): SetUpsertPayload {
+  const failed = Boolean(setData.failed ?? setData.to_failure)
+  return {
+    id: setId,
+    workout_exercise_id: workoutExerciseId,
+    reps: finiteOrNull(setData.reps),
+    weight: finiteOrNull(setData.weight),
+    to_failure: failed,
+    failed,
+    completed_at: setData.completed_at !== undefined ? setData.completed_at : null,
+    set_index: setData.set_index ?? 1,
+  }
+}
+
 function logSetUpsertError(
-  label: string,
   error: { message?: string; code?: string; details?: string; hint?: string },
-  payload: Record<string, unknown>,
+  payload: SetUpsertPayload,
 ) {
-  console.error(`[upsertSet] ${label}`, {
+  console.error('[upsertSet] failed', {
     message: error.message,
     code: error.code,
     details: error.details,
     hint: error.hint,
+    body: error,
     payload,
   })
 }
 
 /**
- * Single write path for a set: upsert by primary key so rapid edits never duplicate rows.
- * Tries full v2 payload, then strips unknown columns, then legacy columns only.
+ * Single write path for a set: one full-payload upsert by primary key.
+ * On failure the caller keeps the set unsaved and may retry — fields are never dropped.
  */
 export async function upsertSet(
   setId: string,
   workoutExerciseId: string,
   setData: AddSetInput,
 ): Promise<string> {
-  const failed = Boolean(setData.failed ?? setData.to_failure)
-  const reps = finiteOrNull(setData.reps)
-  const weight = finiteOrNull(setData.weight)
-  const setIndex = setData.set_index ?? 1
-  const completedAt =
-    setData.completed_at !== undefined ? setData.completed_at : null
+  const row = buildSetUpsertPayload(setId, workoutExerciseId, setData)
+  // Avoid .select().single() — RLS can hide the row and surface a false 400/406
+  const { error } = await supabase.from('sets').upsert(row, { onConflict: 'id' })
+  if (!error) return setId
 
-  const attempts: Array<Record<string, unknown>> = [
-    {
-      id: setId,
-      workout_exercise_id: workoutExerciseId,
-      reps,
-      weight,
-      to_failure: failed,
-      failed,
-      completed_at: completedAt,
-      set_index: setIndex,
-    },
-    {
-      id: setId,
-      workout_exercise_id: workoutExerciseId,
-      reps,
-      weight,
-      to_failure: failed,
-      completed_at: completedAt,
-      set_index: setIndex,
-    },
-    {
-      id: setId,
-      workout_exercise_id: workoutExerciseId,
-      reps,
-      weight,
-      to_failure: failed,
-      set_index: setIndex,
-    },
-  ]
-
-  let lastError: { message?: string; code?: string; details?: string; hint?: string } | null =
-    null
-
-  for (let i = 0; i < attempts.length; i++) {
-    const row = attempts[i]!
-    // Avoid .select().single() — RLS can hide the row and surface a false 400/406
-    const { error } = await supabase.from('sets').upsert(row, { onConflict: 'id' })
-    if (!error) return setId
-
-    lastError = error
-    logSetUpsertError(`attempt ${i + 1}/${attempts.length}`, error, row)
-
-    const retryable = isMissingColumnError(error)
-    if (!retryable && i === 0) {
-      // Non-column error on full payload — still try stripped variants once
-      continue
-    }
-    if (!retryable && i > 0) break
-  }
-
-  throw toServiceError(lastError ?? new Error('Failed to save set'))
+  logSetUpsertError(error, row)
+  throw toServiceError(error)
 }
 
 export async function deleteSet(setId: string): Promise<void> {

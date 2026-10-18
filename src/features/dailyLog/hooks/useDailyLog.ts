@@ -59,7 +59,38 @@ export function useDailyLog(userId: string): UseDailyLogReturn {
 
   // ── Mutation ───────────────────────────────────────────────────────────────
   const mutation = useMutation<DailyLog, Error, DailyLogPayload>({
-    mutationFn: (payload) => upsertDailyLog(userId, payload),
+    mutationFn: async (payload) => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const { enqueueOfflineOp } = await import('../../../lib/offline/syncQueue')
+        const date = todayDateString()
+        enqueueOfflineOp({
+          kind: 'upsert_daily_log',
+          payload: {
+            userId,
+            date,
+            weight: payload.weight,
+            calories: payload.calories,
+            protein: payload.protein,
+            sleep: payload.sleep,
+            notes: payload.notes,
+          },
+        })
+        const now = new Date().toISOString()
+        return {
+          id: 'offline',
+          userId,
+          date,
+          weight: payload.weight,
+          calories: payload.calories,
+          protein: payload.protein,
+          sleep: payload.sleep,
+          notes: payload.notes ?? '',
+          createdAt: now,
+          updatedAt: now,
+        }
+      }
+      return upsertDailyLog(userId, payload)
+    },
 
     // Optimistic update: immediately put the form data in the cache so
     // the UI doesn't flicker, then replace with the real server response.

@@ -9,18 +9,13 @@ describe('resolveWorkoutTypes', () => {
     expect(resolveWorkoutTypes(undefined)).toEqual([...DEFAULT_WORKOUT_TYPES])
   })
 
-  it('expands a short localStorage list like Upper + Pull to include all defaults', () => {
-    const resolved = resolveWorkoutTypes(['Upper', 'Pull'])
-    expect(resolved).toEqual([...DEFAULT_WORKOUT_TYPES])
-    expect(resolved).toContain('Push')
-    expect(resolved).toContain('Legs')
-    expect(resolved).toContain('Full Body')
-    expect(resolved).toContain('Free')
+  it('respects user order and hidden defaults from Settings', () => {
+    const resolved = resolveWorkoutTypes(['Pull', 'Legs', 'Olympic'])
+    expect(resolved).toEqual(['Pull', 'Legs', 'Olympic'])
+    expect(resolved).not.toContain('Push')
   })
 
-  it('appends custom types after defaults', () => {
-    const resolved = resolveWorkoutTypes(['Pull', 'Olympic'])
-    expect(resolved.slice(0, DEFAULT_WORKOUT_TYPES.length)).toEqual([...DEFAULT_WORKOUT_TYPES])
-    expect(resolved).toContain('Olympic')
+  it('dedupes case-insensitively and trims', () => {
+    expect(resolveWorkoutTypes(['  Pull ', 'pull', 'Push'])).toEqual(['Pull', 'Push'])
   })
 })

@@ -113,6 +113,8 @@ export interface UserSettingsRow {
   rest_timer_seconds: number
   weight_step: number
   units: WeightUnits
+  /** IANA timezone; reminder times are wall-clock in this zone */
+  timezone: string
   created_at: string
   updated_at: string
 }

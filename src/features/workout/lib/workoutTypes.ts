@@ -1,22 +1,28 @@
 import { DEFAULT_WORKOUT_TYPES } from '../constants'
 
 /**
- * Always surface the spec defaults first. Custom labels append after.
- * Empty / missing stored lists → defaults only.
+ * Resolve stored workout types for the type picker.
+ * Empty / missing → full defaults.
+ * Non-empty → user order & visibility from Settings (defaults may be hidden).
  */
 export function resolveWorkoutTypes(stored?: string[] | null): string[] {
-  const defaults = [...DEFAULT_WORKOUT_TYPES]
-  if (!stored || stored.length === 0) return defaults
+  if (!stored || stored.length === 0) return [...DEFAULT_WORKOUT_TYPES]
 
-  const custom: string[] = []
+  const seen = new Set<string>()
+  const out: string[] = []
   for (const raw of stored) {
     if (typeof raw !== 'string') continue
     const t = raw.trim()
     if (!t) continue
-    const isDefault = defaults.some((d) => d.toLowerCase() === t.toLowerCase())
-    if (isDefault) continue
-    if (custom.some((c) => c.toLowerCase() === t.toLowerCase())) continue
-    custom.push(t)
+    const key = t.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(t)
   }
-  return [...defaults, ...custom]
+  return out.length > 0 ? out : [...DEFAULT_WORKOUT_TYPES]
+}
+
+export function isDefaultWorkoutType(label: string): boolean {
+  const key = label.trim().toLowerCase()
+  return DEFAULT_WORKOUT_TYPES.some((d) => d.toLowerCase() === key)
 }

@@ -30,6 +30,8 @@ export interface SetRecord {
 }
 
 export interface ExerciseHistorySession {
+  /** Workout session id — same-day sessions stay separate */
+  workoutId: string
   date: string         // "YYYY-MM-DD"
   totalVolume: number
   sets: SetRecord[]

@@ -37,23 +37,24 @@ import { formatVolumeKg } from '../features/workout/lib/volume'
 import { cn } from '../lib/utils'
 import { selectOnFocus } from '../lib/selectOnFocus'
 
-const NUMERIC_FIELDS = [
-  { key: 'weight', label: 'Weight (kg)' },
-  { key: 'calories', label: 'Calories' },
-  { key: 'protein', label: 'Protein (g)' },
-  { key: 'sleep', label: 'Sleep (hrs)' },
-] as const
-
 function DailyLogForm({
   initialForm,
   isSaving,
   onSave,
+  weightUnit = 'kg',
 }: {
   initialForm: DailyLogFormState
   isSaving: boolean
   onSave: (payload: ReturnType<typeof formStateToPayload>) => Promise<unknown>
+  weightUnit?: 'kg' | 'lb'
 }) {
   const [form, setForm] = useState(initialForm)
+  const numericFields = [
+    { key: 'weight' as const, label: `Weight (${weightUnit})` },
+    { key: 'calories' as const, label: 'Calories' },
+    { key: 'protein' as const, label: 'Protein (g)' },
+    { key: 'sleep' as const, label: 'Sleep (hrs)' },
+  ]
   return (
     <Card className="mb-4">
       <div className="px-4 pt-3 pb-2 border-b border-border flex justify-between">
@@ -65,7 +66,7 @@ function DailyLogForm({
         )}
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4">
-        {NUMERIC_FIELDS.map(({ key, label }) => (
+        {numericFields.map(({ key, label }) => (
           <label key={key} className="block">
             <span className="text-[10px] text-text-secondary uppercase tracking-widest">{label}</span>
             <input
@@ -79,6 +80,19 @@ function DailyLogForm({
             />
           </label>
         ))}
+      </div>
+      <div className="px-4 pb-4">
+        <label className="block">
+          <span className="text-[10px] text-text-secondary uppercase tracking-widest">Note</span>
+          <textarea
+            value={form.notes}
+            onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+            onBlur={() => void onSave(formStateToPayload(form))}
+            rows={2}
+            placeholder="Journal note…"
+            className="mt-1 w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-hidden focus:border-primary resize-none"
+          />
+        </label>
       </div>
     </Card>
   )
@@ -154,6 +168,7 @@ export default function Dashboard() {
   const currentWorkoutId = useWorkoutStore((s) => s.currentWorkoutId)
   const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
   const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
+  const units = useWorkoutStore((s) => s.units)
 
   const { log, isLoading: logLoading, isSaving, save } = useDailyLog(userId)
   const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
@@ -267,7 +282,7 @@ export default function Dashboard() {
             >
               <p className="text-3xl font-black text-text-primary">
                 {log?.weight != null ? `${log.weight}` : '—'}
-                <span className="text-sm font-medium text-text-muted ml-1">kg</span>
+                <span className="text-sm font-medium text-text-muted ml-1">{units}</span>
               </p>
               <p className="text-xs text-primary mt-1">Tap log below to update</p>
             </button>
@@ -279,13 +294,20 @@ export default function Dashboard() {
             <SkeletonBlock className="h-10 w-28" />
           ) : todayFeedback ? (
             <Link to="/feedback" className="block">
-              <p className="text-3xl font-black text-text-primary">
-                {recoveryScoreFromFeedback(todayFeedback)}%
-              </p>
-              <p className="text-xs text-primary mt-1 flex items-center gap-1">
-                <Zap size={11} />
-                {recoveryLabel(recoveryScoreFromFeedback(todayFeedback))} · logged
-              </p>
+              {(() => {
+                const score = recoveryScoreFromFeedback(todayFeedback)
+                return (
+                  <>
+                    <p className="text-3xl font-black text-text-primary">
+                      {score != null ? `${score}%` : '—'}
+                    </p>
+                    <p className="text-xs text-primary mt-1 flex items-center gap-1">
+                      <Zap size={11} />
+                      {score != null ? `${recoveryLabel(score)} · logged` : 'Logged'}
+                    </p>
+                  </>
+                )
+              })()}
             </Link>
           ) : (
             <Link to="/feedback" className="block">
@@ -306,6 +328,7 @@ export default function Dashboard() {
             key={log?.id ?? 'new-log'}
             initialForm={log ? logToFormState(log) : emptyFormState()}
             isSaving={isSaving}
+            weightUnit={units}
             onSave={save}
           />
         </div>

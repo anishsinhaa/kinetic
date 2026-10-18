@@ -1,6 +1,7 @@
 import type { UserSettingsRow, WeightUnits } from '../../lib/supabase/database.types'
 import { DEFAULT_WORKOUT_TYPES } from '../workout/constants'
 import { resolveWorkoutTypes } from '../workout/lib/workoutTypes'
+import { detectBrowserTimezone } from './lib/reminderTimezone'
 
 export type { WeightUnits }
 
@@ -17,6 +18,7 @@ export interface UserSettings {
   restTimerSeconds: number
   weightStep: number
   units: WeightUnits
+  timezone: string
   createdAt: string
   updatedAt: string
 }
@@ -47,6 +49,7 @@ export function defaultUserSettings(userId: string): UserSettings {
     restTimerSeconds: 90,
     weightStep: 2.5,
     units: 'kg',
+    timezone: detectBrowserTimezone(),
     createdAt: now,
     updatedAt: now,
   }
@@ -70,6 +73,7 @@ export function mapUserSettingsRow(row: UserSettingsRow): UserSettings {
     restTimerSeconds: row.rest_timer_seconds,
     weightStep: Number(row.weight_step),
     units: row.units,
+    timezone: row.timezone?.trim() || 'UTC',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

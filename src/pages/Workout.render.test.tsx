@@ -19,6 +19,8 @@ vi.mock('../features/settings/services/settingsService', () => ({
     workoutTypes: ['Push', 'Pull', 'Legs'],
     weightStep: 2.5,
     restTimerSeconds: 90,
+    timezone: 'Asia/Kolkata',
+    units: 'kg',
   })),
 }))
 

@@ -2,16 +2,11 @@ import { useEffect } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase/client'
 import { useAppStore } from '../../store/useAppStore'
-import { getLocalSuperAdminUser } from './superAdmin'
 
 function sessionToUser(session: Session | null) {
   return session?.user
     ? { id: session.user.id, email: session.user.email }
     : null
-}
-
-function resolveUser(session: Session | null) {
-  return sessionToUser(session) ?? getLocalSuperAdminUser()
 }
 
 /**
@@ -33,15 +28,6 @@ export function useAuthListener() {
         // Ignore sign-out failures — still clear local auth state below.
       }
       if (cancelled) return
-      // Keep DEV-only break-glass session if active
-      if (import.meta.env.DEV) {
-        const local = getLocalSuperAdminUser()
-        if (local) {
-          setUser(local)
-          setAuthReady(true)
-          return
-        }
-      }
       setUser(null)
       setAuthReady(true)
     }
@@ -51,29 +37,13 @@ export function useAuthListener() {
       .then(({ data: { session }, error }) => {
         if (cancelled) return
         if (error) {
-          if (import.meta.env.DEV) {
-            const local = getLocalSuperAdminUser()
-            if (local) {
-              setUser(local)
-              setAuthReady(true)
-              return
-            }
-          }
           void clearSessionAndShowLogin()
           return
         }
-        setUser(resolveUser(session))
+        setUser(sessionToUser(session))
         setAuthReady(true)
       })
       .catch(() => {
-        if (import.meta.env.DEV) {
-          const local = getLocalSuperAdminUser()
-          if (local) {
-            setUser(local)
-            setAuthReady(true)
-            return
-          }
-        }
         void clearSessionAndShowLogin()
       })
 
@@ -88,7 +58,7 @@ export function useAuthListener() {
         return
       }
 
-      setUser(resolveUser(session))
+      setUser(sessionToUser(session))
       setAuthReady(true)
     })
 

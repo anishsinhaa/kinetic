@@ -79,7 +79,7 @@ export async function getTodayFeedback(userId: string): Promise<BodyFeedback | n
 
 export async function upsertFeedback(
   userId: string,
-  payload: { fatigue: number; sleepQuality: number; painFlag: boolean },
+  payload: { fatigue: number; sleepQuality: number | null; painFlag: boolean },
 ): Promise<{ id: string; savedAt: string }> {
   const today = todayDateString()
   const now = new Date().toISOString()
@@ -153,7 +153,12 @@ export async function saveMuscleSoreness(
 
 export async function saveFeedback(
   userId: string,
-  payload: { fatigue: number; sleepQuality: number; painFlag: boolean; soreness: SorenessEntry[] },
+  payload: {
+    fatigue: number
+    sleepQuality: number | null
+    painFlag: boolean
+    soreness: SorenessEntry[]
+  },
 ): Promise<{ id: string; savedAt: string }> {
   const result = await upsertFeedback(userId, payload)
   await saveMuscleSoreness(result.id, payload.soreness)

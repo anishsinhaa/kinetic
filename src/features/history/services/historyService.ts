@@ -123,8 +123,8 @@ type RawWorkoutExerciseRow = {
     completed_at?: string | null
   }> | null
   workouts:
-    | { date: string; feel?: number | null; note?: string | null }
-    | { date: string; feel?: number | null; note?: string | null }[]
+    | { id: string; date: string; feel?: number | null; note?: string | null; ended_at?: string | null }
+    | { id: string; date: string; feel?: number | null; note?: string | null; ended_at?: string | null }[]
     | null
 }
 
@@ -135,19 +135,19 @@ async function fetchExerciseHistoryRows(userId: string): Promise<RawWorkoutExerc
       exercise_id,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index, completed_at ),
-      workouts!inner ( date, user_id, ended_at, feel, note )
+      workouts!inner ( id, date, user_id, ended_at, feel, note )
     `,
     `
       exercise_id,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index ),
-      workouts!inner ( date, user_id, ended_at, feel, note )
+      workouts!inner ( id, date, user_id, ended_at, feel, note )
     `,
     `
       exercise_id,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index ),
-      workouts!inner ( date, user_id, ended_at )
+      workouts!inner ( id, date, user_id, ended_at )
     `,
   ]
 
@@ -172,7 +172,8 @@ export async function getExerciseHistory(userId: string): Promise<ExerciseHistor
   return buildExerciseHistory(rows)
 }
 
-function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] {
+/** Exported for unit tests — groups by workout session, not calendar day. */
+export function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] {
   const exerciseMap = new Map<
     string,
     { name: string; muscleGroup: string; sessions: Map<string, ExerciseHistorySession> }
@@ -185,8 +186,9 @@ function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] 
 
     const workoutsField = row.workouts
     const workout = Array.isArray(workoutsField) ? workoutsField[0] : workoutsField
+    const workoutId = workout?.id ?? null
     const date = workout?.date ?? null
-    if (!date) continue
+    if (!workoutId || !date) continue
 
     if (!exerciseMap.has(row.exercise_id)) {
       exerciseMap.set(row.exercise_id, {
@@ -208,8 +210,10 @@ function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] 
     const feel = workout?.feel ?? null
     const note = (workout?.note ?? '').trim() || null
 
-    if (!entry.sessions.has(date)) {
-      entry.sessions.set(date, {
+    // One entry per workout session — two Bench sessions on the same day stay separate
+    if (!entry.sessions.has(workoutId)) {
+      entry.sessions.set(workoutId, {
+        workoutId,
         date,
         totalVolume,
         sets: sets.map((s) => ({ weight: s.weight, reps: s.reps })),
@@ -217,7 +221,8 @@ function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] 
         note,
       })
     } else {
-      const existing = entry.sessions.get(date)!
+      // Same exercise logged twice in one workout — merge sets into that session
+      const existing = entry.sessions.get(workoutId)!
       existing.sets.push(...sets.map((s) => ({ weight: s.weight, reps: s.reps })))
       existing.totalVolume += totalVolume
       if (feel != null) existing.feel = feel
@@ -227,9 +232,11 @@ function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] 
 
   const result: ExerciseHistory[] = []
   for (const [exerciseId, entry] of exerciseMap.entries()) {
-    const sessions = Array.from(entry.sessions.values()).sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    )
+    const sessions = Array.from(entry.sessions.values()).sort((a, b) => {
+      const byDate = new Date(b.date).getTime() - new Date(a.date).getTime()
+      if (byDate !== 0) return byDate
+      return b.workoutId.localeCompare(a.workoutId)
+    })
 
     const best = bestPersonalRecord(sessions.flatMap((s) => s.sets))
 

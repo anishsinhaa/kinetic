@@ -20,18 +20,20 @@ export interface BodyFeedback {
 
 export interface FeedbackPayload {
   fatigue: number         // 1–10
-  sleepQuality: number    // 1–10
+  /** Optional — sleep hours live on the daily log; quality is optional here */
+  sleepQuality: number | null
   painFlag: boolean
   soreness: SorenessEntry[]
 }
 
-// Derived helpers
-export function recoveryScoreFromFeedback(fb: BodyFeedback): number {
-  const fatigue = fb.fatigue ?? 5
-  const sleep = fb.sleep_quality ?? 5
-  // Invert fatigue (10 = exhausted → bad), average with sleep quality
-  const invertedFatigue = 11 - fatigue
-  const raw = ((invertedFatigue + sleep) / 20) * 100
+// Derived helpers — never invent fake defaults for missing fields
+export function recoveryScoreFromFeedback(fb: BodyFeedback): number | null {
+  if (fb.fatigue == null) return null
+  const invertedFatigue = 11 - fb.fatigue
+  if (fb.sleep_quality == null) {
+    return Math.round((invertedFatigue / 10) * 100)
+  }
+  const raw = ((invertedFatigue + fb.sleep_quality) / 20) * 100
   return Math.round(raw)
 }
 

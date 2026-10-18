@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../../../components/ui/Button'
+import { showRestDoneNotification } from '../../settings/lib/pushNotifications'
 
 type RestTimerRingProps = {
   endsAt: string | null
@@ -11,7 +12,7 @@ type RestTimerRingProps = {
   inline?: boolean
 }
 
-function vibrateDone() {
+async function vibrateDone() {
   try {
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       navigator.vibrate([200, 100, 200])
@@ -20,9 +21,7 @@ function vibrateDone() {
     // ignore
   }
   try {
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      new Notification('Rest done', { body: 'Time for your next set.', silent: false })
-    }
+    await showRestDoneNotification()
   } catch {
     // ignore
   }
@@ -50,7 +49,7 @@ export function RestTimerRing({
       setRemainingSec(sec)
       if (ms <= 0 && completedFor.current !== endsAt) {
         completedFor.current = endsAt
-        vibrateDone()
+        void vibrateDone()
         onComplete()
       }
     }

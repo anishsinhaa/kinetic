@@ -9,16 +9,8 @@ export function getAdminEmails(): string[] {
 
 /**
  * True when the signed-in Supabase user's email is listed in VITE_ADMIN_EMAILS.
- * In local DEV only, also allows the break-glass superuser (string is DEV-gated
- * so production builds strip it).
  */
 export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false
-  const normalized = email.trim().toLowerCase()
-  if (getAdminEmails().includes(normalized)) return true
-
-  if (import.meta.env.DEV) {
-    return normalized === 'superuser@kinetic.com'
-  }
-  return false
+  return getAdminEmails().includes(email.trim().toLowerCase())
 }

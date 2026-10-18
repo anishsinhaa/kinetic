@@ -280,7 +280,7 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
   return (
     <div className="space-y-6">
       {exercise.sessions.map((session, i) => (
-        <div key={session.date}>
+        <div key={session.workoutId}>
           <div className="flex items-start gap-3 mb-3">
             <div
               className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
@@ -290,6 +290,9 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
             <div className="flex-1">
               <div className="flex items-baseline gap-3 mb-2 flex-wrap">
                 <p className="font-semibold text-text-primary">{fmtDateLong(session.date)}</p>
+                <span className="text-[10px] text-text-muted uppercase tracking-widest">
+                  Session
+                </span>
                 {session.totalVolume > 0 && (
                   <span className="text-xs text-text-muted">
                     Volume: {fmtVolume(session.totalVolume)}
@@ -473,7 +476,14 @@ function ExerciseHistoryTab() {
 // Recovery History Tab
 // ---------------------------------------------------------------------------
 
-function ScoreBadge({ score }: { score: number }) {
+function ScoreBadge({ score }: { score: number | null }) {
+  if (score == null) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-surface-3 text-text-muted border border-border">
+        —
+      </span>
+    )
+  }
   const label = recoveryLabel(score)
   return (
     <span

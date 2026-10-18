@@ -9,6 +9,7 @@ import {
   type UserSettings,
   type UserSettingsUpdate,
 } from '../types'
+import { detectBrowserTimezone } from '../lib/reminderTimezone'
 
 function toRowPatch(update: UserSettingsUpdate): Partial<UserSettingsRow> {
   const patch: Partial<UserSettingsRow> = {}
@@ -37,7 +38,30 @@ function toRowPatch(update: UserSettingsUpdate): Partial<UserSettingsRow> {
   if (update.restTimerSeconds !== undefined) patch.rest_timer_seconds = update.restTimerSeconds
   if (update.weightStep !== undefined) patch.weight_step = update.weightStep
   if (update.units !== undefined) patch.units = update.units
+  if (update.timezone !== undefined) patch.timezone = update.timezone
   return patch
+}
+
+async function ensureBrowserTimezone(row: UserSettingsRow): Promise<UserSettingsRow> {
+  const browserTz = detectBrowserTimezone()
+  const stored = (row.timezone ?? '').trim()
+  // Seed from browser when missing or still the SQL default
+  if (!stored || stored === 'UTC') {
+    if (browserTz && browserTz !== 'UTC') {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .update({ timezone: browserTz })
+        .eq('user_id', row.user_id)
+        .select('*')
+        .single()
+      if (!error && data) return data as UserSettingsRow
+      // Column may not be migrated yet — keep going with in-memory timezone
+      if (error) {
+        return { ...row, timezone: browserTz }
+      }
+    }
+  }
+  return { ...row, timezone: stored || browserTz || 'UTC' }
 }
 
 /** Fetch settings for a user, creating a default row if none exists. */
@@ -51,7 +75,7 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
   if (error) throw toServiceError(error)
 
   if (data) {
-    const row = data as UserSettingsRow
+    let row = data as UserSettingsRow
     const rawTypes = Array.isArray(row.workout_types) ? row.workout_types : null
     // Seed defaults when the stored list is missing/empty
     if (!rawTypes || rawTypes.length === 0) {
@@ -62,13 +86,32 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
         .select('*')
         .single()
       if (seedError) throw toServiceError(seedError)
-      return mapUserSettingsRow(seeded as UserSettingsRow)
+      row = seeded as UserSettingsRow
     }
+    row = await ensureBrowserTimezone(row)
     return mapUserSettingsRow(row)
   }
 
   const defaults = defaultUserSettings(userId)
-  const { data: created, error: insertError } = await supabase
+  const withTz = await supabase
+    .from('user_settings')
+    .insert({
+      user_id: userId,
+      workout_types: defaults.workoutTypes,
+      rest_timer_seconds: defaults.restTimerSeconds,
+      weight_step: defaults.weightStep,
+      units: defaults.units,
+      timezone: defaults.timezone,
+    })
+    .select('*')
+    .single()
+
+  if (!withTz.error && withTz.data) {
+    return mapUserSettingsRow(withTz.data as UserSettingsRow)
+  }
+
+  // Pre-migration: timezone column missing
+  const legacy = await supabase
     .from('user_settings')
     .insert({
       user_id: userId,
@@ -80,8 +123,11 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
     .select('*')
     .single()
 
-  if (insertError) throw toServiceError(insertError)
-  return mapUserSettingsRow(created as UserSettingsRow)
+  if (legacy.error) throw toServiceError(withTz.error ?? legacy.error)
+  return mapUserSettingsRow({
+    ...(legacy.data as UserSettingsRow),
+    timezone: defaults.timezone,
+  })
 }
 
 export async function updateUserSettings(

@@ -88,6 +88,7 @@ export default function Workout() {
   const restEndsAt = useWorkoutStore((s) => s.restEndsAt)
   const restTotalSeconds = useWorkoutStore((s) => s.restTotalSeconds)
   const weightStep = useWorkoutStore((s) => s.weightStep)
+  const units = useWorkoutStore((s) => s.units)
   const feel = useWorkoutStore((s) => s.feel)
   const note = useWorkoutStore((s) => s.note)
   const summarySnapshot = useWorkoutStore((s) => s.summarySnapshot)
@@ -131,8 +132,7 @@ export default function Workout() {
           setItem.reps === '' ? null : Number.parseInt(setItem.reps, 10)
         const weight =
           setItem.weight === '' ? null : Number.parseFloat(setItem.weight)
-
-        await upsertSet(payload.setId, weId, {
+        const setPayload = {
           reps: reps != null && Number.isFinite(reps) ? reps : null,
           weight: weight != null && Number.isFinite(weight) ? weight : null,
           to_failure: setItem.toFailure,
@@ -140,7 +140,27 @@ export default function Workout() {
           completed_at: setItem.completed
             ? (setItem.completedAt ?? new Date().toISOString())
             : null,
-        })
+        }
+
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          const { enqueueOfflineOp } = await import('../lib/offline/syncQueue')
+          enqueueOfflineOp({
+            kind: 'upsert_set',
+            payload: {
+              setId: payload.setId,
+              workoutExerciseId: weId,
+              ...setPayload,
+            },
+          })
+          useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
+            dbSetId: payload.setId,
+          })
+          setSaveError('Offline — will sync when back online')
+          setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
+          return
+        }
+
+        await upsertSet(payload.setId, weId, setPayload)
         useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
           dbSetId: payload.setId,
         })
@@ -173,6 +193,7 @@ export default function Workout() {
         api.setPrefs({
           weightStep: s.weightStep,
           restDefaultSeconds: s.restTimerSeconds,
+          units: s.units,
         })
       })
       .catch(() => {
@@ -869,7 +890,7 @@ export default function Workout() {
 
             <div className="grid grid-cols-[2rem_1fr_1fr_2.5rem_2.5rem] gap-1.5 px-2 sm:px-3 py-2 text-[10px] text-text-muted uppercase tracking-widest border-b border-border">
               <span>Set</span>
-              <span className="text-center">Weight</span>
+              <span className="text-center">Weight ({units})</span>
               <span className="text-center">Reps</span>
               <span />
               <span />
@@ -890,6 +911,7 @@ export default function Workout() {
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
                 onUncomplete={() => void handleUncompleteSet(ex.id, set.id, idx)}
                 onDelete={() => void handleDeleteSet(ex.id, set.id)}
+                onRetry={() => queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
               />
             ))}
 

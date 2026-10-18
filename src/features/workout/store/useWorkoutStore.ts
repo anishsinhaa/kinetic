@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { WorkoutExerciseDraft, WorkoutPhase, WorkoutSetDraft } from '../types'
 import { resolveWorkoutTypes } from '../lib/workoutTypes'
-import type { WorkoutExerciseTarget } from '../../../lib/supabase/database.types'
+import type { WeightUnits, WorkoutExerciseTarget } from '../../../lib/supabase/database.types'
 
 function newId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -27,6 +27,7 @@ interface WorkoutStore {
   restTotalSeconds: number
   restDefaultSeconds: number
   weightStep: number
+  units: WeightUnits
   feel: number | null
   note: string
   summarySnapshot: {
@@ -47,7 +48,11 @@ interface WorkoutStore {
   startWarmup: () => void
   endWarmup: () => void
   skipWarmup: () => void
-  setPrefs: (prefs: { weightStep?: number; restDefaultSeconds?: number }) => void
+  setPrefs: (prefs: {
+    weightStep?: number
+    restDefaultSeconds?: number
+    units?: WeightUnits
+  }) => void
   startRest: (seconds?: number) => void
   adjustRest: (deltaSec: number) => void
   clearRest: () => void
@@ -119,6 +124,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
       suggestedType: null,
       restDefaultSeconds: 90,
       weightStep: 2.5,
+      units: 'kg',
 
       startWorkout: (workoutId, date, startedAt, label = '') =>
         set({
@@ -133,6 +139,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           suggestedType: get().suggestedType,
           restDefaultSeconds: get().restDefaultSeconds,
           weightStep: get().weightStep,
+          units: get().units,
         }),
 
       setPhase: (phase) =>
@@ -180,6 +187,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         set((state) => ({
           weightStep: prefs.weightStep ?? state.weightStep,
           restDefaultSeconds: prefs.restDefaultSeconds ?? state.restDefaultSeconds,
+          units: prefs.units ?? state.units,
         })),
 
       startRest: (seconds) => {
@@ -340,6 +348,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           suggestedType: get().suggestedType,
           restDefaultSeconds: get().restDefaultSeconds,
           weightStep: get().weightStep,
+          units: get().units,
         }),
 
       resetToIdle: () =>
@@ -350,6 +359,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           suggestedType: get().suggestedType,
           restDefaultSeconds: get().restDefaultSeconds,
           weightStep: get().weightStep,
+          units: get().units,
         }),
     }),
     {
@@ -370,6 +380,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         restTotalSeconds: state.restTotalSeconds,
         restDefaultSeconds: state.restDefaultSeconds,
         weightStep: state.weightStep,
+        units: state.units,
         feel: state.feel,
         note: state.note,
         summarySnapshot: state.summarySnapshot,

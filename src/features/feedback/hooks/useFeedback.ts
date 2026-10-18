@@ -41,7 +41,7 @@ export function useSaveFeedback() {
   return useMutation({
     mutationFn: (payload: {
       fatigue: number
-      sleepQuality: number
+      sleepQuality: number | null
       painFlag: boolean
       soreness: SorenessEntry[]
     }) => {

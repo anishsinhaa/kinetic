@@ -233,7 +233,7 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
     Object.entries(soreness).map(([muscle_group, level]) => ({ muscle_group, level }))
 
   const handleSubmit = async () => {
-    if (fatigue == null || sleepQuality == null) return
+    if (fatigue == null) return
     const result = await save({
       fatigue,
       sleepQuality,
@@ -243,7 +243,8 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
     setLastSavedAt(result.savedAt)
   }
 
-  const canSubmit = fatigue != null && sleepQuality != null
+  // Sleep hours live on the daily log — quality here is optional
+  const canSubmit = fatigue != null
 
   const soreCount = Object.keys(soreness).length
   const hasExisting = Boolean(existing?.id)
@@ -267,12 +268,15 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
           />
         </Card>
 
-        {/* Sleep quality */}
+        {/* Optional sleep quality — hours are logged once on the daily log */}
         <Card className="p-6">
-          <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-6">
+          <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-1">
             <Moon size={15} className="text-primary" />
             Sleep Quality
           </h3>
+          <p className="text-[11px] text-text-muted mb-5">
+            Optional. Sleep hours are entered on Today’s log — not here.
+          </p>
           <ScaleSelector
             value={sleepQuality}
             onChange={setSleepQuality}

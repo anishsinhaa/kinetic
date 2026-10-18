@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
     CHECK (weight_step > 0),
   units TEXT NOT NULL DEFAULT 'kg'
     CHECK (units IN ('kg', 'lb')),
+  timezone TEXT NOT NULL DEFAULT 'UTC',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

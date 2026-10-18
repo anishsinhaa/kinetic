@@ -14,6 +14,7 @@ type SetStepperRowProps = {
   onComplete: () => void
   onUncomplete: () => void
   onDelete: () => void
+  onRetry?: () => void
 }
 
 function parseNum(v: string): number {
@@ -31,6 +32,7 @@ export function SetStepperRow({
   onComplete,
   onUncomplete,
   onDelete,
+  onRetry,
 }: SetStepperRowProps) {
   const reduceMotion = useReducedMotion()
   const weight = parseNum(set.weight)
@@ -147,7 +149,18 @@ export function SetStepperRow({
         <span className="col-span-5 text-[9px] text-text-muted">Saving…</span>
       )}
       {status === 'error' && (
-        <span className="col-span-5 text-[9px] text-red-400">Save failed</span>
+        <span className="col-span-5 text-[9px] text-red-400 flex items-center gap-2">
+          Unsaved — save failed
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="underline text-primary hover:text-primary/80"
+            >
+              Retry
+            </button>
+          )}
+        </span>
       )}
     </motion.div>
   )
