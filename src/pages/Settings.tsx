@@ -36,6 +36,7 @@ import {
   subscribeUserPush,
   unsubscribeUserPush,
 } from '../features/settings/lib/pushNotifications'
+import { detectBrowserTimezone } from '../features/settings/lib/reminderTimezone'
 import { cn } from '../lib/utils'
 
 function fmtDate(iso: string): string {
@@ -423,6 +424,23 @@ function PreferencesSection({ userId }: { userId: string }) {
       window.setTimeout(() => setSaveMsg(''), 1500)
     },
   })
+
+  // Persist browser timezone whenever Settings opens with missing/UTC
+  useEffect(() => {
+    if (!settings) return
+    const stored = (settings.timezone ?? '').trim()
+    if (stored && stored !== 'UTC') return
+    const browserTz = detectBrowserTimezone()
+    if (!browserTz || browserTz === stored) return
+    void updateUserSettings(userId, { timezone: browserTz })
+      .then((next) => {
+        setLocal(next)
+        void queryClient.setQueryData(['user-settings', userId], next)
+      })
+      .catch((err) => {
+        console.warn('[Settings] failed to save timezone', err)
+      })
+  }, [settings, userId, queryClient])
 
   const persist = (patch: UserSettingsUpdate) => {
     if (!local) return

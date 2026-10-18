@@ -77,10 +77,30 @@ function isDue(reminderTime: string | null, timeZone: string, at: Date): boolean
   return localHhmmInZone(timeZone || 'UTC', at) === want
 }
 
+function pushErrorInfo(err: unknown): { message: string; statusCode: number | null } {
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; statusCode?: number; status?: number; body?: string }
+    const statusCode =
+      typeof e.statusCode === 'number'
+        ? e.statusCode
+        : typeof e.status === 'number'
+          ? e.status
+          : null
+    const message = [e.message, e.body].filter(Boolean).join(' | ') || String(err)
+    return { message, statusCode }
+  }
+  return { message: String(err), statusCode: null }
+}
+
+function endpointTail(endpoint: string): string {
+  return endpoint.length > 48 ? `…${endpoint.slice(-40)}` : endpoint
+}
+
 Deno.serve(async (req) => {
   const cronSecret = Deno.env.get('CRON_SECRET')
   const auth = req.headers.get('Authorization') ?? ''
   if (cronSecret && auth !== `Bearer ${cronSecret}`) {
+    console.error('[send-reminders] unauthorized')
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
@@ -94,6 +114,9 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
   const at = new Date()
+  const utcNow = at.toISOString()
+
+  console.log(`[send-reminders] tick utc=${utcNow}`)
 
   const { data: settings, error: settingsError } = await supabase
     .from('user_settings')
@@ -102,17 +125,35 @@ Deno.serve(async (req) => {
     )
 
   if (settingsError) {
+    console.error('[send-reminders] settings query failed', settingsError.message)
     return new Response(JSON.stringify({ error: settingsError.message }), { status: 500 })
   }
 
-  const due: Array<{ userId: string; title: string; body: string }> = []
+  const rows = (settings ?? []) as SettingsRow[]
+  console.log(`[send-reminders] users_checked=${rows.length}`)
 
-  for (const row of (settings ?? []) as SettingsRow[]) {
+  const due: Array<{ userId: string; kind: string; title: string; body: string }> = []
+
+  for (const row of rows) {
     const tz = row.timezone?.trim() || 'UTC'
+    const localNow = localHhmmInZone(tz, at)
+    const weekday = localWeekdayInZone(tz, at)
+    const morning = toHhmm(row.reminder_morning_weight_time)
+    const night = toHhmm(row.reminder_night_recovery_time)
+    const workout = toHhmm(row.reminder_workout_time)
+
+    console.log(
+      `[send-reminders] user=${row.user_id} tz=${tz} local=${localNow} weekday=${weekday}` +
+        ` morning=${row.reminder_morning_weight_enabled ? morning ?? '—' : 'off'}` +
+        ` night=${row.reminder_night_recovery_enabled ? night ?? '—' : 'off'}` +
+        ` workout=${row.reminder_workout_enabled ? workout ?? '—' : 'off'}` +
+        ` days=${JSON.stringify(row.reminder_workout_days ?? [])}`,
+    )
 
     if (row.reminder_morning_weight_enabled && isDue(row.reminder_morning_weight_time, tz, at)) {
       due.push({
         userId: row.user_id,
+        kind: 'morning_weight',
         title: 'Morning weight',
         body: 'Log today’s weight in Kinetic.',
       })
@@ -120,6 +161,7 @@ Deno.serve(async (req) => {
     if (row.reminder_night_recovery_enabled && isDue(row.reminder_night_recovery_time, tz, at)) {
       due.push({
         userId: row.user_id,
+        kind: 'night_recovery',
         title: 'Recovery check-in',
         body: 'How’s your fatigue and soreness today?',
       })
@@ -127,18 +169,26 @@ Deno.serve(async (req) => {
     if (
       row.reminder_workout_enabled &&
       isDue(row.reminder_workout_time, tz, at) &&
-      (row.reminder_workout_days ?? []).includes(localWeekdayInZone(tz, at))
+      (row.reminder_workout_days ?? []).includes(weekday)
     ) {
       due.push({
         userId: row.user_id,
+        kind: 'workout',
         title: 'Workout reminder',
         body: 'Time to train — open Kinetic to start.',
       })
     }
   }
 
+  console.log(
+    `[send-reminders] matched=${due.length}` +
+      (due.length
+        ? ` kinds=${due.map((d) => `${d.userId.slice(0, 8)}:${d.kind}`).join(',')}`
+        : ''),
+  )
+
   if (due.length === 0) {
-    return new Response(JSON.stringify({ sent: 0, matched: 0 }), {
+    return new Response(JSON.stringify({ sent: 0, matched: 0, usersChecked: rows.length }), {
       headers: { 'Content-Type': 'application/json' },
     })
   }
@@ -150,23 +200,40 @@ Deno.serve(async (req) => {
     .in('user_id', userIds)
 
   if (subsError) {
+    console.error('[send-reminders] subscriptions query failed', subsError.message)
     return new Response(JSON.stringify({ error: subsError.message }), { status: 500 })
   }
 
+  const subRows = (subs ?? []) as SubRow[]
+  console.log(
+    `[send-reminders] subscriptions_found=${subRows.length} for_users=${userIds.length}`,
+  )
+
   const byUser = new Map<string, SubRow[]>()
-  for (const s of (subs ?? []) as SubRow[]) {
+  for (const s of subRows) {
     const list = byUser.get(s.user_id) ?? []
     list.push(s)
     byUser.set(s.user_id, list)
   }
 
   let sent = 0
-  const failures: string[] = []
+  let deleted = 0
+  const failures: Array<{ userId: string; endpoint: string; statusCode: number | null; message: string }> =
+    []
 
   for (const item of due) {
     const userSubs = byUser.get(item.userId) ?? []
+    console.log(
+      `[send-reminders] send kind=${item.kind} user=${item.userId} subscriptions=${userSubs.length}`,
+    )
+    if (userSubs.length === 0) {
+      console.warn(`[send-reminders] no subscriptions for user=${item.userId} kind=${item.kind}`)
+      continue
+    }
+
     const payload = JSON.stringify({ title: item.title, body: item.body })
     for (const sub of userSubs) {
+      const tail = endpointTail(sub.endpoint)
       try {
         await webpush.sendNotification(
           {
@@ -176,17 +243,50 @@ Deno.serve(async (req) => {
           payload,
         )
         sent += 1
+        console.log(`[send-reminders] push ok user=${item.userId} kind=${item.kind} endpoint=${tail}`)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        failures.push(msg)
-        if (msg.includes('410') || msg.includes('404')) {
-          await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+        const { message, statusCode } = pushErrorInfo(err)
+        failures.push({ userId: item.userId, endpoint: tail, statusCode, message })
+        console.error(
+          `[send-reminders] push fail user=${item.userId} kind=${item.kind}` +
+            ` status=${statusCode ?? '—'} endpoint=${tail} error=${message}`,
+        )
+
+        const gone =
+          statusCode === 404 ||
+          statusCode === 410 ||
+          message.includes('404') ||
+          message.includes('410')
+        if (gone) {
+          const { error: delError } = await supabase
+            .from('push_subscriptions')
+            .delete()
+            .eq('endpoint', sub.endpoint)
+          if (delError) {
+            console.error(
+              `[send-reminders] failed to delete stale subscription endpoint=${tail}`,
+              delError.message,
+            )
+          } else {
+            deleted += 1
+            console.log(`[send-reminders] deleted stale subscription endpoint=${tail}`)
+          }
         }
       }
     }
   }
 
-  return new Response(JSON.stringify({ sent, matched: due.length, failures: failures.slice(0, 5) }), {
+  const summary = {
+    usersChecked: rows.length,
+    matched: due.length,
+    subscriptionsFound: subRows.length,
+    sent,
+    deleted,
+    failures: failures.slice(0, 10),
+  }
+  console.log('[send-reminders] done', JSON.stringify(summary))
+
+  return new Response(JSON.stringify(summary), {
     headers: { 'Content-Type': 'application/json' },
   })
 })

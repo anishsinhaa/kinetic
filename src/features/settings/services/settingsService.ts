@@ -42,26 +42,32 @@ function toRowPatch(update: UserSettingsUpdate): Partial<UserSettingsRow> {
   return patch
 }
 
+/** Persist browser IANA zone when DB value is missing or still the UTC default. */
 async function ensureBrowserTimezone(row: UserSettingsRow): Promise<UserSettingsRow> {
   const browserTz = detectBrowserTimezone()
   const stored = (row.timezone ?? '').trim()
-  // Seed from browser when missing or still the SQL default
-  if (!stored || stored === 'UTC') {
-    if (browserTz && browserTz !== 'UTC') {
-      const { data, error } = await supabase
-        .from('user_settings')
-        .update({ timezone: browserTz })
-        .eq('user_id', row.user_id)
-        .select('*')
-        .single()
-      if (!error && data) return data as UserSettingsRow
-      // Column may not be migrated yet — keep going with in-memory timezone
-      if (error) {
-        return { ...row, timezone: browserTz }
-      }
-    }
+
+  if (stored && stored !== 'UTC') {
+    return { ...row, timezone: stored }
   }
-  return { ...row, timezone: stored || browserTz || 'UTC' }
+
+  // Missing or UTC — write browser timezone (even if that is also UTC, persist explicitly)
+  const nextTz = browserTz || 'UTC'
+  const { error } = await supabase
+    .from('user_settings')
+    .update({ timezone: nextTz })
+    .eq('user_id', row.user_id)
+
+  if (error) {
+    console.warn('[user_settings] failed to persist timezone', error.message, {
+      userId: row.user_id,
+      nextTz,
+    })
+    // Column may not be migrated yet — still surface browser zone in the app
+    return { ...row, timezone: nextTz }
+  }
+
+  return { ...row, timezone: nextTz }
 }
 
 /** Fetch settings for a user, creating a default row if none exists. */
