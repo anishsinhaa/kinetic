@@ -10,6 +10,7 @@ import type { DailyLogEntry, ExerciseHistory, ExerciseHistorySession } from '../
 // ---------------------------------------------------------------------------
 
 type WorkoutDayRow = {
+  id: string
   name: string | null
   workout_type?: string | null
   date: string
@@ -18,6 +19,13 @@ type WorkoutDayRow = {
   ended_at: string
   feel?: number | null
   note?: string | null
+}
+
+function durationMins(startedAt: string | null, endedAt: string): number | null {
+  if (!startedAt) return null
+  const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return null
+  return Math.round(ms / 60000)
 }
 
 export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
@@ -29,7 +37,7 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
       .order('date', { ascending: false }),
     supabase
       .from('workouts')
-      .select('name, workout_type, date, created_at, started_at, ended_at, feel, note')
+      .select('id, name, workout_type, date, created_at, started_at, ended_at, feel, note')
       .eq('user_id', userId)
       .not('ended_at', 'is', null),
   ])
@@ -40,7 +48,7 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
   if (workoutsResult.error) {
     const legacy = await supabase
       .from('workouts')
-      .select('name, date, created_at, started_at, ended_at')
+      .select('id, name, date, created_at, started_at, ended_at')
       .eq('user_id', userId)
       .not('ended_at', 'is', null)
     if (legacy.error) throw toServiceError(legacy.error)
@@ -105,6 +113,11 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
       workoutNotes: sorted
         .map((w) => (w.note ?? '').trim())
         .filter(Boolean),
+      workouts: sorted.map((w) => ({
+        id: w.id,
+        label: (w.workout_type ?? w.name ?? null) as string | null,
+        durationMins: durationMins(w.started_at, w.ended_at),
+      })),
     }
   })
 }

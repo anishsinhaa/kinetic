@@ -2,6 +2,12 @@
 // Daily Logs
 // ---------------------------------------------------------------------------
 
+export interface HistoryDayWorkout {
+  id: string
+  label: string | null
+  durationMins: number | null
+}
+
 export interface DailyLogEntry {
   id: string
   date: string         // "YYYY-MM-DD"
@@ -18,6 +24,8 @@ export interface DailyLogEntry {
   workoutFeels: number[]
   /** Notes from workouts that day */
   workoutNotes: string[]
+  /** Completed workouts that day (for delete / detail) */
+  workouts: HistoryDayWorkout[]
 }
 
 // ---------------------------------------------------------------------------

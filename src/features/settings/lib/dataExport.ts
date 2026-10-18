@@ -1,18 +1,46 @@
 /**
  * Export helpers — produce JSON, CSV, or Excel (.xlsx) from history data.
+ * Weights are converted to the user's display unit and labeled accordingly.
  */
 
 import type { ExerciseHistory, DailyLogEntry } from '../../history/types'
+import type { WeightUnits } from '../../../lib/supabase/database.types'
+import { kgToDisplay, roundDisplayWeight } from './units'
 import { rowsToCsv, writeWorkbookBuffer, type SheetRow } from './excelHelpers'
+
+function toDisplay(kg: number | null | undefined, units: WeightUnits): number | null {
+  if (kg == null || !Number.isFinite(kg)) return null
+  return roundDisplayWeight(kgToDisplay(kg, units), units)
+}
 
 // ─── JSON export ─────────────────────────────────────────────────────────────
 
-export function exportJson(histories: ExerciseHistory[], logs: DailyLogEntry[]): void {
+export function exportJson(
+  histories: ExerciseHistory[],
+  logs: DailyLogEntry[],
+  units: WeightUnits = 'kg',
+): void {
   const payload = {
     exportedAt: new Date().toISOString(),
-    version: 1,
-    exerciseHistory: histories,
-    dailyLogs: logs,
+    version: 2,
+    units,
+    note: 'Weights are in the user display unit. Canonical storage in Kinetic is kg.',
+    exerciseHistory: histories.map((ex) => ({
+      ...ex,
+      allTimeBest: toDisplay(ex.allTimeBest, units),
+      sessions: ex.sessions.map((s) => ({
+        ...s,
+        totalVolume: toDisplay(s.totalVolume, units),
+        sets: s.sets.map((set) => ({
+          ...set,
+          weight: toDisplay(set.weight, units),
+        })),
+      })),
+    })),
+    dailyLogs: logs.map((l) => ({
+      ...l,
+      weight: toDisplay(l.weight, units),
+    })),
   }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
   triggerDownload(blob, `kinetic-export-${today()}.json`)
@@ -20,7 +48,13 @@ export function exportJson(histories: ExerciseHistory[], logs: DailyLogEntry[]):
 
 // ─── CSV export ──────────────────────────────────────────────────────────────
 
-export function exportCsv(histories: ExerciseHistory[], logs: DailyLogEntry[]): void {
+export function exportCsv(
+  histories: ExerciseHistory[],
+  logs: DailyLogEntry[],
+  units: WeightUnits = 'kg',
+): void {
+  const weightKey = `weight_${units}`
+  const volumeKey = `session_volume_${units}`
   const rows: SheetRow[] = []
 
   for (const ex of histories) {
@@ -33,9 +67,9 @@ export function exportCsv(histories: ExerciseHistory[], logs: DailyLogEntry[]): 
           exercise_id: ex.exerciseId,
           exercise_name: ex.exerciseName,
           muscle_group: ex.muscleGroup,
-          weight_kg: set.weight,
+          [weightKey]: toDisplay(set.weight, units),
           reps: set.reps,
-          session_volume_kg: session.totalVolume,
+          [volumeKey]: toDisplay(session.totalVolume, units),
           feel: session.feel,
         })
       }
@@ -50,9 +84,9 @@ export function exportCsv(histories: ExerciseHistory[], logs: DailyLogEntry[]): 
       exercise_id: null,
       exercise_name: null,
       muscle_group: null,
-      weight_kg: log.weight,
+      [weightKey]: toDisplay(log.weight, units),
       reps: null,
-      session_volume_kg: null,
+      [volumeKey]: null,
       feel: null,
     })
   }
@@ -70,7 +104,12 @@ export function exportCsv(histories: ExerciseHistory[], logs: DailyLogEntry[]): 
 export async function exportExcel(
   histories: ExerciseHistory[],
   logs: DailyLogEntry[],
+  units: WeightUnits = 'kg',
 ): Promise<void> {
+  const weightCol = `Weight (${units})`
+  const volumeCol = `Session Volume (${units})`
+  const bodyCol = `Weight (${units})`
+
   const setRows: SheetRow[] = []
   for (const ex of histories) {
     for (const session of ex.sessions) {
@@ -79,9 +118,9 @@ export async function exportExcel(
           Date: session.date,
           Exercise: ex.exerciseName,
           'Muscle Group': ex.muscleGroup,
-          'Weight (kg)': set.weight,
+          [weightCol]: toDisplay(set.weight, units),
           Reps: set.reps,
-          'Session Volume (kg)': session.totalVolume,
+          [volumeCol]: toDisplay(session.totalVolume, units),
           Feel: session.feel,
           Note: session.note ?? null,
         })
@@ -91,7 +130,7 @@ export async function exportExcel(
 
   const logRows: SheetRow[] = logs.map((l) => ({
     Date: l.date,
-    'Weight (kg)': l.weight,
+    [bodyCol]: toDisplay(l.weight, units),
     Calories: l.calories,
     'Protein (g)': l.protein,
     'Sleep (h)': l.sleep,

@@ -99,6 +99,7 @@ describe('bodyWeightSeries', () => {
     workoutCount: 0,
     workoutFeels: [],
     workoutNotes: [],
+    workouts: [],
   })
 
   it('filters null weights and sorts ascending', () => {

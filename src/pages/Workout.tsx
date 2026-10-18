@@ -25,9 +25,17 @@ import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { suggestNextType } from '../features/workout/lib/suggestNextType'
-import { formatVolumeKg, totalVolumeKg } from '../features/workout/lib/volume'
+import { totalVolumeKg } from '../features/workout/lib/volume'
 import { detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
+import {
+  displayWeightString,
+  formatVolume,
+  formatWeight,
+  kgToDisplay,
+  roundDisplayWeight,
+  toStoredKg,
+} from '../features/settings/lib/units'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
@@ -128,13 +136,19 @@ export default function Workout() {
           return
         }
 
+        const units = useWorkoutStore.getState().units
         const reps =
           setItem.reps === '' ? null : Number.parseInt(setItem.reps, 10)
-        const weight =
+        const displayWeight =
           setItem.weight === '' ? null : Number.parseFloat(setItem.weight)
+        // Store kg canonically — UI fields are in the user's display unit
+        const weightKg =
+          displayWeight != null && Number.isFinite(displayWeight)
+            ? toStoredKg(displayWeight, units)
+            : null
         const setPayload = {
           reps: reps != null && Number.isFinite(reps) ? reps : null,
-          weight: weight != null && Number.isFinite(weight) ? weight : null,
+          weight: weightKg,
           to_failure: setItem.toFailure,
           set_index: payload.setIndex,
           completed_at: setItem.completed
@@ -296,6 +310,7 @@ export default function Workout() {
         setDbReady(true)
 
         if (isRepeatMode && latestWorkoutQuery.data?.exercises?.length) {
+          const displayUnits = useWorkoutStore.getState().units
           for (const ex of latestWorkoutQuery.data.exercises) {
             try {
               await addExerciseFromLibrary(
@@ -308,7 +323,7 @@ export default function Workout() {
                   initialSets:
                     ex.sets.length > 0
                       ? ex.sets.map((s) => ({
-                          weight: s.weight != null ? String(s.weight) : '',
+                          weight: displayWeightString(s.weight, displayUnits),
                           reps: s.reps != null ? String(s.reps) : '',
                         }))
                       : undefined,
@@ -373,30 +388,53 @@ export default function Workout() {
       const dbWeId = await addExerciseToWorkout(workoutId, exercise.id, Math.max(0, orderIndex))
       useWorkoutStore.getState().updateExerciseMeta(added.id, { dbWorkoutExerciseId: dbWeId })
 
-      const lastSets =
+      const displayUnits = useWorkoutStore.getState().units
+      // DB weights are kg; convert to display for UI / labels / prefill
+      const lastSetsKg =
         options?.initialSets != null
           ? options.initialSets.map((s) => ({
-              weight: s.weight === '' ? null : parseFloat(s.weight),
+              // initialSets already in display units (e.g. repeat last)
+              weight:
+                s.weight === ''
+                  ? null
+                  : toStoredKg(parseFloat(s.weight), displayUnits),
               reps: s.reps === '' ? null : parseInt(s.reps, 10),
+              displayWeight: s.weight === '' ? null : parseFloat(s.weight),
             }))
-          : await getLastPerformance(userId, exercise.id)
+          : (await getLastPerformance(userId, exercise.id)).map((s) => ({
+              weight: s.weight,
+              reps: s.reps,
+              displayWeight:
+                s.weight != null
+                  ? roundDisplayWeight(kgToDisplay(s.weight, displayUnits), displayUnits)
+                  : null,
+            }))
 
       const pr = await getExercisePersonalRecord(userId, exercise.id, workoutId)
       const lastPerformance =
-        lastSets.length > 0
-          ? `Last: ${lastSets.map((s) => `${s.weight ?? '-'}x${s.reps ?? '-'}`).join(' · ')}`
+        lastSetsKg.length > 0
+          ? `Last: ${lastSetsKg
+              .map(
+                (s) =>
+                  `${s.displayWeight ?? '-'}x${s.reps ?? '-'}`,
+              )
+              .join(' · ')} ${displayUnits}`
           : 'No previous performance'
       const personalRecord = pr
-        ? `PR: ${pr.weight ?? '-'}x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''}`
+        ? `PR: ${
+            pr.weight != null
+              ? roundDisplayWeight(kgToDisplay(pr.weight, displayUnits), displayUnits)
+              : '-'
+          }x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''} ${displayUnits}`
         : 'No PR yet'
-      const last = lastSets[0]
+      const last = lastSetsKg[0]
       const targetLabel = last
-        ? `Target: ${targetPreview(last.weight, last.reps, 'maintain', weightStep)}`
+        ? `Target: ${targetPreview(last.displayWeight, last.reps, 'maintain', weightStep)}`
         : undefined
 
       // Prefill sets if we didn't already (optimistic empty row)
-      if (options?.initialSets == null && lastSets.length > 0) {
-        const newSets = lastSets.map((s) => {
+      if (options?.initialSets == null && lastSetsKg.length > 0) {
+        const newSets = lastSetsKg.map((s) => {
           const id =
             typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
               ? crypto.randomUUID()
@@ -404,7 +442,7 @@ export default function Workout() {
           return {
             id,
             dbSetId: id,
-            weight: s.weight != null ? String(s.weight) : '',
+            weight: s.displayWeight != null ? String(s.displayWeight) : '',
             reps: s.reps != null ? String(s.reps) : '',
             toFailure: false,
             completed: false,
@@ -532,13 +570,16 @@ export default function Workout() {
       }
 
       const fresh = useWorkoutStore.getState()
+      const displayUnits = fresh.units
+      // Volume / PR math uses canonical kg
       const completedSets = fresh.exercises.flatMap((e) =>
         e.sets
           .filter((s) => s.completed)
           .map((s) => ({
             exerciseId: e.exerciseId,
             exerciseName: e.name,
-            weight: s.weight === '' ? null : parseFloat(s.weight),
+            weight:
+              s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
             reps: s.reps === '' ? null : parseInt(s.reps, 10),
             completed: true as const,
           })),
@@ -580,7 +621,10 @@ export default function Workout() {
         warmupSec: Math.max(0, warmupSec),
         volumeKg: volume,
         setCount: completedSets.length,
-        prLabels: hits.map((h) => `${h.exerciseName} ${h.weight}x${h.reps}`),
+        prLabels: hits.map(
+          (h) =>
+            `${h.exerciseName} ${formatWeight(h.weight, displayUnits)} × ${h.reps}`,
+        ),
       })
 
       await finishWorkoutDb(currentWorkoutId, {
@@ -663,7 +707,7 @@ export default function Workout() {
             {[
               ['Duration', formatElapsed(summarySnapshot.durationSec * 1000)],
               ['Warmup', formatElapsed(summarySnapshot.warmupSec * 1000)],
-              ['Volume', `${formatVolumeKg(summarySnapshot.volumeKg)} kg`],
+              ['Volume', formatVolume(summarySnapshot.volumeKg, units)],
               ['Sets', String(summarySnapshot.setCount)],
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl border border-border bg-surface p-4">

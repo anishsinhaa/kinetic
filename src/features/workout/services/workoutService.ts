@@ -255,15 +255,19 @@ function logSetUpsertError(
 
 /**
  * Single write path for a set: one full-payload upsert by primary key.
- * On failure the caller keeps the set unsaved and may retry — fields are never dropped.
+ * No stripped-column fallback — v2 columns (`failed`, `completed_at`) are required.
+ * Offline retries go through the app sync queue (not Workbox BackgroundSync).
  */
 export async function upsertSet(
   setId: string,
   workoutExerciseId: string,
   setData: AddSetInput,
 ): Promise<string> {
+  if (!setId || !workoutExerciseId) {
+    throw new Error('upsertSet requires setId and workoutExerciseId')
+  }
   const row = buildSetUpsertPayload(setId, workoutExerciseId, setData)
-  // Avoid .select().single() — RLS can hide the row and surface a false 400/406
+  // PK conflict target; avoid .select().single() (RLS can hide the row → false 406)
   const { error } = await supabase.from('sets').upsert(row, { onConflict: 'id' })
   if (!error) return setId
 

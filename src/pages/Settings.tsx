@@ -46,6 +46,7 @@ import {
   exportCsv,
   exportExcel,
 } from '../features/settings/lib/dataExport'
+import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
 import {
   applyImport,
   formatImportSummary,
@@ -852,15 +853,16 @@ function DataSection({ userId }: { userId: string }) {
   >({ status: 'idle' })
 
   const queryClient = useQueryClient()
+  const units = useWeightUnits()
 
   const handleExport = async (fmt: 'json' | 'csv' | 'xlsx') => {
     setExporting(fmt)
     try {
       const { getExerciseHistory, getDailyLogs } = await import('../features/history/services/historyService')
       const [histories, logs] = await Promise.all([getExerciseHistory(userId), getDailyLogs(userId)])
-      if (fmt === 'json') exportJson(histories, logs)
-      else if (fmt === 'csv') exportCsv(histories, logs)
-      else await exportExcel(histories, logs)
+      if (fmt === 'json') exportJson(histories, logs, units)
+      else if (fmt === 'csv') exportCsv(histories, logs, units)
+      else await exportExcel(histories, logs, units)
     } catch (err) {
       alert(`Export failed: ${(err as Error).message}`)
     } finally {

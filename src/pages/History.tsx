@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Card } from '../components/ui/Card'
 import { Table, TableHead, TableBody, TableRow, TableTh, TableTd } from '../components/ui/Table'
 import { Button } from '../components/ui/Button'
@@ -14,14 +15,18 @@ import {
   Zap,
   Moon,
   Activity,
+  Trash2,
 } from 'lucide-react'
 import { useDailyLogs, useExerciseHistory } from '../features/history/hooks/useHistory'
 import { useFeedbackHistory } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import type { ExerciseHistory } from '../features/history/types'
+import { deleteWorkout } from '../features/workout/services/workoutService'
+import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import { formatVolume, formatWeight } from '../features/settings/lib/units'
+import type { WeightUnits } from '../lib/supabase/database.types'
 import { cn } from '../lib/utils'
 import { pluralize } from '../lib/pluralize'
-import { formatVolumeKg } from '../features/workout/lib/volume'
 
 type Tab = 'daily' | 'exercise' | 'recovery'
 
@@ -54,8 +59,8 @@ function fmtDateLong(iso: string): string {
   }
 }
 
-function fmtWeight(v: number | null): string {
-  return v != null ? `${v} kg` : '—'
+function fmtBodyWeight(v: number | null, units: WeightUnits): string {
+  return formatWeight(v, units)
 }
 
 function fmtCalories(v: number | null): string {
@@ -73,8 +78,17 @@ function fmtSleep(v: number | null): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
 
-function fmtVolume(v: number): string {
-  return v > 0 ? `${formatVolumeKg(v)} kg` : '—'
+function fmtVolume(v: number, units: WeightUnits): string {
+  return formatVolume(v, units)
+}
+
+async function invalidateHistoryCaches(queryClient: ReturnType<typeof useQueryClient>) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['history'] }),
+    queryClient.invalidateQueries({ queryKey: ['progress'] }),
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+    queryClient.invalidateQueries({ queryKey: ['workout'] }),
+  ])
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +172,25 @@ function WorkoutCell({ workoutCount, workoutType, workoutDurationMins }: {
 
 function DailyLogsTab() {
   const { data: logs, isLoading, error } = useDailyLogs()
+  const units = useWeightUnits()
+  const queryClient = useQueryClient()
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
+  const handleDelete = async (workoutId: string) => {
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await deleteWorkout(workoutId)
+      setConfirmId(null)
+      await invalidateHistoryCaches(queryClient)
+    } catch (err) {
+      setDeleteError((err as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <Card>
@@ -179,6 +212,12 @@ function DailyLogsTab() {
         </div>
       )}
 
+      {deleteError && (
+        <div className="p-5">
+          <ErrorState message={deleteError} />
+        </div>
+      )}
+
       {!error && (
         <div className="overflow-x-auto">
         <Table>
@@ -191,16 +230,17 @@ function DailyLogsTab() {
               <TableTh>Calories</TableTh>
               <TableTh>Sleep</TableTh>
               <TableTh>Notes</TableTh>
+              <TableTh className="w-24"> </TableTh>
             </TableRow>
           </TableHead>
           <TableBody>
             {isLoading && Array.from({ length: 5 }).map((_, i) => (
-              <SkeletonRow key={i} cols={7} />
+              <SkeletonRow key={i} cols={8} />
             ))}
 
             {!isLoading && logs?.length === 0 && (
               <TableRow>
-                <TableTd colSpan={7} className="text-center py-16">
+                <TableTd colSpan={8} className="text-center py-16">
                   <div className="flex flex-col items-center gap-2 text-text-muted">
                     <Calendar size={28} className="opacity-30" />
                     <p className="text-sm">No daily logs yet. Start tracking from the Dashboard.</p>
@@ -221,7 +261,7 @@ function DailyLogsTab() {
                     workoutDurationMins={row.workoutDurationMins}
                   />
                 </TableTd>
-                <TableTd>{fmtWeight(row.weight)}</TableTd>
+                <TableTd>{fmtBodyWeight(row.weight, units)}</TableTd>
                 <TableTd>
                   <span className={row.protein != null ? 'text-primary font-semibold' : 'text-text-muted'}>
                     {fmtProtein(row.protein)}
@@ -252,6 +292,50 @@ function DailyLogsTab() {
                     <span className="text-text-muted text-xs">—</span>
                   )}
                 </TableTd>
+                <TableTd>
+                  {row.workouts.length === 0 ? (
+                    <span className="text-text-muted text-xs">—</span>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {row.workouts.map((w) =>
+                        confirmId === w.id ? (
+                          <div key={w.id} className="flex flex-col gap-1 min-w-28">
+                            <p className="text-[10px] text-text-muted">Delete {w.label ?? 'workout'}?</p>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={deleting}
+                                onClick={() => setConfirmId(null)}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                disabled={deleting}
+                                onClick={() => void handleDelete(w.id)}
+                              >
+                                {deleting ? <Loader2 size={12} className="animate-spin" /> : 'Delete'}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            key={w.id}
+                            type="button"
+                            onClick={() => setConfirmId(w.id)}
+                            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-red-400 min-h-11 px-1"
+                            title={`Delete ${w.label ?? 'workout'}`}
+                          >
+                            <Trash2 size={12} />
+                            <span className="hidden sm:inline">Delete</span>
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  )}
+                </TableTd>
               </TableRow>
             ))}
           </TableBody>
@@ -266,7 +350,23 @@ function DailyLogsTab() {
 // Exercise History Tab
 // ---------------------------------------------------------------------------
 
-function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
+function ExerciseSessionDetail({
+  exercise,
+  units,
+  confirmId,
+  deleting,
+  onAskDelete,
+  onCancelDelete,
+  onConfirmDelete,
+}: {
+  exercise: ExerciseHistory
+  units: WeightUnits
+  confirmId: string | null
+  deleting: boolean
+  onAskDelete: (workoutId: string) => void
+  onCancelDelete: () => void
+  onConfirmDelete: (workoutId: string) => void
+}) {
   if (exercise.sessions.length === 0) {
     return (
       <EmptyState
@@ -295,11 +395,36 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
                 </span>
                 {session.totalVolume > 0 && (
                   <span className="text-xs text-text-muted">
-                    Volume: {fmtVolume(session.totalVolume)}
+                    Volume: {fmtVolume(session.totalVolume, units)}
                   </span>
                 )}
                 {session.feel != null && (
                   <span className="text-xs text-primary font-medium">Feel {session.feel}/5</span>
+                )}
+                {confirmId === session.workoutId ? (
+                  <span className="flex items-center gap-2 ml-auto">
+                    <span className="text-[10px] text-text-muted">Delete workout?</span>
+                    <Button variant="ghost" size="sm" disabled={deleting} onClick={onCancelDelete}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={deleting}
+                      onClick={() => onConfirmDelete(session.workoutId)}
+                    >
+                      {deleting ? <Loader2 size={12} className="animate-spin" /> : 'Delete'}
+                    </Button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onAskDelete(session.workoutId)}
+                    className="ml-auto inline-flex items-center gap-1 text-xs text-text-muted hover:text-red-400 min-h-11"
+                  >
+                    <Trash2 size={12} />
+                    Delete workout
+                  </button>
                 )}
               </div>
               {session.note && (
@@ -315,7 +440,7 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
                       Set {j + 1}
                     </p>
                     <p className="font-bold text-text-primary text-sm">
-                      {set.weight != null ? `${set.weight}kg` : '—'}
+                      {formatWeight(set.weight, units)}
                       {' '}
                       <span className="text-text-secondary font-normal">
                         × {set.reps ?? '—'}
@@ -334,9 +459,24 @@ function ExerciseSessionDetail({ exercise }: { exercise: ExerciseHistory }) {
 
 function ExerciseHistoryTab() {
   const { data: exercises, isPending, isFetching, error, refetch } = useExerciseHistory()
+  const units = useWeightUnits()
+  const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleConfirmDelete = async (workoutId: string) => {
+    setDeleting(true)
+    try {
+      await deleteWorkout(workoutId)
+      setConfirmId(null)
+      await invalidateHistoryCaches(queryClient)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const showInitialSpinner = isPending && !exercises
   const filtered = (exercises ?? []).filter((e) =>
@@ -457,14 +597,22 @@ function ExerciseHistoryTab() {
                 <div className="text-right">
                   <p className="text-[9px] text-text-muted uppercase tracking-widest mb-0.5">All-time best</p>
                   <p className="text-primary font-bold text-lg">
-                    {selected.allTimeBest} kg
+                    {formatWeight(selected.allTimeBest, units)}
                     {selected.allTimeBestReps != null ? ` × ${selected.allTimeBestReps}` : ''}
                   </p>
                 </div>
               )}
             </div>
 
-            <ExerciseSessionDetail exercise={selected} />
+            <ExerciseSessionDetail
+              exercise={selected}
+              units={units}
+              confirmId={confirmId}
+              deleting={deleting}
+              onAskDelete={setConfirmId}
+              onCancelDelete={() => setConfirmId(null)}
+              onConfirmDelete={(id) => void handleConfirmDelete(id)}
+            />
           </Card>
         )}
       </div>

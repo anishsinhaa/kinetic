@@ -23,6 +23,7 @@ import {
 import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import { useCurrentUser } from '../features/auth/useAuth'
+import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   getDashboardStats,
@@ -33,9 +34,39 @@ import { suggestNextType } from '../features/workout/lib/suggestNextType'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { pluralize } from '../lib/pluralize'
-import { formatVolumeKg } from '../features/workout/lib/volume'
+import {
+  displayWeightString,
+  formatVolume,
+  kgToDisplay,
+  roundDisplayWeight,
+  toStoredKg,
+} from '../features/settings/lib/units'
+import type { WeightUnits } from '../lib/supabase/database.types'
 import { cn } from '../lib/utils'
 import { selectOnFocus } from '../lib/selectOnFocus'
+
+function dailyLogFormFromDb(
+  log: Parameters<typeof logToFormState>[0],
+  units: WeightUnits,
+): DailyLogFormState {
+  const base = logToFormState(log)
+  if (log.weight == null) return base
+  return {
+    ...base,
+    weight: String(roundDisplayWeight(kgToDisplay(log.weight, units), units)),
+  }
+}
+
+function dailyLogPayloadFromForm(
+  form: DailyLogFormState,
+  units: WeightUnits,
+): ReturnType<typeof formStateToPayload> {
+  const payload = formStateToPayload(form)
+  if (form.weight === '' || payload.weight == null || !Number.isFinite(payload.weight)) {
+    return { ...payload, weight: null }
+  }
+  return { ...payload, weight: toStoredKg(payload.weight, units) }
+}
 
 function DailyLogForm({
   initialForm,
@@ -46,7 +77,7 @@ function DailyLogForm({
   initialForm: DailyLogFormState
   isSaving: boolean
   onSave: (payload: ReturnType<typeof formStateToPayload>) => Promise<unknown>
-  weightUnit?: 'kg' | 'lb'
+  weightUnit?: WeightUnits
 }) {
   const [form, setForm] = useState(initialForm)
   const numericFields = [
@@ -55,6 +86,7 @@ function DailyLogForm({
     { key: 'protein' as const, label: 'Protein (g)' },
     { key: 'sleep' as const, label: 'Sleep (hrs)' },
   ]
+  const save = () => void onSave(dailyLogPayloadFromForm(form, weightUnit))
   return (
     <Card className="mb-4">
       <div className="px-4 pt-3 pb-2 border-b border-border flex justify-between">
@@ -74,7 +106,7 @@ function DailyLogForm({
               value={form[key]}
               onFocus={selectOnFocus}
               onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-              onBlur={() => void onSave(formStateToPayload(form))}
+              onBlur={save}
               className="mt-1 w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-center font-semibold text-text-primary focus:outline-hidden focus:border-primary min-h-11"
               placeholder="—"
             />
@@ -87,7 +119,7 @@ function DailyLogForm({
           <textarea
             value={form.notes}
             onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
-            onBlur={() => void onSave(formStateToPayload(form))}
+            onBlur={save}
             rows={2}
             placeholder="Journal note…"
             className="mt-1 w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-hidden focus:border-primary resize-none"
@@ -168,7 +200,7 @@ export default function Dashboard() {
   const currentWorkoutId = useWorkoutStore((s) => s.currentWorkoutId)
   const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
   const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
-  const units = useWorkoutStore((s) => s.units)
+  const units = useWeightUnits()
 
   const { log, isLoading: logLoading, isSaving, save } = useDailyLog(userId)
   const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
@@ -195,8 +227,8 @@ export default function Dashboard() {
 
   const weightValues = useMemo(() => {
     const trend = statsQuery.data?.weightTrend ?? []
-    return trend.map((t) => t.weight)
-  }, [statsQuery.data])
+    return trend.map((t) => roundDisplayWeight(kgToDisplay(t.weight, units), units))
+  }, [statsQuery.data, units])
 
   const queriesLoading =
     lastWorkoutQuery.isLoading || recentTypesQuery.isLoading || statsQuery.isLoading
@@ -281,7 +313,7 @@ export default function Dashboard() {
               onClick={() => document.getElementById('dash-weight')?.focus()}
             >
               <p className="text-3xl font-black text-text-primary">
-                {log?.weight != null ? `${log.weight}` : '—'}
+                {log?.weight != null ? displayWeightString(log.weight, units) : '—'}
                 <span className="text-sm font-medium text-text-muted ml-1">{units}</span>
               </p>
               <p className="text-xs text-primary mt-1">Tap log below to update</p>
@@ -325,8 +357,8 @@ export default function Dashboard() {
       ) : (
         <div id="dash-weight">
           <DailyLogForm
-            key={log?.id ?? 'new-log'}
-            initialForm={log ? logToFormState(log) : emptyFormState()}
+            key={`${log?.id ?? 'new-log'}-${units}`}
+            initialForm={log ? dailyLogFormFromDb(log, units) : emptyFormState()}
             isSaving={isSaving}
             weightUnit={units}
             onSave={save}
@@ -391,7 +423,7 @@ export default function Dashboard() {
               <TrendingUp size={12} />
               {pluralize(lastWorkoutQuery.data.exerciseCount, 'exercise')} ·{' '}
               {pluralize(lastWorkoutQuery.data.setCount, 'set')} ·{' '}
-              {formatVolumeKg(lastWorkoutQuery.data.totalVolumeKg)} kg
+              {formatVolume(lastWorkoutQuery.data.totalVolumeKg, units)}
             </p>
           </>
         ) : (

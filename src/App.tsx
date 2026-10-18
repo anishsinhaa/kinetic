@@ -1,21 +1,22 @@
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { MainLayout } from './layouts/MainLayout'
 import { useAuthListener, useCurrentUser } from './features/auth/useAuth'
+import { lazyWithReload } from './lib/lazyWithReload'
 
 // Code-split all pages — only the auth page is eager (tiny and always needed)
 import AuthPage from './features/auth/AuthPage'
 
-const Dashboard  = lazy(() => import('./pages/Dashboard'))
-const Workout    = lazy(() => import('./pages/Workout'))
-const History    = lazy(() => import('./pages/History'))
-const Exercises  = lazy(() => import('./pages/Exercises'))
-const Progress   = lazy(() => import('./pages/Progress'))
-const Feedback   = lazy(() => import('./pages/Feedback'))
-const Settings   = lazy(() => import('./pages/Settings'))
+const Dashboard  = lazyWithReload(() => import('./pages/Dashboard'))
+const Workout    = lazyWithReload(() => import('./pages/Workout'))
+const History    = lazyWithReload(() => import('./pages/History'))
+const Exercises  = lazyWithReload(() => import('./pages/Exercises'))
+const Progress   = lazyWithReload(() => import('./pages/Progress'))
+const Feedback   = lazyWithReload(() => import('./pages/Feedback'))
+const Settings   = lazyWithReload(() => import('./pages/Settings'))
 
 const queryClient = new QueryClient({
   defaultOptions: {

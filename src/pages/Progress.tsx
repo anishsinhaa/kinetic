@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   AreaChart,
@@ -13,7 +13,12 @@ import {
 } from 'recharts'
 import { TrendingUp, Dumbbell, Loader2, ChevronDown, Flame } from 'lucide-react'
 import { useProgressData } from '../features/progress/hooks/useProgress'
-import { formatVolumeKg } from '../features/workout/lib/volume'
+import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import {
+  formatWeight,
+  kgToDisplay,
+  roundDisplayWeight,
+} from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
 
 // ── Page-level fade-in ────────────────────────────────────────────────────────
@@ -136,6 +141,7 @@ function ExercisePicker({
 export default function Progress() {
   const [pickedId, setPickedId] = useState<string | null>(null)
   const reduceMotion = useReducedMotion()
+  const units = useWeightUnits()
 
   const {
     histories,
@@ -148,12 +154,35 @@ export default function Progress() {
     exerciseSeries,
   } = useProgressData(pickedId)
 
-  // Limit weekly volume to last 16 weeks for readability
-  const recentWeekly = weeklyVolume.slice(-16)
-  // Limit weight trend to last 90 days
-  const recentWeight = weightSeries.slice(-90)
-  // Limit chart to last 30 sessions
-  const recentSeries = exerciseSeries.slice(-30)
+  // Convert kg series → display units for charts/labels
+  const recentWeekly = useMemo(
+    () =>
+      weeklyVolume.slice(-16).map((p) => ({
+        ...p,
+        volume: units === 'kg' ? p.volume : kgToDisplay(p.volume, units),
+      })),
+    [weeklyVolume, units],
+  )
+  const recentWeight = useMemo(
+    () =>
+      weightSeries.slice(-90).map((p) => ({
+        ...p,
+        weight: roundDisplayWeight(kgToDisplay(p.weight, units), units),
+      })),
+    [weightSeries, units],
+  )
+  const recentSeries = useMemo(
+    () =>
+      exerciseSeries.slice(-30).map((p) => ({
+        ...p,
+        bestWeight:
+          p.bestWeight != null
+            ? roundDisplayWeight(kgToDisplay(p.bestWeight, units), units)
+            : p.bestWeight,
+        volume: units === 'kg' ? p.volume : kgToDisplay(p.volume, units),
+      })),
+    [exerciseSeries, units],
+  )
 
   const motionProps = reduceMotion
     ? {}
@@ -198,7 +227,7 @@ export default function Progress() {
                     <>
                       <ChartCard>
                         <p className="text-xs text-text-muted mb-3 font-semibold uppercase tracking-wide">
-                          Best set — weight (kg)
+                          Best set — weight ({units})
                         </p>
                         <ResponsiveContainer width="100%" height={160}>
                           <AreaChart data={recentSeries} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
@@ -211,7 +240,7 @@ export default function Progress() {
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                             <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(d: string) => d.slice(5)} />
                             <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={36} />
-                            <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} kg`} />} />
+                            <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} ${units}`} />} />
                             <Area
                               type="monotone"
                               dataKey="bestWeight"
@@ -227,14 +256,14 @@ export default function Progress() {
                       </ChartCard>
                       <ChartCard>
                         <p className="text-xs text-text-muted mb-3 font-semibold uppercase tracking-wide">
-                          Session volume (kg)
+                          Session volume ({units})
                         </p>
                         <ResponsiveContainer width="100%" height={140}>
                           <BarChart data={recentSeries} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                             <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(d: string) => d.slice(5)} />
                             <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={40} />
-                            <Tooltip content={<KineticTooltip valueFormatter={(v) => formatVolumeKg(v) + ' kg'} />} />
+                            <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                             <Bar
                               dataKey="volume"
                               name="Volume"
@@ -262,8 +291,8 @@ export default function Progress() {
                     <BarChart data={recentWeekly} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => formatVolumeKg(v)} />
-                      <Tooltip content={<KineticTooltip valueFormatter={(v) => formatVolumeKg(v) + ' kg'} />} />
+                      <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => String(Math.round(v))} />
+                      <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                       <Bar
                         dataKey="volume"
                         name="Volume"
@@ -288,7 +317,7 @@ export default function Progress() {
               ) : (
                 <ChartCard>
                   <p className="text-xs text-text-muted mb-3 font-semibold uppercase tracking-wide">
-                    Weight trend (kg)
+                    Weight trend ({units})
                   </p>
                   <ResponsiveContainer width="100%" height={180}>
                     <AreaChart data={recentWeight} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
@@ -301,7 +330,7 @@ export default function Progress() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                       <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(d: string) => d.slice(5)} />
                       <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={36} domain={['auto', 'auto']} />
-                      <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} kg`} />} />
+                      <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} ${units}`} />} />
                       <Area
                         type="monotone"
                         dataKey="weight"
@@ -340,7 +369,7 @@ export default function Progress() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-bold text-primary tabular-nums">
-                          {pr.weight} kg × {pr.reps}
+                          {formatWeight(pr.weight, units)} × {pr.reps}
                         </p>
                       </div>
                     </div>

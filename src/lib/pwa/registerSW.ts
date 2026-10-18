@@ -31,16 +31,35 @@ async function syncPending() {
   })
 }
 
+/**
+ * Register the PWA service worker.
+ * registerType: autoUpdate + skipWaiting/clientsClaim in sw.ts means a new
+ * deploy activates immediately; we reload once so tabs never keep a removed chunk.
+ */
 export function registerPwa() {
+  let refreshing = false
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return
+      refreshing = true
+      window.location.reload()
+    })
+  }
+
   registerSW({
     immediate: true,
     onRegisteredSW(_swUrl, registration) {
-      if (registration) {
-        // Periodic update check
-        window.setInterval(() => {
-          void registration.update()
-        }, 60 * 60 * 1000)
+      if (!registration) return
+      // Check for updates on focus + hourly
+      const check = () => {
+        void registration.update()
       }
+      window.addEventListener('focus', check)
+      window.setInterval(check, 60 * 60 * 1000)
+    },
+    onNeedRefresh() {
+      // autoUpdate already calls skipWaiting; controllerchange reloads the page
     },
   })
 

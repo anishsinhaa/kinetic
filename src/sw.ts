@@ -6,50 +6,29 @@ import {
 } from 'workbox-precaching'
 import { clientsClaim } from 'workbox-core'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
-import { NetworkOnly, StaleWhileRevalidate } from 'workbox-strategies'
-import { BackgroundSyncPlugin } from 'workbox-background-sync'
+import { StaleWhileRevalidate } from 'workbox-strategies'
 
 declare let self: ServiceWorkerGlobalScope
 
-precacheAndRoute(self.__WB_MANIFEST)
-cleanupOutdatedCaches()
+// Take over immediately so deploys don't leave tabs on a dead precache
+self.skipWaiting()
 clientsClaim()
 
-self.skipWaiting()
+precacheAndRoute(self.__WB_MANIFEST)
+cleanupOutdatedCaches()
 
-// SPA shell: all navigations serve precached index.html (online + offline deep links)
+// SPA shell: navigations serve precached index.html (online + offline deep links)
 registerRoute(
   new NavigationRoute(createHandlerBoundToURL('/index.html'), {
-    // Skip URLs that look like real files (icons, assets, etc.)
     denylist: [/\.[^/]+$/],
   }),
 )
 
-registerRoute(
-  ({ request }) =>
-    request.destination === 'style' ||
-    request.destination === 'script' ||
-    request.destination === 'worker',
-  new StaleWhileRevalidate({ cacheName: 'kinetic-assets' }),
-)
-
+// Only images use runtime cache. Hashed JS/CSS come from the precache —
+// a separate StaleWhileRevalidate layer was serving removed chunk URLs after deploy.
 registerRoute(
   ({ request }) => request.destination === 'image',
   new StaleWhileRevalidate({ cacheName: 'kinetic-images' }),
-)
-
-// Queue failed API writes for replay when back online
-const bgSync = new BackgroundSyncPlugin('kinetic-api-queue', {
-  maxRetentionTime: 24 * 60,
-})
-
-registerRoute(
-  ({ url }) =>
-    url.hostname.includes('supabase') &&
-    (url.pathname.includes('/rest/v1/sets') ||
-      url.pathname.includes('/rest/v1/daily_logs')),
-  new NetworkOnly({ plugins: [bgSync] }),
-  'POST',
 )
 
 self.addEventListener('push', (event) => {
@@ -100,5 +79,8 @@ self.addEventListener('message', (event) => {
       tag: 'rest-timer',
       renotify: true,
     })
+  }
+  if (data?.type === 'SKIP_WAITING') {
+    void self.skipWaiting()
   }
 })
