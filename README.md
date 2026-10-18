@@ -198,9 +198,19 @@ Rebuilds `dist` with production secrets and runs:
 netlify deploy --prod --dir=dist
 ```
 
-Requires GitHub secrets: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_VAPID_PUBLIC_KEY`, `VITE_ADMIN_EMAILS`, `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
-
 Turn off Netlify’s own Git auto-builds so deploys are not duplicated.
+
+GitHub secrets used by Deploy Netlify (all `VITE_*` keys the app reads):
+
+| Secret | Purpose |
+|---|---|
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key |
+| `VITE_VAPID_PUBLIC_KEY` | Web Push VAPID public key (required at build time) |
+| `VITE_ADMIN_EMAILS` | Comma-separated admin emails (library import UI) |
+| `VITE_EXERCISES_API_KEY` | API Ninjas key for exercise library import |
+| `NETLIFY_AUTH_TOKEN` | Netlify personal access token |
+| `NETLIFY_SITE_ID` | Netlify site ID |
 
 ### Deploy Supabase (push to `main`, after checks)
 - `supabase db push` only when `supabase/migrations/**` changed

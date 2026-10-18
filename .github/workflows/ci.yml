@@ -72,6 +72,7 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
           VITE_ADMIN_EMAILS: ${{ secrets.VITE_ADMIN_EMAILS }}
+          VITE_EXERCISES_API_KEY: ${{ secrets.VITE_EXERCISES_API_KEY }}
         run: npm run build
 
       - name: Deploy to Netlify (production)
