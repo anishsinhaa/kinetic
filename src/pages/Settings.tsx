@@ -860,7 +860,7 @@ function DataSection({ userId }: { userId: string }) {
       const [histories, logs] = await Promise.all([getExerciseHistory(userId), getDailyLogs(userId)])
       if (fmt === 'json') exportJson(histories, logs)
       else if (fmt === 'csv') exportCsv(histories, logs)
-      else exportExcel(histories, logs)
+      else await exportExcel(histories, logs)
     } catch (err) {
       alert(`Export failed: ${(err as Error).message}`)
     } finally {

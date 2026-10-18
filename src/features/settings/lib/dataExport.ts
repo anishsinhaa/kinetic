@@ -1,10 +1,9 @@
 /**
- * Export helpers — produce JSON, CSV, or Excel (xlsx) from history data.
+ * Export helpers — produce JSON, CSV, or Excel (.xlsx) from history data.
  */
 
-import * as XLSX from 'xlsx'
-import type { ExerciseHistory } from '../../history/types'
-import type { DailyLogEntry } from '../../history/types'
+import type { ExerciseHistory, DailyLogEntry } from '../../history/types'
+import { rowsToCsv, writeWorkbookBuffer, type SheetRow } from './excelHelpers'
 
 // ─── JSON export ─────────────────────────────────────────────────────────────
 
@@ -22,8 +21,7 @@ export function exportJson(histories: ExerciseHistory[], logs: DailyLogEntry[]):
 // ─── CSV export ──────────────────────────────────────────────────────────────
 
 export function exportCsv(histories: ExerciseHistory[], logs: DailyLogEntry[]): void {
-  // Flatten exercise history into rows
-  const rows: Record<string, string | number | null>[] = []
+  const rows: SheetRow[] = []
 
   for (const ex of histories) {
     for (const session of ex.sessions) {
@@ -60,22 +58,20 @@ export function exportCsv(histories: ExerciseHistory[], logs: DailyLogEntry[]): 
   }
 
   if (rows.length === 0) {
-    rows.push({ type: 'no_data', date: today() } as Record<string, string>)
+    rows.push({ type: 'no_data', date: today() })
   }
 
-  const ws = XLSX.utils.json_to_sheet(rows)
-  const csv = XLSX.utils.sheet_to_csv(ws)
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const blob = new Blob([rowsToCsv(rows)], { type: 'text/csv;charset=utf-8;' })
   triggerDownload(blob, `kinetic-export-${today()}.csv`)
 }
 
 // ─── Excel export ─────────────────────────────────────────────────────────────
 
-export function exportExcel(histories: ExerciseHistory[], logs: DailyLogEntry[]): void {
-  const wb = XLSX.utils.book_new()
-
-  // Sheet 1: Exercise sets
-  const setRows: Record<string, string | number | null>[] = []
+export async function exportExcel(
+  histories: ExerciseHistory[],
+  logs: DailyLogEntry[],
+): Promise<void> {
+  const setRows: SheetRow[] = []
   for (const ex of histories) {
     for (const session of ex.sessions) {
       for (const set of session.sets) {
@@ -92,12 +88,8 @@ export function exportExcel(histories: ExerciseHistory[], logs: DailyLogEntry[])
       }
     }
   }
-  if (setRows.length > 0) {
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(setRows), 'Workouts')
-  }
 
-  // Sheet 2: Daily logs
-  const logRows = logs.map((l) => ({
+  const logRows: SheetRow[] = logs.map((l) => ({
     Date: l.date,
     'Weight (kg)': l.weight,
     Calories: l.calories,
@@ -107,11 +99,19 @@ export function exportExcel(histories: ExerciseHistory[], logs: DailyLogEntry[])
     'Workout Type': l.workoutType,
     'Workout Duration (min)': l.workoutDurationMins,
   }))
-  if (logRows.length > 0) {
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(logRows), 'Daily Logs')
+
+  const sheets: Array<{ name: string; rows: SheetRow[] }> = []
+  if (setRows.length > 0) sheets.push({ name: 'Workouts', rows: setRows })
+  if (logRows.length > 0) sheets.push({ name: 'Daily Logs', rows: logRows })
+  if (sheets.length === 0) {
+    sheets.push({ name: 'Export', rows: [{ note: 'No data to export', date: today() }] })
   }
 
-  XLSX.writeFile(wb, `kinetic-export-${today()}.xlsx`)
+  const ab = await writeWorkbookBuffer(sheets)
+  const blob = new Blob([ab], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  triggerDownload(blob, `kinetic-export-${today()}.xlsx`)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

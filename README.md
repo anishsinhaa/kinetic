@@ -1,242 +1,168 @@
 # KINETIC — Track. Recover. Progress.
 
+[![CI/CD](https://github.com/anishsinhaa/kinetic/actions/workflows/ci.yml/badge.svg)](https://github.com/anishsinhaa/kinetic/actions/workflows/ci.yml)
+
 ![KINETIC Logo](./src/assets/full_logo.png)
 
-KINETIC is a personal fitness tracking web app built for athletes and gym-goers who want a clean, fast, and data-driven way to log their training, monitor recovery, and track long-term progress — without the bloat of mainstream fitness apps.
+**Live:** [https://kinetic-tracker.netlify.app](https://kinetic-tracker.netlify.app)
 
-No social feeds. No ads. No fluff. Just your data.
-
----
-
-## Overview
-
-Most fitness apps are either too simple (just a timer) or too overwhelming (social features, paid plans, gamification). KINETIC sits in the middle — it gives you a structured, powerful logging system that feels like upgrading from a gym notebook to a real tool.
-
-The app is designed around a daily workflow:
-1. **Log your daily metrics** — weight, calories, protein, sleep
-2. **Log your workout** — exercises, sets, reps, weight, failures
-3. **Log your recovery** — fatigue, sleep quality, soreness by muscle group
-4. **Review your history** — see trends, past workouts, and recovery patterns
+Personal fitness tracker for logging workouts, daily metrics, and recovery — built as a mobile-first PWA with offline sync and timezone-aware Web Push reminders. No social feeds, ads, or fluff.
 
 ---
 
-## Tech Stack
+## Daily workflow
+
+1. **Daily records** — morning weight, calories, protein, sleep, notes  
+2. **Workout** — start with a type chip, log sets (prefilled from last session + PR), rest timer between sets  
+3. **Recovery check-in** — fatigue, soreness by muscle, optional pain flag  
+4. **Progress / History** — charts, PRs, weekly volume, past sessions  
+
+---
+
+## Tech stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19 + TypeScript |
-| Build Tool | Vite |
-| Styling | Tailwind CSS v4 (custom theme) |
-| State Management | Zustand (with localStorage persistence) |
-| Data Fetching | TanStack Query (React Query v5) |
-| Backend / Database | Supabase (PostgreSQL + Auth + RLS) |
-| Authentication | Supabase Auth (Google OAuth + email) |
+| Frontend | React 19 + TypeScript + Vite |
+| Styling | Tailwind CSS v4 |
+| Client state | Zustand (workout session + auth mirror; localStorage persistence) |
+| Server state | TanStack Query v5 |
+| Backend | Supabase (PostgreSQL, Auth, RLS, Edge Functions, pg_cron) |
 | Charts | Recharts |
-| Excel I/O | SheetJS (xlsx) |
-| Animations | Framer Motion |
-| Push Notifications | Web Push API + Supabase Edge Functions |
-| Exercise Library | API Ninjas Exercises API (one-time bulk import) |
-| Deployment | Netlify + Supabase via GitHub Actions CI/CD |
+| Excel I/O | ExcelJS |
+| Motion | Framer Motion (`prefers-reduced-motion` respected) |
+| PWA | vite-plugin-pwa + custom service worker |
+| Push | Web Push API + `send-reminders` Edge Function |
+| CI/CD | GitHub Actions → Netlify CLI + Supabase CLI |
 
 ### Architecture
 
-KINETIC follows a strict **service layer architecture** — Supabase is never called directly inside React components. All database logic lives in service files under `src/features/*/services/`. This keeps the UI clean and makes it straightforward to swap the backend in the future.
+Supabase is never called from React components. UI → hooks → **service layer** (`src/features/*/services/`) → Supabase client.
 
 ```
 src/
 ├── features/
-│   ├── auth/          # Supabase Auth (login, session)
-│   ├── dailyLog/      # Daily metrics (weight, sleep, calories)
-│   ├── workout/       # Workout sessions, exercises, sets
-│   ├── exercises/     # Exercise library (API + custom)
-│   ├── feedback/      # Body feedback and muscle soreness
-│   ├── history/       # Historical data queries
-│   ├── progress/      # Progress aggregators, charts, PRs
-│   └── settings/      # User preferences, push notifications, data I/O
-├── pages/             # Code-split route-level page components
-├── layouts/           # Main app layout (sidebar + topbar + route transitions)
-├── components/ui/     # Reusable UI primitives
+│   ├── auth/          # Session, login, admin email allow-list for library import
+│   ├── dailyLog/      # Daily metrics upsert
+│   ├── workout/       # Sessions, sets, rest timer, PR detection, volume
+│   ├── exercises/     # Library import (API Ninjas) + custom exercises
+│   ├── feedback/      # Recovery / body feedback
+│   ├── history/       # Daily logs, exercise history queries
+│   ├── progress/      # Aggregators for charts + PR list
+│   └── settings/      # Preferences, Web Push, import/export
+├── pages/             # Lazy-loaded routes
+├── layouts/           # Sidebar / bottom nav + route transitions
 ├── lib/
-│   ├── supabase/      # Supabase client + types
-│   └── offline/       # Offline mutation queue (localStorage)
-└── store/             # Zustand global store
+│   ├── supabase/      # Client + row types
+│   └── offline/       # localStorage mutation queue + flush
+└── store/             # Zustand app store
 ```
 
-### Database Schema
-
-- `daily_logs` — one row per user per day (weight, calories, protein, sleep, notes)
-- `workouts` — each workout session (date, type, duration)
-- `exercises` — master exercise library (name, muscle group, difficulty, type, instructions)
-- `workout_exercises` — exercises added to a specific workout (ordered)
-- `sets` — individual sets (reps, weight, to_failure flag)
-- `body_feedback` — daily recovery log (fatigue, sleep quality, pain flag)
-- `muscle_soreness` — per-muscle soreness tied to a feedback entry
-
-Row Level Security (RLS) is enabled on all tables — users can only access their own data.
+RLS is enabled on user data tables — each user only sees their own rows. Schema evolves via `supabase/migrations/` (CI `db push`). Standalone scripts such as `supabase/cron_reminders.sql` and `supabase/v2_data_model.sql` are applied manually when needed.
 
 ---
 
 ## Features
 
-### Dashboard
-- Live date and time display
-- **Daily Log** — inline editable fields for weight, calories, protein, sleep, and notes; auto-saves on blur
-- **Last Workout** card — shows the most recent completed workout: type, duration, exercises, sets, and total volume
-- **Start Workout** button — begins a new session
-- **Repeat Last Workout** button — pre-fills the last workout's exercises and set data so you can get started immediately
-
 ### Workout
-- Start a workout and assign a workout type (Push, Pull, Legs, Full Body, or any custom label you define)
-- Add exercises from the library to your session
-- Log sets with reps, weight, and a failure toggle
-- Each set is saved to the database on blur — no manual save button
-- Duplicate race conditions prevented (no double inserts)
-- Auto-focuses the weight input when a new set is added
-- Live session timer showing start time and elapsed duration
-- Finish workout saves everything and clears the session
-- Workout state is persisted to localStorage — refresh mid-session and it recovers
+- One-tap start; **workout type chips** (Push / Pull / Legs / …, reorderable in Settings)
+- Exercises from library or custom; multi-select add
+- Sets autosave on change; **prefill from last session**; shows last performance + **PR**
+- **PR rule:** heavier weight wins; same weight + more reps wins (**no estimated 1RM**)
+- Volume from **completed sets only**
+- Rest timer (ring UI + optional local notification when done)
+- Finish flow with feel/note; session persisted in localStorage across refresh
 
-### Exercises
-- **Library tab** — browse 1,000+ exercises imported from API Ninjas, searchable by name with muscle group filter chips; shows difficulty, type, and full instructions
-- **Custom tab** — create your own exercises with name, muscle group, and equipment; auto-focuses the name input for fast entry
-- Select one or multiple exercises to add to your active workout
-
-### History
-- **Daily Logs tab** — table of all daily log entries, sorted latest first; includes workout type and duration for each day so you can see training vs rest days at a glance
-- **Exercise History tab** — per-exercise history showing all logged sets across sessions
-- **Recovery tab** — all body feedback entries with fatigue, sleep quality, and muscle soreness by date
+### Daily records & recovery
+- Inline daily log on Dashboard (weight, calories, protein, sleep, notes)
+- Recovery check-in: fatigue, per-muscle soreness, pain flag — nothing counts until submitted
+- History tabs for daily logs, per-exercise sessions, and recovery
 
 ### Progress
-- **Per-exercise charts** — select any exercise to see a time series of best set weight and session volume (Recharts area/bar charts)
-- **Weekly Volume** — total kg lifted per ISO week across all exercises
-- **Body Weight trend** — area chart of logged morning weights over time
-- **All-Time PRs** — flat list of every exercise's personal record, sorted by weight, with the date achieved
-- PR rules: heavier weight wins; same weight + more reps wins
-
-### Data Import / Export (Settings → Data)
-- **Export** — download all workout history and daily logs as JSON, CSV, or Excel (.xlsx)
-- **Import** — upload Excel/CSV with a Daily Log sheet (date, weight, calories, protein, sleep, notes) and/or an Exercises Log sheet (exercise, group, best set / weight×reps, updated date); preview before apply; re-import skips duplicate history sets
-
-### Feedback (Recovery)
-- Log daily body feedback: fatigue level (1–10), sleep quality (1–10), pain flag
-- Select sore muscle groups with severity level
-- Upserts correctly — logging feedback twice on the same day updates the existing entry, no duplicates
-- Soreness entries replace old ones for the same day
+- Per-exercise best-set weight + session volume charts
+- Weekly volume (ISO weeks), body-weight trend, all-time PR list
 
 ### Settings
-- **Account** — shows logged-in email, logout button
-- **Exercise Library** — shows library size, last import date, API key status; Import or Refresh the exercise library with a progress bar
-- **About** — app version and info
+- Workout types, rest timer default, weight step, kg/lb
+- Reminders: morning weight, night recovery, optional workout days — **wall-clock times in `user_settings.timezone`** (browser TZ persisted when missing/UTC)
+- Web Push: enable → subscribe + upsert `push_subscriptions`; test notification via Edge Function
+- **Data:** export JSON / CSV / Excel; import Excel/CSV with preview (Daily Log + Exercises Log → history best sets); idempotent re-import; summary of imported/skipped
+
+### PWA & offline
+- Installable on Android; service worker precache + SPA navigation fix for deep routes
+- Offline queue for set upserts and daily logs (dedupe by set id / user+date); flushes when online
+
+### Notifications
+- Scheduled reminders: Edge Function `send-reminders` + **pg_cron** (Bearer `CRON_SECRET`)
+- Deployed with `--no-verify-jwt` so cron can call it; browser test path verifies the user JWT inside the function
+- Matches reminder times in each user’s timezone
 
 ---
 
-## Getting Started (Local Dev)
+## Getting started
 
-### Prerequisites
-- Node.js 18+
-- A [Supabase](https://supabase.com) project
-- An [API Ninjas](https://api-ninjas.com) account (free tier is fine for the one-time import)
-
-### Setup
+**Prerequisites:** Node.js 20+, a Supabase project, optional [API Ninjas](https://api-ninjas.com) key for library import.
 
 ```bash
 git clone https://github.com/anishsinhaa/kinetic.git
 cd kinetic
 npm install
-```
-
-Copy the example env file and fill in your values:
-
-```bash
 cp .env.example .env
-```
-
-```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-VITE_EXERCISES_API_KEY=your_api_ninjas_key
-VITE_ADMIN_EMAILS=you@example.com
-# Required for Web Push notifications — generate with web-push generate-vapid-keys
-VITE_VAPID_PUBLIC_KEY=your_vapid_public_key
-```
-
-> **Note:** A production build will fail if `VITE_VAPID_PUBLIC_KEY` is missing. Set Vite keys as GitHub Actions secrets (used by the deploy job). Set `VAPID_PRIVATE_KEY` and `CRON_SECRET` as Supabase Edge Function secrets (not in the frontend).
-
-Run the SQL schema in your Supabase SQL Editor:
-
-```
-supabase/schema.sql
-supabase/auth_rls_migration.sql
-supabase/add_exercise_library.sql
-```
-
-Then start the dev server:
-
-```bash
 npm run dev
 ```
+
+### Local env vars (names only)
+
+| Variable | Used for |
+|---|---|
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon key |
+| `VITE_VAPID_PUBLIC_KEY` | Web Push (required for production build) |
+| `VITE_ADMIN_EMAILS` | Comma-separated emails that can import the exercise library |
+| `VITE_EXERCISES_API_KEY` | API Ninjas key for library import |
+
+Edge Function secrets (Supabase dashboard, not Vite): `VAPID_PRIVATE_KEY`, `CRON_SECRET`, plus standard Supabase function env.
 
 ---
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/ci.yml`) is the only deploy path. **Never commit secrets** — use GitHub Actions secrets and Supabase/Netlify dashboards.
+Workflow: [`.github/workflows/ci.yml`](./.github/workflows/ci.yml). **Netlify Git auto-builds are off** — production publishes only from Actions via `netlify deploy --prod`.
 
-### Check job (every PR + every push to `main`)
-1. `npm run lint`
-2. `npm run typecheck`
-3. `npm test`
-4. `npm run build` (uses dummy Vite env in CI — validates the build, not production config)
-5. `npm audit --audit-level=high` (non-blocking)
+| Job | When | What |
+|---|---|---|
+| **Lint, Test & Build** | Every PR + push to `main` | `lint` → `typecheck` → `test` → `build` (dummy Vite env) → `npm audit --audit-level=high` |
+| **Deploy Netlify** | Push to `main` after checks | Rebuild with production `VITE_*` secrets → `netlify deploy --prod --dir=dist` |
+| **Deploy Supabase** | Push to `main` after checks | `supabase db push` if `supabase/migrations/**` changed; `supabase functions deploy send-reminders --no-verify-jwt` if `supabase/functions/**` changed |
 
-Pull requests stop here (checks only).
+### GitHub Actions secrets (names only)
 
-### Deploy Netlify (push to `main`, after checks)
-Rebuilds `dist` with production secrets and runs:
+**Netlify deploy:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_VAPID_PUBLIC_KEY`, `VITE_ADMIN_EMAILS`, `VITE_EXERCISES_API_KEY`, `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`
 
-```bash
-netlify deploy --prod --dir=dist
-```
+**Supabase deploy:** `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`
 
-Turn off Netlify’s own Git auto-builds so deploys are not duplicated.
-
-GitHub secrets used by Deploy Netlify (all `VITE_*` keys the app reads):
-
-| Secret | Purpose |
-|---|---|
-| `VITE_SUPABASE_URL` | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key |
-| `VITE_VAPID_PUBLIC_KEY` | Web Push VAPID public key (required at build time) |
-| `VITE_ADMIN_EMAILS` | Comma-separated admin emails (library import UI) |
-| `VITE_EXERCISES_API_KEY` | API Ninjas key for exercise library import |
-| `NETLIFY_AUTH_TOKEN` | Netlify personal access token |
-| `NETLIFY_SITE_ID` | Netlify site ID |
-
-### Deploy Supabase (push to `main`, after checks)
-- `supabase db push` only when `supabase/migrations/**` changed
-- `supabase functions deploy send-reminders --no-verify-jwt` only when `supabase/functions/**` changed
-
-Requires GitHub secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`. Project ref: `nubzkvbwmcxtnfrgvxei`.
-
-Standalone SQL outside migrations (`supabase/cron_reminders.sql`, `supabase/v2_data_model.sql`, etc.) is **not** applied by CI — run those manually when needed.
-
-SPA redirects and publish dir remain in `netlify.toml` for local/Netlify CLI use.
+Project ref used by CI: `nubzkvbwmcxtnfrgvxei`.
 
 ---
 
-## Roadmap
+## Scripts
 
-### Mobile App
-A native mobile app for KINETIC is planned. The goal is full feature parity with the web app — log workouts, track recovery, and review history from your phone. The same Supabase backend will power both platforms, so your data syncs seamlessly between web and mobile.
+```bash
+npm run dev
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run preview
+```
 
 ---
 
 ## Design
 
-- **Color:** Neon green `#CCFF00` on near-black `#0B0B0B`
-- **Font:** Inter (300–900 weights)
-- **Theme:** Dark-only, high contrast, minimal chrome
-- **Philosophy:** Fast inputs, no modals, inline editing everywhere
+- Neon green `#CCFF00` on near-black `#0B0B0B`
+- Large touch targets (≥44px), minimal typing, inline editing
+- Bottom nav on mobile; sidebar on desktop
 
 ---
 

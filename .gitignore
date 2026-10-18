@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Private notes / interview prep — never commit
+private/
+
 # Logs
 logs
 *.log
@@ -15,6 +18,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.vitest
 *.local
 *.tsbuildinfo
 

@@ -15,7 +15,7 @@ env:
 jobs:
   check:
     name: Lint, Test & Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -42,16 +42,17 @@ jobs:
       - name: Production build (gate)
         run: npm run build
 
+      # High+ only: exceljs pulls a moderate uuid advisory with no clean fix.
+      # Exit 0 when there are no high/critical findings (no red X on the job).
       - name: Security audit (high+)
         run: npm audit --audit-level=high
-        continue-on-error: true
 
   # ── Netlify production deploy (main only, after checks) ─────────────────────
   deploy-netlify:
     name: Deploy Netlify
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -86,7 +87,7 @@ jobs:
     name: Deploy Supabase
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

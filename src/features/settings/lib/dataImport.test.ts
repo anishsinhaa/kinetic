@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import * as XLSX from 'xlsx'
 import {
   parseBestSet,
   parseDateCol,
@@ -9,13 +8,7 @@ import {
   formatImportSummary,
   type ImportSummary,
 } from './dataImport'
-
-function workbookToBytes(wb: XLSX.WorkBook): Uint8Array {
-  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer | Uint8Array | number[]
-  if (out instanceof ArrayBuffer) return new Uint8Array(out)
-  if (out instanceof Uint8Array) return out
-  return Uint8Array.from(out)
-}
+import { writeWorkbookBuffer } from './excelHelpers'
 
 describe('parseBestSet', () => {
   it('parses weight x reps variants', () => {
@@ -57,44 +50,43 @@ describe('parseTarget / mapMuscleGroup', () => {
 })
 
 describe('parseImportWorkbook', () => {
-  it('parses Daily Log and Exercises Log sheets together', () => {
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet([
-        { Date: '2026-10-17', Weight: 78.5, Calories: 2400, Protein: 180, Sleep: 7.5, Notes: 'good' },
-        { Date: '2026-10-18', Weight: 78.0, Calories: null, Protein: null, Sleep: null, Notes: null },
-      ]),
-      'Daily Log',
-    )
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet([
-        {
-          Exercise: 'Barbell Bench Press',
-          Group: 'PUSH',
-          'Best Set': '102.5x5',
-          'Next Session': 'Increase weight',
-          Notes: 'pause reps',
-          Updated: '2026-10-18',
-        },
-        {
-          Exercise: 'Barbell Deadlift',
-          Group: 'PULL',
-          Weight: 100,
-          Reps: 5,
-          Updated: '2026-10-17',
-        },
-        {
-          Exercise: 'Missing set',
-          Group: 'LEGS',
-          Updated: '2026-10-17',
-        },
-      ]),
-      'Exercises Log',
-    )
+  it('parses Daily Log and Exercises Log sheets together', async () => {
+    const ab = await writeWorkbookBuffer([
+      {
+        name: 'Daily Log',
+        rows: [
+          { Date: '2026-10-17', Weight: 78.5, Calories: 2400, Protein: 180, Sleep: 7.5, Notes: 'good' },
+          { Date: '2026-10-18', Weight: 78.0, Calories: null, Protein: null, Sleep: null, Notes: null },
+        ],
+      },
+      {
+        name: 'Exercises Log',
+        rows: [
+          {
+            Exercise: 'Barbell Bench Press',
+            Group: 'PUSH',
+            'Best Set': '102.5x5',
+            'Next Session': 'Increase weight',
+            Notes: 'pause reps',
+            Updated: '2026-10-18',
+          },
+          {
+            Exercise: 'Barbell Deadlift',
+            Group: 'PULL',
+            Weight: 100,
+            Reps: 5,
+            Updated: '2026-10-17',
+          },
+          {
+            Exercise: 'Missing set',
+            Group: 'LEGS',
+            Updated: '2026-10-17',
+          },
+        ],
+      },
+    ])
 
-    const preview = parseImportWorkbook(workbookToBytes(wb), 'gym.xlsx')
+    const preview = await parseImportWorkbook(ab, 'gym.xlsx')
     expect(preview.dailyLogs).toHaveLength(2)
     expect(preview.dailyLogs[0]).toMatchObject({ date: '2026-10-17', weight: 78.5, calories: 2400 })
     expect(preview.exerciseLogs).toHaveLength(2)
@@ -115,14 +107,10 @@ describe('parseImportWorkbook', () => {
     expect(preview.warnings.some((w) => /Missing set/.test(w))).toBe(true)
   })
 
-  it('parses a single CSV-style daily sheet', () => {
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet([{ date: '2026-01-01', weight: 80, calories: 2000 }]),
-      'Sheet1',
-    )
-    const preview = parseImportWorkbook(workbookToBytes(wb), 'logs.csv')
+  it('parses a single CSV-style daily sheet', async () => {
+    const csv = 'date,weight,calories\n2026-01-01,80,2000\n'
+    const bytes = new TextEncoder().encode(csv)
+    const preview = await parseImportWorkbook(bytes, 'logs.csv')
     expect(preview.dailyLogs).toHaveLength(1)
     expect(preview.exerciseLogs).toHaveLength(0)
   })

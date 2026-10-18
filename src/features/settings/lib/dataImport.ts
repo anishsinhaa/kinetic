@@ -3,8 +3,8 @@
  * Exercises Log sheets → exercises + best-set history entries.
  */
 
-import * as XLSX from 'xlsx'
 import { upsertDailyLog } from '../../dailyLog/services/dailyLogService'
+import { readCsvText, readWorkbookSheets } from './excelHelpers'
 import { findOrCreateExerciseByName } from '../../workout/services/exerciseService'
 import {
   addExerciseToWorkout,
@@ -61,34 +61,27 @@ export async function parseImportFile(file: File): Promise<ImportPreview> {
 }
 
 /**
- * Pure workbook parser — used by tests and parseImportFile.
- * Accepts ArrayBuffer / Uint8Array from .xlsx/.xls/.csv.
+ * Workbook / CSV parser — used by tests and parseImportFile.
+ * Accepts ArrayBuffer / Uint8Array from .xlsx or .csv.
  */
-export function parseImportWorkbook(
+export async function parseImportWorkbook(
   data: ArrayBuffer | Uint8Array,
   filename = 'import.xlsx',
-): ImportPreview {
+): Promise<ImportPreview> {
   const warnings: string[] = []
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
-  const wb = XLSX.read(bytes, { type: 'array', cellDates: true })
+  const isCsv = /\.csv$/i.test(filename)
+  const sheets = isCsv
+    ? readCsvText(new TextDecoder('utf-8').decode(data instanceof Uint8Array ? data : new Uint8Array(data)))
+    : await readWorkbookSheets(data)
 
-  if (!wb.SheetNames.length) {
+  if (!sheets.length) {
     throw new Error('No sheets found in file.')
   }
 
   const dailyLogs: ImportedDailyLogRow[] = []
   const exerciseLogs: ImportedExerciseLogRow[] = []
 
-  const isCsv = /\.csv$/i.test(filename)
-
-  for (const sheetName of wb.SheetNames) {
-    const sheet = wb.Sheets[sheetName]
-    if (!sheet) continue
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-      defval: null,
-      raw: true,
-      dateNF: 'yyyy-mm-dd',
-    })
+  for (const { name: sheetName, rows: raw } of sheets) {
     if (raw.length === 0) continue
 
     const kind = classifySheet(sheetName, raw[0]!, isCsv)
@@ -96,8 +89,7 @@ export function parseImportWorkbook(
       parseDailySheet(raw, sheetName, dailyLogs, warnings)
     } else if (kind === 'exercise') {
       parseExerciseSheet(raw, sheetName, exerciseLogs, warnings)
-    } else if (isCsv || wb.SheetNames.length === 1) {
-      // Single unknown sheet — try daily first, then exercise
+    } else if (isCsv || sheets.length === 1) {
       const beforeDaily = dailyLogs.length
       parseDailySheet(raw, sheetName, dailyLogs, warnings)
       if (dailyLogs.length === beforeDaily) {
@@ -468,13 +460,11 @@ export function parseDateCol(val: unknown): string | null {
   const s = String(val).trim()
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
 
-  // Excel serial (when raw:false may already be a date string)
+  // Excel serial (1900 date system; day 0 = 1899-12-30)
   const n = Number(val)
   if (!isNaN(n) && n > 10000 && n < 100000) {
-    const d = XLSX.SSF.parse_date_code(n)
-    if (d) {
-      return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`
-    }
+    const ms = Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000
+    return new Date(ms).toISOString().slice(0, 10)
   }
 
   const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
@@ -483,7 +473,6 @@ export function parseDateCol(val: unknown): string | null {
     return `${y}-${m!.padStart(2, '0')}-${d!.padStart(2, '0')}`
   }
 
-  // "Oct 17, 2026" etc.
   const parsed = Date.parse(s)
   if (!isNaN(parsed)) {
     return new Date(parsed).toISOString().slice(0, 10)
