@@ -1,8 +1,12 @@
 /// <reference lib="webworker" />
-import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
+import {
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  precacheAndRoute,
+} from 'workbox-precaching'
 import { clientsClaim } from 'workbox-core'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
-import { NetworkFirst, NetworkOnly, StaleWhileRevalidate } from 'workbox-strategies'
+import { NetworkOnly, StaleWhileRevalidate } from 'workbox-strategies'
 import { BackgroundSyncPlugin } from 'workbox-background-sync'
 
 declare let self: ServiceWorkerGlobalScope
@@ -13,14 +17,12 @@ clientsClaim()
 
 self.skipWaiting()
 
+// SPA shell: all navigations serve precached index.html (online + offline deep links)
 registerRoute(
-  ({ request }) => request.mode === 'navigate',
-  new NavigationRoute(
-    new NetworkFirst({
-      cacheName: 'kinetic-pages',
-      networkTimeoutSeconds: 3,
-    }),
-  ),
+  new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+    // Skip URLs that look like real files (icons, assets, etc.)
+    denylist: [/\.[^/]+$/],
+  }),
 )
 
 registerRoute(
