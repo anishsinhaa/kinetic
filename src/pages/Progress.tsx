@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   AreaChart,
@@ -134,7 +134,7 @@ function ExercisePicker({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Progress() {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [pickedId, setPickedId] = useState<string | null>(null)
   const reduceMotion = useReducedMotion()
 
   const {
@@ -143,16 +143,10 @@ export default function Progress() {
     weightSeries,
     weeklyVolume,
     prList,
+    selectedExerciseId,
     selectedHistory,
     exerciseSeries,
-  } = useProgressData(selectedId)
-
-  // Auto-select first exercise if none chosen
-  useMemo(() => {
-    if (!selectedId && histories.length > 0) {
-      setSelectedId(histories[0].exerciseId)
-    }
-  }, [histories, selectedId])
+  } = useProgressData(pickedId)
 
   // Limit weekly volume to last 16 weeks for readability
   const recentWeekly = weeklyVolume.slice(-16)
@@ -194,8 +188,8 @@ export default function Progress() {
                 <div className="space-y-4">
                   <ExercisePicker
                     exercises={histories}
-                    selectedId={selectedId}
-                    onSelect={setSelectedId}
+                    selectedId={selectedExerciseId}
+                    onSelect={setPickedId}
                   />
                   {selectedHistory && recentSeries.length === 0 && (
                     <EmptyState msg="No completed sets recorded for this exercise yet." />

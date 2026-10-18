@@ -115,7 +115,7 @@ Row Level Security (RLS) is enabled on all tables — users can only access thei
 
 ### Data Import / Export (Settings → Data)
 - **Export** — download all workout history and daily logs as JSON, CSV, or Excel (.xlsx)
-- **Import** — upload an Excel or CSV file with daily log data (columns: date, weight, calories, protein, sleep, notes); shows a preview with row count before applying
+- **Import** — upload Excel/CSV with a Daily Log sheet (date, weight, calories, protein, sleep, notes) and/or an Exercises Log sheet (exercise, group, best set / weight×reps, updated date); preview before apply; re-import skips duplicate history sets
 
 ### Feedback (Recovery)
 - Log daily body feedback: fatigue level (1–10), sleep quality (1–10), pain flag

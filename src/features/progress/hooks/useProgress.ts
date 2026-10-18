@@ -8,6 +8,9 @@ import {
   allTimePrList,
 } from '../lib/progressAggregators'
 
+/**
+ * @param selectedExerciseId — user pick, or null to default to the first exercise
+ */
 export function useProgressData(selectedExerciseId: string | null) {
   const { data: histories = [], isLoading: histLoading } = useExerciseHistory()
   const { data: dailyLogs = [], isLoading: logsLoading } = useDailyLogs()
@@ -16,9 +19,11 @@ export function useProgressData(selectedExerciseId: string | null) {
   const weeklyVolume = useMemo(() => weeklyVolumeSeries(histories), [histories])
   const prList = useMemo(() => allTimePrList(histories), [histories])
 
+  const resolvedId = selectedExerciseId ?? histories[0]?.exerciseId ?? null
+
   const selectedHistory = useMemo(
-    () => histories.find((h) => h.exerciseId === selectedExerciseId) ?? null,
-    [histories, selectedExerciseId],
+    () => histories.find((h) => h.exerciseId === resolvedId) ?? null,
+    [histories, resolvedId],
   )
   const exerciseSeries = useMemo(
     () => (selectedHistory ? exerciseTimeSeries(selectedHistory.sessions) : []),
@@ -35,6 +40,7 @@ export function useProgressData(selectedExerciseId: string | null) {
     weightSeries,
     weeklyVolume,
     prList,
+    selectedExerciseId: resolvedId,
     selectedHistory,
     exerciseSeries,
     prTimeline,

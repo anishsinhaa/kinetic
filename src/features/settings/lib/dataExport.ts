@@ -114,63 +114,6 @@ export function exportExcel(histories: ExerciseHistory[], logs: DailyLogEntry[])
   XLSX.writeFile(wb, `kinetic-export-${today()}.xlsx`)
 }
 
-// ─── Import ──────────────────────────────────────────────────────────────────
-
-export interface ImportedDailyLogRow {
-  date: string
-  weight?: number | null
-  calories?: number | null
-  protein?: number | null
-  sleep?: number | null
-  notes?: string | null
-}
-
-export interface ImportPreview {
-  rows: ImportedDailyLogRow[]
-  warnings: string[]
-}
-
-/**
- * Parse an uploaded Excel or CSV file and return a preview of daily log rows.
- * Expected columns (case-insensitive): date, weight, calories, protein, sleep, notes.
- * Returns up to the first 500 rows.
- */
-export async function parseImportFile(file: File): Promise<ImportPreview> {
-  const warnings: string[] = []
-
-  const ab = await file.arrayBuffer()
-  const wb = XLSX.read(ab, { type: 'array' })
-  const firstSheet = wb.Sheets[wb.SheetNames[0]]
-  if (!firstSheet) throw new Error('No sheets found in file.')
-
-  const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null })
-
-  const rows: ImportedDailyLogRow[] = []
-
-  for (const [i, r] of raw.entries()) {
-    if (rows.length >= 500) {
-      warnings.push('Only the first 500 rows were imported.')
-      break
-    }
-    const dateVal = getCol(r, 'date')
-    const dateStr = parseDateCol(dateVal)
-    if (!dateStr) {
-      warnings.push(`Row ${i + 2}: missing or invalid date "${String(dateVal)}" — skipped.`)
-      continue
-    }
-    rows.push({
-      date: dateStr,
-      weight: parseNum(getCol(r, 'weight')),
-      calories: parseNum(getCol(r, 'calories')),
-      protein: parseNum(getCol(r, 'protein')),
-      sleep: parseNum(getCol(r, 'sleep')),
-      notes: parseStr(getCol(r, 'notes')),
-    })
-  }
-
-  return { rows, warnings }
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function today() {
@@ -186,42 +129,4 @@ function triggerDownload(blob: Blob, filename: string) {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
-}
-
-function getCol(row: Record<string, unknown>, col: string): unknown {
-  const key = Object.keys(row).find((k) => k.toLowerCase() === col.toLowerCase())
-  return key ? row[key] : null
-}
-
-function parseDateCol(val: unknown): string | null {
-  if (!val) return null
-  const s = String(val).trim()
-  // ISO date: 2026-10-18
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
-  // Excel serial number
-  const n = Number(val)
-  if (!isNaN(n) && n > 10000) {
-    const d = XLSX.SSF.parse_date_code(n)
-    if (d) {
-      return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`
-    }
-  }
-  // MM/DD/YYYY or DD/MM/YYYY (assume MM/DD)
-  const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (slashMatch) {
-    const [, m, d, y] = slashMatch
-    return `${y}-${m!.padStart(2, '0')}-${d!.padStart(2, '0')}`
-  }
-  return null
-}
-
-function parseNum(val: unknown): number | null {
-  if (val === null || val === undefined || val === '') return null
-  const n = Number(val)
-  return isNaN(n) ? null : n
-}
-
-function parseStr(val: unknown): string | null {
-  if (val === null || val === undefined || val === '') return null
-  return String(val).trim() || null
 }

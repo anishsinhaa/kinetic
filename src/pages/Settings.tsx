@@ -45,10 +45,14 @@ import {
   exportJson,
   exportCsv,
   exportExcel,
+} from '../features/settings/lib/dataExport'
+import {
+  applyImport,
+  formatImportSummary,
   parseImportFile,
   type ImportPreview,
-} from '../features/settings/lib/dataExport'
-import { upsertDailyLog } from '../features/dailyLog/services/dailyLogService'
+  type ImportSummary,
+} from '../features/settings/lib/dataImport'
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -842,14 +846,13 @@ function DataSection({ userId }: { userId: string }) {
   const [importState, setImportState] = useState<
     | { status: 'idle' }
     | { status: 'preview'; preview: ImportPreview }
-    | { status: 'applying'; done: number; total: number }
-    | { status: 'done'; count: number }
+    | { status: 'applying' }
+    | { status: 'done'; summary: ImportSummary }
     | { status: 'error'; message: string }
   >({ status: 'idle' })
 
   const queryClient = useQueryClient()
 
-  // We use the history hooks but this is Settings, so we lazily fetch on demand
   const handleExport = async (fmt: 'json' | 'csv' | 'xlsx') => {
     setExporting(fmt)
     try {
@@ -868,13 +871,15 @@ function DataSection({ userId }: { userId: string }) {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    // Reset input so same file can be re-selected
     e.target.value = ''
     setImportState({ status: 'idle' })
     try {
       const preview = await parseImportFile(file)
-      if (preview.rows.length === 0) {
-        setImportState({ status: 'error', message: 'No valid rows found in file.' })
+      if (preview.dailyLogs.length === 0 && preview.exerciseLogs.length === 0) {
+        setImportState({
+          status: 'error',
+          message: preview.warnings[0] ?? 'No valid Daily Log or Exercises Log rows found.',
+        })
         return
       }
       setImportState({ status: 'preview', preview })
@@ -885,33 +890,19 @@ function DataSection({ userId }: { userId: string }) {
 
   const handleApplyImport = async () => {
     if (importState.status !== 'preview') return
-    const { rows } = importState.preview
-    setImportState({ status: 'applying', done: 0, total: rows.length })
-    let done = 0
-    const errors: string[] = []
-    for (const row of rows) {
-      try {
-        await upsertDailyLog(userId, {
-          weight: row.weight ?? null,
-          calories: row.calories ?? null,
-          protein: row.protein ?? null,
-          sleep: row.sleep ?? null,
-          notes: row.notes ?? '',
-        }, row.date)
-      } catch (err) {
-        errors.push(`${row.date}: ${(err as Error).message}`)
+    const preview = importState.preview
+    setImportState({ status: 'applying' })
+    try {
+      const summary = await applyImport(userId, preview)
+      await queryClient.invalidateQueries({ queryKey: ['history'] })
+      await queryClient.invalidateQueries({ queryKey: ['exercises'] })
+      if (summary.errors.length > 0 && summary.dailyLogsImported === 0 && summary.historySetsImported === 0) {
+        setImportState({ status: 'error', message: formatImportSummary(summary) })
+      } else {
+        setImportState({ status: 'done', summary })
       }
-      done++
-      setImportState({ status: 'applying', done, total: rows.length })
-    }
-    await queryClient.invalidateQueries({ queryKey: ['history'] })
-    if (errors.length > 0) {
-      setImportState({
-        status: 'error',
-        message: `Imported ${done - errors.length}/${rows.length} rows. Errors:\n${errors.slice(0, 5).join('\n')}`,
-      })
-    } else {
-      setImportState({ status: 'done', count: done })
+    } catch (err) {
+      setImportState({ status: 'error', message: (err as Error).message })
     }
   }
 
@@ -947,9 +938,10 @@ function DataSection({ userId }: { userId: string }) {
       <div className="px-4 md:px-5 py-3 md:py-4">
         <div className="flex items-start sm:items-center justify-between gap-3 mb-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Import daily logs</p>
+            <p className="text-sm font-medium text-text-primary">Import Excel / CSV</p>
             <p className="text-xs text-text-muted mt-0.5">
-              Upload an Excel (.xlsx) or CSV file with columns: date, weight, calories, protein, sleep, notes
+              Daily Log sheet → daily metrics. Exercises Log sheet → exercises + best sets as history.
+              Re-import is safe (duplicates skipped).
             </p>
           </div>
           <div className="shrink-0">
@@ -972,28 +964,35 @@ function DataSection({ userId }: { userId: string }) {
           </div>
         </div>
 
-        {/* Preview */}
         {importState.status === 'preview' && (
           <div className="rounded-lg border border-border bg-surface-2 p-3 mt-2">
-            {importState.preview.warnings.map((w, i) => (
+            {importState.preview.warnings.slice(0, 8).map((w, i) => (
               <p key={i} className="text-xs text-amber-400 mb-1">{w}</p>
             ))}
             <p className="text-xs text-text-muted mb-2">
-              Preview: {importState.preview.rows.length} rows to import (daily logs only)
+              Preview: {importState.preview.dailyLogs.length} daily log
+              {importState.preview.dailyLogs.length === 1 ? '' : 's'} ·{' '}
+              {importState.preview.exerciseLogs.length} exercise best set
+              {importState.preview.exerciseLogs.length === 1 ? '' : 's'}
             </p>
-            <div className="max-h-40 overflow-y-auto rounded border border-border bg-background text-xs font-mono p-2 mb-3">
-              {importState.preview.rows.slice(0, 10).map((r, i) => (
-                <div key={i} className="text-text-muted">
-                  {r.date} · wt={r.weight ?? '-'} kcal={r.calories ?? '-'} prot={r.protein ?? '-'}g
+            <div className="max-h-44 overflow-y-auto rounded border border-border bg-background text-xs font-mono p-2 mb-3 space-y-1">
+              {importState.preview.dailyLogs.slice(0, 6).map((r, i) => (
+                <div key={`d-${i}`} className="text-text-muted">
+                  [daily] {r.date} · wt={r.weight ?? '-'} kcal={r.calories ?? '-'} prot={r.protein ?? '-'}g
                 </div>
               ))}
-              {importState.preview.rows.length > 10 && (
-                <div className="text-text-muted">… and {importState.preview.rows.length - 10} more</div>
+              {importState.preview.exerciseLogs.slice(0, 8).map((r, i) => (
+                <div key={`e-${i}`} className="text-text-muted">
+                  [exercise] {r.date} · {r.exerciseName} · {r.weight}×{r.reps}
+                </div>
+              ))}
+              {(importState.preview.dailyLogs.length > 6 || importState.preview.exerciseLogs.length > 8) && (
+                <div className="text-text-muted">… more rows in file</div>
               )}
             </div>
             <div className="flex gap-2">
               <Button size="sm" variant="primary" onClick={() => void handleApplyImport()}>
-                Apply {importState.preview.rows.length} rows
+                Apply import
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setImportState({ status: 'idle' })}>
                 Cancel
@@ -1005,14 +1004,14 @@ function DataSection({ userId }: { userId: string }) {
         {importState.status === 'applying' && (
           <div className="flex items-center gap-2 text-xs text-text-muted mt-2">
             <Loader2 size={12} className="animate-spin text-primary" />
-            Importing {importState.done} / {importState.total}…
+            Importing…
           </div>
         )}
 
         {importState.status === 'done' && (
-          <p className="text-xs text-green-400 mt-2 flex items-center gap-1">
-            <CheckCircle2 size={12} />
-            Imported {importState.count} rows successfully.
+          <p className="text-xs text-green-400 mt-2 flex items-start gap-1">
+            <CheckCircle2 size={12} className="shrink-0 mt-0.5" />
+            <span>{formatImportSummary(importState.summary)}</span>
           </p>
         )}
 

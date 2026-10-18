@@ -61,6 +61,12 @@ export default defineConfig(({ mode }) => {
       environment: 'node',
       include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
       setupFiles: ['src/test/setup.ts'],
+      // Dummy Vite env so importing supabase/client never requires real secrets in CI
+      env: {
+        VITE_SUPABASE_URL: 'https://example.supabase.co',
+        VITE_SUPABASE_ANON_KEY: 'dummy',
+        VITE_VAPID_PUBLIC_KEY: 'dummy',
+      },
     },
   }
 })
