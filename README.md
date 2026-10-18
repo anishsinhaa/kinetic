@@ -36,7 +36,7 @@ The app is designed around a daily workflow:
 | Animations | Framer Motion |
 | Push Notifications | Web Push API + Supabase Edge Functions |
 | Exercise Library | API Ninjas Exercises API (one-time bulk import) |
-| Deployment | Netlify (CI/CD via GitHub) |
+| Deployment | Netlify + Supabase via GitHub Actions CI/CD |
 
 ### Architecture
 
@@ -160,7 +160,7 @@ VITE_ADMIN_EMAILS=you@example.com
 VITE_VAPID_PUBLIC_KEY=your_vapid_public_key
 ```
 
-> **Note:** A production build will fail if `VITE_VAPID_PUBLIC_KEY` is missing. Set it in your Netlify environment variables dashboard along with `VAPID_PRIVATE_KEY` in your Supabase Edge Function secrets.
+> **Note:** A production build will fail if `VITE_VAPID_PUBLIC_KEY` is missing. Set Vite keys as GitHub Actions secrets (used by the deploy job). Set `VAPID_PRIVATE_KEY` and `CRON_SECRET` as Supabase Edge Function secrets (not in the frontend).
 
 Run the SQL schema in your Supabase SQL Editor:
 
@@ -178,33 +178,43 @@ npm run dev
 
 ---
 
-## Deployment
+## CI/CD
 
-The app is deployed on **Netlify** with automatic CI/CD via GitHub. Every push to `main` triggers a new production deployment.
+GitHub Actions (`.github/workflows/ci.yml`) is the only deploy path. **Never commit secrets** — use GitHub Actions secrets and Supabase/Netlify dashboards.
 
-Build config is defined in `netlify.toml`:
-- Build command: `npm run build`
-- Publish directory: `dist`
-- SPA redirect: all routes fall back to `index.html`
+### Check job (every PR + every push to `main`)
+1. `npm run lint`
+2. `npm run typecheck`
+3. `npm test`
+4. `npm run build` (uses dummy Vite env in CI — validates the build, not production config)
+5. `npm audit --audit-level=high` (non-blocking)
 
-Environment variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_EXERCISES_API_KEY`, `VITE_ADMIN_EMAILS`) are set in the Netlify dashboard and are never committed to the repository.
+Pull requests stop here (checks only).
 
----
+### Deploy Netlify (push to `main`, after checks)
+Rebuilds `dist` with production secrets and runs:
 
-## CI
+```bash
+netlify deploy --prod --dir=dist
+```
 
-GitHub Actions runs on every push to `main` and on PRs:
-1. `npx tsc --noEmit` — type check
-2. `npx vitest run` — 58 unit tests across aggregators, sync queue, push, history, and PR detection
-3. `npm run build` — production Vite build (fails if VAPID key is missing)
-4. `npm audit --audit-level=high` — security check
+Requires GitHub secrets: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_VAPID_PUBLIC_KEY`, `VITE_ADMIN_EMAILS`, `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
+
+Turn off Netlify’s own Git auto-builds so deploys are not duplicated.
+
+### Deploy Supabase (push to `main`, after checks)
+- `supabase db push` only when `supabase/migrations/**` changed
+- `supabase functions deploy send-reminders --no-verify-jwt` only when `supabase/functions/**` changed
+
+Requires GitHub secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`. Project ref: `nubzkvbwmcxtnfrgvxei`.
+
+Standalone SQL outside migrations (`supabase/cron_reminders.sql`, `supabase/v2_data_model.sql`, etc.) is **not** applied by CI — run those manually when needed.
+
+SPA redirects and publish dir remain in `netlify.toml` for local/Netlify CLI use.
 
 ---
 
 ## Roadmap
-
-### Mobile App
-A native mobile app for KINETIC is planned. The goal is full feature parity with the web app — log workouts, track recovery, and review history from your phone. The same Supabase backend will power both platforms, so your data syncs seamlessly between web and mobile.
 
 ### Mobile App
 A native mobile app for KINETIC is planned. The goal is full feature parity with the web app — log workouts, track recovery, and review history from your phone. The same Supabase backend will power both platforms, so your data syncs seamlessly between web and mobile.

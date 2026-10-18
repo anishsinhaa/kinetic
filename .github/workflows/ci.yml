@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -6,13 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# Dummy Vite env for the check job only — never used for production deploy
 env:
   VITE_SUPABASE_URL: https://example.supabase.co
   VITE_SUPABASE_ANON_KEY: dummy
   VITE_VAPID_PUBLIC_KEY: dummy
 
 jobs:
-  test-and-build:
+  check:
     name: Lint, Test & Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -38,9 +39,102 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Production build
+      - name: Production build (gate)
         run: npm run build
 
       - name: Security audit (high+)
         run: npm audit --audit-level=high
         continue-on-error: true
+
+  # ── Netlify production deploy (main only, after checks) ─────────────────────
+  deploy-netlify:
+    name: Deploy Netlify
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with production env
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+          VITE_ADMIN_EMAILS: ${{ secrets.VITE_ADMIN_EMAILS }}
+        run: npm run build
+
+      - name: Deploy to Netlify (production)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: npx netlify-cli deploy --prod --dir=dist --message "github:${{ github.sha }}"
+
+  # ── Supabase migrations + Edge Functions (main only, after checks) ──────────
+  deploy-supabase:
+    name: Deploy Supabase
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: nubzkvbwmcxtnfrgvxei
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect Supabase path changes
+        id: changes
+        shell: bash
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            DIFF=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          else
+            DIFF=$(git diff --name-only "$BEFORE" "${{ github.sha }}" || true)
+          fi
+          MIG=false
+          FUN=false
+          echo "$DIFF" | grep -q '^supabase/migrations/' && MIG=true
+          echo "$DIFF" | grep -q '^supabase/functions/' && FUN=true
+          echo "migrations=$MIG" >> "$GITHUB_OUTPUT"
+          echo "functions=$FUN" >> "$GITHUB_OUTPUT"
+          echo "Changed migrations=$MIG functions=$FUN"
+          echo "Diff paths:"
+          echo "$DIFF" | head -50
+
+      - name: Nothing to deploy
+        if: steps.changes.outputs.migrations != 'true' && steps.changes.outputs.functions != 'true'
+        run: echo "No changes under supabase/migrations or supabase/functions — skipping."
+
+      - uses: supabase/setup-cli@v3
+        if: steps.changes.outputs.migrations == 'true' || steps.changes.outputs.functions == 'true'
+        with:
+          version: latest
+
+      - name: Link Supabase project
+        if: steps.changes.outputs.migrations == 'true' || steps.changes.outputs.functions == 'true'
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Push database migrations
+        if: steps.changes.outputs.migrations == 'true'
+        run: supabase db push
+
+      - name: Deploy send-reminders function
+        if: steps.changes.outputs.functions == 'true'
+        # --no-verify-jwt: pg_cron authenticates with CRON_SECRET; test mode verifies JWT in-function
+        run: supabase functions deploy send-reminders --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
