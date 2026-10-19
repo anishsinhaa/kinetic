@@ -566,7 +566,7 @@ function PreferencesSection({ userId }: { userId: string }) {
       <Section title="Reminders">
         <Row
           label="Timezone"
-          value="Reminder times use your local timezone"
+          value="Local timezone · may arrive up to 5 minutes after the set time"
           action={
             <span className="text-xs font-medium text-text-primary tabular-nums">
               {local.timezone}

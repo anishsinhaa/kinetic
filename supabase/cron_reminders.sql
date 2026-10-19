@@ -20,11 +20,12 @@ SELECT cron.unschedule(jobid)
 FROM cron.job
 WHERE jobname = 'kinetic-send-reminders';
 
--- Fire every minute. Reminder times are local wall-clock in each user's
--- user_settings.timezone (IANA); the edge function converts per user.
+-- Fire every 5 minutes. Reminder times are local wall-clock in each user's
+-- user_settings.timezone (IANA); the edge function converts per user and
+-- treats a reminder as due for 6 minutes after its time (deduped).
 SELECT cron.schedule(
   'kinetic-send-reminders',
-  '* * * * *',
+  '*/5 * * * *',
   $$
   SELECT net.http_post(
     url := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/send-reminders',

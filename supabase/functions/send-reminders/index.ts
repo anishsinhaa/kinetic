@@ -1,8 +1,12 @@
 /**
  * Supabase Edge Function: send-reminders
  *
- * Invoked every minute via pg_cron (Bearer CRON_SECRET), or in test mode from
+ * Invoked every 5 minutes via pg_cron (Bearer CRON_SECRET), or in test mode from
  * the app (Bearer user JWT + { test: true }) for the signed-in user only.
+ *
+ * A reminder is due when its local time falls in (now − 6 min, now] in the
+ * user's timezone; public.reminder_deliveries (user_id, kind, local_date) is
+ * claimed before sending so a reminder is never sent twice or skipped.
  *
  * Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VAPID_PUBLIC_KEY,
  * VAPID_PRIVATE_KEY, VAPID_SUBJECT, CRON_SECRET
@@ -10,6 +14,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import webpush from 'npm:web-push@3.6.7'
+import { reminderDue } from './reminderWindow.ts'
 
 type SettingsRow = {
   user_id: string
@@ -31,52 +36,6 @@ type SubRow = {
 }
 
 type DueItem = { userId: string; kind: string; title: string; body: string }
-
-function toHhmm(time: string | null): string | null {
-  if (!time) return null
-  const m = time.trim().match(/^(\d{1,2}):(\d{2})/)
-  if (!m) return null
-  const h = Number(m[1])
-  const min = Number(m[2])
-  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null
-  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
-}
-
-function localHhmmInZone(timeZone: string, at: Date): string {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: timeZone || 'UTC',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(at)
-  const hour = parts.find((p) => p.type === 'hour')?.value ?? '00'
-  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00'
-  const h = hour === '24' ? '00' : hour.padStart(2, '0')
-  return `${h}:${minute.padStart(2, '0')}`
-}
-
-function localWeekdayInZone(timeZone: string, at: Date): number {
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: timeZone || 'UTC',
-    weekday: 'short',
-  }).format(at)
-  const map: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  }
-  return map[weekday] ?? 0
-}
-
-function isDue(reminderTime: string | null, timeZone: string, at: Date): boolean {
-  const want = toHhmm(reminderTime)
-  if (!want) return false
-  return localHhmmInZone(timeZone || 'UTC', at) === want
-}
 
 function pushErrorInfo(err: unknown): { message: string; statusCode: number | null } {
   if (err && typeof err === 'object') {
@@ -315,10 +274,14 @@ Deno.serve(async (req) => {
   const utcNow = at.toISOString()
   console.log(`[send-reminders] tick utc=${utcNow}`)
 
+  // Only users with at least one reminder enabled (keeps the free instance light)
   const { data: settings, error: settingsError } = await supabase
     .from('user_settings')
     .select(
       'user_id, timezone, reminder_morning_weight_enabled, reminder_morning_weight_time, reminder_night_recovery_enabled, reminder_night_recovery_time, reminder_workout_enabled, reminder_workout_time, reminder_workout_days',
+    )
+    .or(
+      'reminder_morning_weight_enabled.eq.true,reminder_night_recovery_enabled.eq.true,reminder_workout_enabled.eq.true',
     )
 
   if (settingsError) {
@@ -329,56 +292,90 @@ Deno.serve(async (req) => {
   const rows = (settings ?? []) as SettingsRow[]
   console.log(`[send-reminders] users_checked=${rows.length}`)
 
-  const due: DueItem[] = []
+  type Candidate = DueItem & { localDate: string }
+  const candidates: Candidate[] = []
 
   for (const row of rows) {
     const tz = row.timezone?.trim() || 'UTC'
-    const localNow = localHhmmInZone(tz, at)
-    const weekday = localWeekdayInZone(tz, at)
-    const morning = toHhmm(row.reminder_morning_weight_time)
-    const night = toHhmm(row.reminder_night_recovery_time)
-    const workout = toHhmm(row.reminder_workout_time)
 
-    console.log(
-      `[send-reminders] user=${row.user_id} tz=${tz} local=${localNow} weekday=${weekday}` +
-        ` morning=${row.reminder_morning_weight_enabled ? morning ?? '—' : 'off'}` +
-        ` night=${row.reminder_night_recovery_enabled ? night ?? '—' : 'off'}` +
-        ` workout=${row.reminder_workout_enabled ? workout ?? '—' : 'off'}` +
-        ` days=${JSON.stringify(row.reminder_workout_days ?? [])}`,
-    )
-
-    if (row.reminder_morning_weight_enabled && isDue(row.reminder_morning_weight_time, tz, at)) {
-      due.push({
-        userId: row.user_id,
-        kind: 'morning_weight',
-        title: 'Morning weight',
-        body: 'Log today’s weight in Kinetic.',
-      })
+    if (row.reminder_morning_weight_enabled) {
+      const d = reminderDue(row.reminder_morning_weight_time, tz, at)
+      if (d) {
+        candidates.push({
+          userId: row.user_id,
+          kind: 'morning_weight',
+          title: 'Morning weight',
+          body: 'Log today’s weight in Kinetic.',
+          localDate: d.localDate,
+        })
+      }
     }
-    if (row.reminder_night_recovery_enabled && isDue(row.reminder_night_recovery_time, tz, at)) {
-      due.push({
-        userId: row.user_id,
-        kind: 'night_recovery',
-        title: 'Recovery check-in',
-        body: 'How’s your fatigue and soreness today?',
-      })
+    if (row.reminder_night_recovery_enabled) {
+      const d = reminderDue(row.reminder_night_recovery_time, tz, at)
+      if (d) {
+        candidates.push({
+          userId: row.user_id,
+          kind: 'night_recovery',
+          title: 'Recovery check-in',
+          body: 'How’s your fatigue and soreness today?',
+          localDate: d.localDate,
+        })
+      }
     }
-    if (
-      row.reminder_workout_enabled &&
-      isDue(row.reminder_workout_time, tz, at) &&
-      (row.reminder_workout_days ?? []).includes(weekday)
-    ) {
-      due.push({
-        userId: row.user_id,
-        kind: 'workout',
-        title: 'Workout reminder',
-        body: 'Time to train — open Kinetic to start.',
-      })
+    if (row.reminder_workout_enabled) {
+      const d = reminderDue(row.reminder_workout_time, tz, at)
+      // Weekday is checked against the local date the reminder belongs to
+      if (d && (row.reminder_workout_days ?? []).includes(d.weekday)) {
+        candidates.push({
+          userId: row.user_id,
+          kind: 'workout',
+          title: 'Workout reminder',
+          body: 'Time to train — open Kinetic to start.',
+          localDate: d.localDate,
+        })
+      }
     }
   }
 
+  // Claim before sending: only rows this tick actually inserted are sent, so a
+  // reminder in the overlapping 6-minute window is delivered exactly once.
+  let due: DueItem[] = []
+  if (candidates.length > 0) {
+    const { data: claimed, error: claimError } = await supabase
+      .from('reminder_deliveries')
+      .upsert(
+        candidates.map((c) => ({ user_id: c.userId, kind: c.kind, local_date: c.localDate })),
+        { onConflict: 'user_id,kind,local_date', ignoreDuplicates: true },
+      )
+      .select('user_id, kind, local_date')
+
+    if (claimError) {
+      console.error('[send-reminders] claim failed', claimError.message)
+      return jsonResponse({ error: claimError.message }, 500)
+    }
+
+    const claimedKeys = new Set(
+      ((claimed ?? []) as Array<{ user_id: string; kind: string; local_date: string }>).map(
+        (r) => `${r.user_id}|${r.kind}|${r.local_date}`,
+      ),
+    )
+    due = candidates
+      .filter((c) => claimedKeys.has(`${c.userId}|${c.kind}|${c.localDate}`))
+      .map(({ userId, kind, title, body }) => ({ userId, kind, title, body }))
+  }
+
+  // Prune old dedupe rows about once an hour
+  if (at.getUTCMinutes() < 5) {
+    const cutoff = new Date(at.getTime() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+    const { error: pruneError } = await supabase
+      .from('reminder_deliveries')
+      .delete()
+      .lt('local_date', cutoff)
+    if (pruneError) console.warn('[send-reminders] prune failed', pruneError.message)
+  }
+
   console.log(
-    `[send-reminders] matched=${due.length}` +
+    `[send-reminders] candidates=${candidates.length} matched=${due.length}` +
       (due.length
         ? ` kinds=${due.map((d) => `${d.userId.slice(0, 8)}:${d.kind}`).join(',')}`
         : ''),
