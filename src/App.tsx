@@ -1,10 +1,12 @@
 import { Suspense } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ToastProvider } from './components/ui/Toast'
 import { MainLayout } from './layouts/MainLayout'
+import { SectionLayout } from './layouts/SectionLayout'
+import { LEGACY_REDIRECTS, WORKOUT_TABS } from './lib/navRoutes'
 import { useAuthListener, useCurrentUser } from './features/auth/useAuth'
 import { lazyWithReload } from './lib/lazyWithReload'
 
@@ -65,13 +67,18 @@ function AppShell() {
     >
       <Routes>
         <Route element={<MainLayout />}>
-          <Route path="/"          element={<Dashboard />} />
-          <Route path="/workout"   element={<Workout />} />
-          <Route path="/history"   element={<History />} />
-          <Route path="/exercises" element={<Exercises />} />
-          <Route path="/progress"  element={<Progress />} />
-          <Route path="/feedback"  element={<Feedback />} />
-          <Route path="/settings"  element={<Settings />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/workout" element={<SectionLayout tabs={WORKOUT_TABS} label="Workout" />}>
+            <Route index element={<Workout />} />
+            <Route path="recovery" element={<Feedback />} />
+            <Route path="library" element={<Exercises />} />
+          </Route>
+          <Route path="/progress" element={<Progress />} />
+          <Route path="/progress/history" element={<History />} />
+          <Route path="/settings" element={<Settings />} />
+          {LEGACY_REDIRECTS.map(({ from, to }) => (
+            <Route key={from} path={from} element={<Navigate to={to} replace />} />
+          ))}
         </Route>
       </Routes>
     </Suspense>

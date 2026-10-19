@@ -149,3 +149,61 @@ export async function upsertDailyLog(
 
   return rowToDomain(data as DailyLogRow)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// patchDailyLog — partial update that never wipes the other columns
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Upserts ONLY the provided columns for (user, date). Columns that are not in
+ * `partial` are left untouched (an ON CONFLICT update only sets the columns
+ * present in the row). Used e.g. by the Recovery form to write `sleep` without
+ * nulling weight / calories / protein / notes.
+ */
+export async function patchDailyLog(
+  userId: string,
+  date: string,
+  partial: Partial<DailyLogPayload>,
+): Promise<DailyLog> {
+  const row: Record<string, unknown> = { user_id: userId, date }
+  if (partial.weight !== undefined) row.weight = partial.weight
+  if (partial.calories !== undefined) row.calories = partial.calories
+  if (partial.protein !== undefined) row.protein = partial.protein
+  if (partial.sleep !== undefined) row.sleep = partial.sleep
+  if (partial.notes !== undefined) row.notes = partial.notes || null
+
+  const { data, error } = await supabase
+    .from('daily_logs')
+    .upsert(row, { onConflict: 'user_id,date' })
+    .select()
+    .single()
+
+  if (error) throw toServiceError(error)
+  return rowToDomain(data as DailyLogRow)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deleteDailyLog
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Deletes the day's log row (RLS owner-delete policy already exists). */
+export async function deleteDailyLog(userId: string, date: string): Promise<void> {
+  const { error } = await supabase
+    .from('daily_logs')
+    .delete()
+    .eq('user_id', userId)
+    .eq('date', date)
+  if (error) throw toServiceError(error)
+}
+
+/** True when every field of a payload is empty (a blank row isn't worth storing). */
+export function isEmptyDailyLogPayload(p: DailyLogPayload): boolean {
+  const empty = (n: number | null) => n == null || !Number.isFinite(n)
+  return (
+    empty(p.weight) &&
+    empty(p.calories) &&
+    empty(p.protein) &&
+    empty(p.sleep) &&
+    !(p.notes ?? '').trim()
+  )
+}

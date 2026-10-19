@@ -36,7 +36,24 @@ function mapFeedbackRow(row: RawFeedbackRow): BodyFeedback {
 }
 
 export async function getTodayFeedback(userId: string): Promise<BodyFeedback | null> {
-  const today = todayDateString()
+  return getFeedbackByDate(userId, todayDateString())
+}
+
+/** Deletes the day's check-in (muscle_soreness rows cascade). */
+export async function deleteFeedback(userId: string, date: string): Promise<void> {
+  const { error } = await supabase
+    .from('body_feedback')
+    .delete()
+    .eq('user_id', userId)
+    .eq('date', date)
+  if (error) throw toServiceError(error)
+}
+
+export async function getFeedbackByDate(
+  userId: string,
+  date: string,
+): Promise<BodyFeedback | null> {
+  const today = date
 
   const withUpdated = await supabase
     .from('body_feedback')
