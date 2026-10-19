@@ -6,22 +6,27 @@ Goal: replace the owner's Excel gym log. Simple, fast, mobile-first (Android at 
 - Daily Log: Date, Weight (kg), Calories, Protein (g), Workout Type (Push/Pull/Legs/Upper/Lower/Mixed Upper/Rest...), Workout Duration (min), Sleep (hours), Journal Notes.
 - Exercises Log: owner's own ~55 exercises grouped PUSH / PULL / LEGS, each with Best Set (weight x reps), Next Session target (Maintain/Increase), Notes, Updated date.
 
-## 1. Dashboard (home, opens by default)
-- Big primary "Start Workout" button, thumb-reachable at bottom on mobile (sticky), prominent on desktop.
-- Last workout card: type, relative date ("2 days ago"), duration, exercise count, volume.
-- Suggested next type based on recent split rotation (e.g. after Push, Pull -> suggest Legs). Just a hint, pre-highlights a chip.
-- Today card: morning weight + recovery check-in status, one tap to log each.
-- Mini charts: 7-day weight trend, workouts this week, streak.
-- If a workout is in progress, show "Resume workout" instead.
+## 0. Navigation (four tabs)
+- Home (`/`), Workout (`/workout`), Progress (`/progress`), Settings (`/settings`). Bottom bar on mobile (safe-area aware, 44px+ targets, labels 11px+), sidebar on desktop.
+- Workout sub-tabs: Session (`/workout`), Recovery (`/workout/recovery`), Library (`/workout/library`).
+- Progress sub-tabs: Overview (`/progress`), History (`/progress/history`), Daily logs (`/progress/logs`).
+- Redirects: `/exercises` -> `/workout/library`, `/feedback` -> `/workout/recovery`, `/history` -> `/progress/history`. Deep links `?start=1`, `?type=`, `?repeat=1` keep working.
+- Route transitions are keyed by top-level section so switching sub-tabs never remounts (an active session keeps its state).
+
+## 1. Home (opens by default)
+- One big Start Workout button; shows "Resume workout" only when there is a real unfinished workout (verified against the database, stale local state is reset).
+- Two secondary actions, "Log day" and "Recovery update", opening sheets and showing logged / not logged.
+- Tiles: 7-day average weight, workouts this week, streak, last workout (opens Progress -> History). Recovery tile: "Based on fatigue and sleep quality" + "Sore: N muscles".
+- Suggested next type based on recent split rotation (e.g. after Push, Pull -> suggest Legs). Used as the default type when starting.
 
 ## 2. Workout flow (one workout record holds everything)
-1. Type picker: tappable chips. Defaults: Push, Pull, Legs, Upper, Lower, Full Body, Mixed, Cardio, Free. No free-text typing here. Custom types managed in Settings.
-2. Warmup step: Start Warmup / Skip. Big running timer, optional note, End Warmup. Warmup duration + note saved on the workout.
-3. Exercises: picker filtered by workout type (muscle groups mapped per type), owner's previously used exercises first (recents/favourites), search for the rest, custom exercises allowed. Bottom sheet / modal on mobile, NOT a page navigation.
+1. Idle screen: type pill (opens a type sheet; defaults to the suggested type), Start workout, small "Repeat last workout" link, last-workout summary. Types: Push, Pull, Legs, Upper, Lower, Full Body, Mixed, Cardio, Free; custom types managed in Settings. Starting goes straight to training.
+2. Warmup: optional dismissible card inside the session (Start / End warmup, optional note, dismiss). Warmup duration + note saved on the workout.
+3. Exercises: picker filtered by workout type (removable chip, not a hidden filter), previously used exercises first, search across the whole library by name or alias (`exercises.search_terms`), custom exercises allowed. Fixed-height bottom sheet on mobile, NOT a page navigation.
 4. Each added exercise pre-fills sets from the last session of that exercise; shows "Last: 40x6 - Target: 40x8" and the PR. Optional per-exercise "next time" target (Maintain / Increase weight / Increase reps) and note, like the Excel.
-5. Set entry: large +/- steppers for weight (2.5 kg step, configurable) and reps, plus direct input that selects existing value on focus. Big check button to complete a set. Completing a set auto-starts the rest timer.
-6. Rest timer: visible countdown ring, +15s/-15s, skip; vibration + notification when done (works with screen locked/app backgrounded where the platform allows).
-7. Finish: confirmation, then summary screen: total duration, warmup time, volume, sets, PRs hit (with celebration animation), optional "how did it feel" (1-5) + note.
+5. Set entry: large +/- steppers for weight (2.5 kg step, configurable) and reps, plus direct input that selects existing value on focus. Big check button to complete a set. Completing a set auto-starts the rest timer. Completed sets stay editable in place (no restart of the rest timer); deleting a set shows a ~5s Undo. Weights are rounded to the user's step.
+6. Rest timer: large countdown panel (default from Settings), +15s/-15s, skip; vibration + notification when done (works with screen locked/app backgrounded where the platform allows). Hidden while the finish confirmation is open.
+7. Finish: confirmation sheet with a saving state, then summary screen: workout type (or "Workout"), total duration, warmup time, volume, sets, per-exercise breakdown, PRs hit (with celebration animation; a first-ever log is "First log", not a PR), optional "how did it feel" (1-5) + note.
 - Running workout clock in header. In-progress workout persists across refresh / phone lock (local persistence + server sync). Only one active workout at a time.
 - Data model: workouts (type, started_at, ended_at, warmup_started_at, warmup_ended_at, warmup_note, feel, note), workout_exercises (order, target, note), sets (weight, reps, failed, completed_at). Add migrations; keep RLS on all tables.
 
@@ -38,11 +43,13 @@ Goal: replace the owner's Excel gym log. Simple, fast, mobile-first (Android at 
 
 ## 5. Platform
 - PWA: installable on Android, offline support for logging at the gym with background sync when online, app icon/splash.
-- Notifications: Web Push (service worker). Scheduled reminders need a server side sender: Supabase Edge Function + pg_cron (or scheduled function) storing push subscriptions per user. Rest timer notification can be local (service worker / Notification API).
+- Notifications: Web Push (service worker). Scheduled reminders need a server side sender: Supabase Edge Function + pg_cron (every 5 minutes; a reminder fires when its local time is inside the current window, deduped per user/kind/day in `reminder_deliveries`) storing push subscriptions per user. Rest timer notification can be local (service worker / Notification API).
 - Fully responsive: mobile-first layouts with bottom nav on mobile, sidebar/wider grid on desktop.
 
 ## 6. Progress
-- Progress page: per-exercise chart (best set / estimated 1RM / volume over time), PR list, body weight trend, weekly volume.
+- Overview: per-exercise chart (best set / volume over time, searchable exercise picker, rounded Y-axis ticks) with the exercise's sessions listed below, PR list, weekly volume, body weight / calories / protein / sleep charts over 7 / 30 / 90 days.
+- History: completed workouts as cards (expand for exercises and sets, delete with confirmation).
+- Daily logs: one card per day with the log and the recovery check-in, each editable and deletable; "Log today" button; rest days render as "Rest day".
 
 ## 7. Motion and UI
 - Framer Motion: page transitions, bottom sheets, timer ring animation, set-complete micro-interaction, PR celebration, charts animating in, number tickers on summary. Respect prefers-reduced-motion.

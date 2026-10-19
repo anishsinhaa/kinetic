@@ -12,10 +12,26 @@ Personal fitness tracker for logging workouts, daily metrics, and recovery — b
 
 ## Daily workflow
 
-1. **Daily records** — morning weight, calories, protein, sleep, notes  
-2. **Workout** — start with a type chip, log sets (prefilled from last session + PR), rest timer between sets  
-3. **Recovery check-in** — fatigue, soreness by muscle, optional pain flag  
-4. **Progress / History** — charts, PRs, weekly volume, past sessions  
+1. **Home** — one big Start / Resume button; "Log day" and "Recovery update" a tap away  
+2. **Workout** — pick a type, log sets (prefilled from last session + PR), rest timer between sets  
+3. **Progress** — charts, PRs, past workouts, daily logs  
+
+### Navigation
+
+Four tabs: **Home**, **Workout**, **Progress**, **Settings** (bottom bar on mobile, sidebar on desktop).
+
+| Route | Screen |
+|---|---|
+| `/` | Home |
+| `/workout` | Session (idle screen / active workout / summary) |
+| `/workout/recovery` | Recovery check-in |
+| `/workout/library` | Exercise library |
+| `/progress` | Overview (charts, PRs, per-exercise sessions) |
+| `/progress/history` | Workout history cards |
+| `/progress/logs` | Daily logs (weight, calories, protein, sleep) + recovery |
+| `/settings` | Settings |
+
+Old URLs redirect: `/exercises` → `/workout/library`, `/feedback` → `/workout/recovery`, `/history` → `/progress/history`. Deep links `?start=1`, `?type=Push` and `?repeat=1` on `/workout` still work.
 
 ---
 
@@ -51,7 +67,7 @@ src/
 │   ├── progress/      # Aggregators for charts + PR list
 │   └── settings/      # Preferences, Web Push, import/export
 ├── pages/             # Lazy-loaded routes
-├── layouts/           # Sidebar / bottom nav + route transitions
+├── layouts/           # Main layout (4-tab nav, route transitions) + section sub-tabs
 ├── lib/
 │   ├── supabase/      # Client + row types
 │   └── offline/       # localStorage mutation queue + flush
@@ -64,23 +80,31 @@ RLS is enabled on user data tables — each user only sees their own rows. Schem
 
 ## Features
 
-### Workout
-- One-tap start; **workout type chips** (Push / Pull / Legs / …, reorderable in Settings)
-- Exercises from library or custom; multi-select add
-- Sets autosave on change; **prefill from last session**; shows last performance + **PR**
-- **PR rule:** heavier weight wins; same weight + more reps wins (**no estimated 1RM**)
-- Volume from **completed sets only**
-- Rest timer (ring UI + optional local notification when done)
-- Finish flow with feel/note; session persisted in localStorage across refresh
+### Home
+- Start / Resume button — **Resume appears only for a real, unfinished session** (checked against the database; stale local sessions are reset)
+- "Log day" and "Recovery update" sheets, each showing whether today is already logged
+- Tiles: 7-day average weight, workouts this week, streak, last workout (opens Progress → History), recovery
 
-### Daily records & recovery
-- Inline daily log on Dashboard (weight, calories, protein, sleep, notes)
-- Recovery check-in: fatigue, per-muscle soreness, pain flag — nothing counts until submitted
-- History tabs for daily logs, per-exercise sessions, and recovery
+### Workout
+- Idle screen: type pill (opens a type sheet; defaults to the suggested next type), **Start workout**, "Repeat last workout", last-workout summary
+- Warmup is an optional, dismissible card inside the session — not a separate step
+- Compact header: type, timer, **Finish**; finish confirmation is a sheet with a saving state
+- Sets autosave; **prefill from last session**; completed sets can be edited in place (rest timer is not restarted)
+- Deleting a set shows an **Undo** toast; 44px steppers; weights are rounded to your weight step (`100 kg × 5`, `PR 226 lb × 5 · 18 Oct`)
+- Exercise picker: fixed-height sheet, search across the whole library (name **or** aliases in `exercises.search_terms`), removable type filter, recents first
+- **PR rule:** heavier weight wins; same weight + more reps wins (**no estimated 1RM**). A first-ever log is reported as "First log", not a PR
+- Volume from **completed sets only**
+- Rest timer (large panel, default from Settings, +/-15s, hidden while the finish sheet is open)
+- Summary: workout type (or "Workout"), per-exercise breakdown, feel + note
+
+### Recovery & daily records
+- **Recovery** (Workout → Recovery, or Home → Recovery update): fatigue, per-muscle soreness, pain flag and sleep hours — nothing counts until submitted
+- **Daily logs** (Progress → Daily logs): one card per day with Edit / Delete for the log and the recovery check-in, plus "Log today"
 
 ### Progress
-- Per-exercise best-set weight + session volume charts
-- Weekly volume (ISO weeks), body-weight trend, all-time PR list
+- **Overview:** per-exercise best-set weight + session volume charts, searchable exercise picker, every session of the exercise; weekly volume; body weight, calories, protein and sleep charts over 7 / 30 / 90 days; all-time PR list
+- **History:** completed workouts as cards (expand for exercises and sets, delete with confirmation)
+- **Daily logs:** see above
 
 ### Settings
 - Workout types, rest timer default, weight step, kg/lb
@@ -93,9 +117,10 @@ RLS is enabled on user data tables — each user only sees their own rows. Schem
 - Offline queue for set upserts and daily logs (dedupe by set id / user+date); flushes when online
 
 ### Notifications
-- Scheduled reminders: Edge Function `send-reminders` + **pg_cron** (Bearer `CRON_SECRET`)
+- Scheduled reminders: Edge Function `send-reminders` + **pg_cron** (Bearer `CRON_SECRET`), triggered **every 5 minutes**
+- A reminder fires when its local time falls inside the current 5-minute window (in the user's timezone), so exact-minute cron jitter never skips one
+- `reminder_deliveries` (user, kind, local date) dedupes overlapping windows — at most one reminder of each kind per day
 - Deployed with `--no-verify-jwt` so cron can call it; browser test path verifies the user JWT inside the function
-- Matches reminder times in each user’s timezone
 
 ---
 
