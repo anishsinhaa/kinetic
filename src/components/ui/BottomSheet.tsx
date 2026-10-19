@@ -40,7 +40,7 @@ export function BottomSheet({ open, onClose, title, children, className }: Botto
         <div
           className={cn(
             // Above MainLayout mobile nav (z-50) so confirm actions stay tappable
-            'fixed inset-0 z-[100] flex items-end md:items-center justify-center',
+            'fixed inset-0 z-100 flex items-end md:items-center justify-center',
             MOBILE_NAV_CLEARANCE,
           )}
         >

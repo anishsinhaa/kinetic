@@ -198,7 +198,7 @@ export default function DailyLogs() {
                     </button>
                     <button
                       type="button"
-                      className={`${iconBtn} hover:!text-red-400 hover:!border-red-800/50`}
+                      className={`${iconBtn} hover:text-red-400! hover:border-red-800/50!`}
                       onClick={() => setPendingDelete({ kind: 'log', date: entry.date })}
                     >
                       <Trash2 size={14} /> Delete log
@@ -238,7 +238,7 @@ export default function DailyLogs() {
                       </button>
                       <button
                         type="button"
-                        className={`${iconBtn} hover:!text-red-400 hover:!border-red-800/50`}
+                        className={`${iconBtn} hover:text-red-400! hover:border-red-800/50!`}
                         onClick={() => setPendingDelete({ kind: 'recovery', date: entry.date })}
                       >
                         <Trash2 size={14} /> Delete recovery

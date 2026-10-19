@@ -987,7 +987,7 @@ export default function Workout() {
   return (
     <div className={cn(restEndsAt && !confirmFinish ? 'pb-56' : 'pb-32')}>
       {/* Compact header: type pill · timer · Finish (sticks under the section tabs) */}
-      <div className="px-3 md:px-8 py-2 border-b border-border sticky top-[49px] bg-background/95 backdrop-blur z-20">
+      <div className="px-3 md:px-8 py-2 border-b border-border sticky top-12.25 bg-background/95 backdrop-blur z-20">
         <div className="flex items-center justify-between gap-2">
           <button
             type="button"
