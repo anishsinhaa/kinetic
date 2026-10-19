@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ToastProvider } from './components/ui/Toast'
 import { MainLayout } from './layouts/MainLayout'
 import { useAuthListener, useCurrentUser } from './features/auth/useAuth'
 import { lazyWithReload } from './lib/lazyWithReload'
@@ -81,9 +82,11 @@ export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <AppShell />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <AppShell />
+          </BrowserRouter>
+        </ToastProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   )

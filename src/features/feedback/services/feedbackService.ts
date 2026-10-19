@@ -1,9 +1,12 @@
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
+import { todayDateString } from '../../dailyLog/services/dailyLogService'
 import type { BodyFeedback, SorenessEntry } from '../types'
 
-function todayDateString(): string {
-  return new Date().toISOString().split('T')[0]
+function isMissingColumn(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false
+  const m = (error.message ?? '').toLowerCase()
+  return error.code === 'PGRST204' || m.includes('column') || m.includes('schema cache')
 }
 
 type RawFeedbackRow = {
@@ -80,8 +83,9 @@ export async function getTodayFeedback(userId: string): Promise<BodyFeedback | n
 export async function upsertFeedback(
   userId: string,
   payload: { fatigue: number; sleepQuality: number | null; painFlag: boolean },
+  date: string = todayDateString(),
 ): Promise<{ id: string; savedAt: string }> {
-  const today = todayDateString()
+  const today = date
   const now = new Date().toISOString()
 
   const { data, error } = await supabase
@@ -105,6 +109,9 @@ export async function upsertFeedback(
     return { id: row.id, savedAt: row.updated_at ?? row.created_at ?? now }
   }
 
+  // Only a missing-column error justifies the legacy retry (saves a round trip otherwise)
+  if (error && !isMissingColumn(error)) throw toServiceError(error)
+
   // Fallback without updated_at column
   const legacy = await supabase
     .from('body_feedback')
@@ -126,16 +133,23 @@ export async function upsertFeedback(
   return { id: row.id, savedAt: now }
 }
 
+async function clearMuscleSoreness(feedbackId: string): Promise<void> {
+  const { error } = await supabase.from('muscle_soreness').delete().eq('feedback_id', feedbackId)
+  if (error) throw toServiceError(error)
+}
+
 export async function saveMuscleSoreness(
   feedbackId: string,
   sorenessList: SorenessEntry[],
 ): Promise<void> {
-  const { error: deleteError } = await supabase
-    .from('muscle_soreness')
-    .delete()
-    .eq('feedback_id', feedbackId)
+  await clearMuscleSoreness(feedbackId)
+  await insertMuscleSoreness(feedbackId, sorenessList)
+}
 
-  if (deleteError) throw toServiceError(deleteError)
+async function insertMuscleSoreness(
+  feedbackId: string,
+  sorenessList: SorenessEntry[],
+): Promise<void> {
   if (sorenessList.length === 0) return
 
   const { error: insertError } = await supabase
@@ -159,9 +173,24 @@ export async function saveFeedback(
     painFlag: boolean
     soreness: SorenessEntry[]
   },
+  opts: {
+    /** Local date (YYYY-MM-DD) to write; defaults to today. */
+    date?: string
+    /** Known feedback id for that date: lets the soreness clear run in parallel with the upsert. */
+    existingId?: string | null
+  } = {},
 ): Promise<{ id: string; savedAt: string }> {
-  const result = await upsertFeedback(userId, payload)
-  await saveMuscleSoreness(result.id, payload.soreness)
+  const date = opts.date ?? todayDateString()
+  if (opts.existingId) {
+    const [result] = await Promise.all([
+      upsertFeedback(userId, payload, date),
+      clearMuscleSoreness(opts.existingId),
+    ])
+    await insertMuscleSoreness(result.id, payload.soreness)
+    return result
+  }
+  const result = await upsertFeedback(userId, payload, date)
+  await insertMuscleSoreness(result.id, payload.soreness)
   return result
 }
 

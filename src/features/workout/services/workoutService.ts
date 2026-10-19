@@ -118,9 +118,16 @@ export async function updateWorkoutMeta(
   throw toServiceError(error)
 }
 
+/** Fields that can be written together with `ended_at` in a single update. */
+export type FinishWorkoutMeta = Pick<
+  UpdateWorkoutMetaInput,
+  'feel' | 'note' | 'warmup_started_at' | 'warmup_ended_at' | 'warmup_note'
+>
+
+/** Single UPDATE: marks the workout ended and writes feel/note/warmup together. */
 export async function finishWorkout(
   workoutId: string,
-  meta?: Pick<UpdateWorkoutMetaInput, 'feel' | 'note'>,
+  meta?: FinishWorkoutMeta,
 ): Promise<void> {
   const { error } = await supabase
     .from('workouts')
@@ -128,10 +135,30 @@ export async function finishWorkout(
       ended_at: new Date().toISOString(),
       ...(meta?.feel !== undefined ? { feel: meta.feel } : {}),
       ...(meta?.note !== undefined ? { note: meta.note } : {}),
+      ...(meta?.warmup_started_at !== undefined
+        ? { warmup_started_at: meta.warmup_started_at }
+        : {}),
+      ...(meta?.warmup_ended_at !== undefined ? { warmup_ended_at: meta.warmup_ended_at } : {}),
+      ...(meta?.warmup_note !== undefined ? { warmup_note: meta.warmup_note } : {}),
     })
     .eq('id', workoutId)
 
   if (error) throw toServiceError(error)
+}
+
+/** Existence / ended state of a workout row (null = row does not exist). */
+export async function getWorkoutStatus(
+  workoutId: string,
+): Promise<{ id: string; endedAt: string | null } | null> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('id, ended_at')
+    .eq('id', workoutId)
+    .maybeSingle()
+  if (error) throw toServiceError(error)
+  if (!data) return null
+  const row = data as { id: string; ended_at: string | null }
+  return { id: row.id, endedAt: row.ended_at }
 }
 
 /** Discard an in-progress / empty workout (cascades exercises + sets). */
@@ -146,6 +173,16 @@ export async function deleteWorkoutExercise(workoutExerciseId: string): Promise<
     .from('workout_exercises')
     .delete()
     .eq('id', workoutExerciseId)
+  if (error) throw toServiceError(error)
+}
+
+/** Remove several workout_exercise rows in one round trip (cascades their sets). */
+export async function deleteWorkoutExercises(workoutExerciseIds: string[]): Promise<void> {
+  if (workoutExerciseIds.length === 0) return
+  const { error } = await supabase
+    .from('workout_exercises')
+    .delete()
+    .in('id', workoutExerciseIds)
   if (error) throw toServiceError(error)
 }
 
@@ -286,6 +323,13 @@ export async function upsertSet(
 
 export async function deleteSet(setId: string): Promise<void> {
   const { error } = await supabase.from('sets').delete().eq('id', setId)
+  if (error) throw toServiceError(error)
+}
+
+/** Delete many sets in one round trip (ids that don't exist are ignored). */
+export async function deleteSets(setIds: string[]): Promise<void> {
+  if (setIds.length === 0) return
+  const { error } = await supabase.from('sets').delete().in('id', setIds)
   if (error) throw toServiceError(error)
 }
 

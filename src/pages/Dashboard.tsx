@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
@@ -6,7 +6,6 @@ import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import {
   Dumbbell,
-  Loader2,
   Moon,
   Activity,
   TrendingUp,
@@ -14,17 +13,13 @@ import {
   Flame,
 } from 'lucide-react'
 import { useDailyLog } from '../features/dailyLog/hooks/useDailyLog'
-import {
-  type DailyLogFormState,
-  emptyFormState,
-  logToFormState,
-  formStateToPayload,
-} from '../features/dailyLog/types'
+import { DailyLogForm } from '../features/dailyLog/components/DailyLogForm'
 import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
 import { useWorkoutStoreHydrated } from '../features/workout/hooks/useWorkoutStoreHydrated'
+import { useActiveSession } from '../features/workout/hooks/useActiveSession'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   getDashboardStats,
@@ -40,96 +35,8 @@ import {
   formatVolume,
   kgToDisplay,
   roundDisplayWeight,
-  toStoredKg,
 } from '../features/settings/lib/units'
-import type { WeightUnits } from '../lib/supabase/database.types'
 import { cn } from '../lib/utils'
-import { selectOnFocus } from '../lib/selectOnFocus'
-
-function dailyLogFormFromDb(
-  log: Parameters<typeof logToFormState>[0],
-  units: WeightUnits,
-): DailyLogFormState {
-  const base = logToFormState(log)
-  if (log.weight == null) return base
-  return {
-    ...base,
-    weight: String(roundDisplayWeight(kgToDisplay(log.weight, units), units)),
-  }
-}
-
-function dailyLogPayloadFromForm(
-  form: DailyLogFormState,
-  units: WeightUnits,
-): ReturnType<typeof formStateToPayload> {
-  const payload = formStateToPayload(form)
-  if (form.weight === '' || payload.weight == null || !Number.isFinite(payload.weight)) {
-    return { ...payload, weight: null }
-  }
-  return { ...payload, weight: toStoredKg(payload.weight, units) }
-}
-
-function DailyLogForm({
-  initialForm,
-  isSaving,
-  onSave,
-  weightUnit = 'kg',
-}: {
-  initialForm: DailyLogFormState
-  isSaving: boolean
-  onSave: (payload: ReturnType<typeof formStateToPayload>) => Promise<unknown>
-  weightUnit?: WeightUnits
-}) {
-  const [form, setForm] = useState(initialForm)
-  const numericFields = [
-    { key: 'weight' as const, label: `Weight (${weightUnit})` },
-    { key: 'calories' as const, label: 'Calories' },
-    { key: 'protein' as const, label: 'Protein (g)' },
-    { key: 'sleep' as const, label: 'Sleep (hrs)' },
-  ]
-  const save = () => void onSave(dailyLogPayloadFromForm(form, weightUnit))
-  return (
-    <Card className="mb-4">
-      <div className="px-4 pt-3 pb-2 border-b border-border flex justify-between">
-        <p className="text-[10px] text-text-muted uppercase tracking-widest">Today’s log</p>
-        {isSaving && (
-          <span className="text-[10px] text-text-muted flex items-center gap-1">
-            <Loader2 size={10} className="animate-spin" /> Saving
-          </span>
-        )}
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4">
-        {numericFields.map(({ key, label }) => (
-          <label key={key} className="block">
-            <span className="text-[10px] text-text-secondary uppercase tracking-widest">{label}</span>
-            <input
-              type="number"
-              value={form[key]}
-              onFocus={selectOnFocus}
-              onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-              onBlur={save}
-              className="mt-1 w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-center font-semibold text-text-primary focus:outline-hidden focus:border-primary min-h-11"
-              placeholder="—"
-            />
-          </label>
-        ))}
-      </div>
-      <div className="px-4 pb-4">
-        <label className="block">
-          <span className="text-[10px] text-text-secondary uppercase tracking-widest">Note</span>
-          <textarea
-            value={form.notes}
-            onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
-            onBlur={save}
-            rows={2}
-            placeholder="Journal note…"
-            className="mt-1 w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-hidden focus:border-primary resize-none"
-          />
-        </label>
-      </div>
-    </Card>
-  )
-}
 
 function WeightSparkline({ values, label }: { values: number[]; label: string }) {
   const reduceMotion = useReducedMotion()
@@ -199,15 +106,15 @@ export default function Dashboard() {
   const reduceMotion = useReducedMotion()
 
   const storeHydrated = useWorkoutStoreHydrated()
-  const currentWorkoutId = useWorkoutStore((s) => s.currentWorkoutId)
-  const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
   const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
   const units = useWeightUnits()
   // Avoid flashing type chips before persist rehydrates an in-progress session
   const sessionReady = storeHydrated
-  const activeWorkoutId = sessionReady ? currentWorkoutId : null
+  // "Active" = store points at a workouts row that is still open (not a stale id)
+  const { activeSession } = useActiveSession()
+  const activeWorkoutId = activeSession?.workoutId ?? null
 
-  const { log, isLoading: logLoading, isSaving, save } = useDailyLog(userId)
+  const { log, isLoading: logLoading, save } = useDailyLog(userId)
   const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
 
   const lastWorkoutQuery = useQuery({
@@ -239,11 +146,12 @@ export default function Dashboard() {
     lastWorkoutQuery.isLoading || recentTypesQuery.isLoading || statsQuery.isLoading
 
   const cta = activeWorkoutId
-    ? { label: 'Resume workout', to: '/workout', hint: workoutLabel || 'In progress' }
+    ? { label: 'Resume workout', to: '/workout', hint: activeSession?.label || 'In progress' }
     : {
         label: 'Start Workout',
+        // suggested=1: the type is an auto-suggestion, not something the user picked
         to: suggestion
-          ? `/workout?start=1&type=${encodeURIComponent(suggestion)}`
+          ? `/workout?start=1&type=${encodeURIComponent(suggestion)}&suggested=1`
           : '/workout?start=1',
         hint:
           recentTypesQuery.isLoading || !suggestion
@@ -362,15 +270,13 @@ export default function Dashboard() {
           <SkeletonBlock className="h-20 w-full" />
         </Card>
       ) : (
-        <div id="dash-weight">
-          <DailyLogForm
-            key={`${log?.id ?? 'new-log'}-${units}`}
-            initialForm={log ? dailyLogFormFromDb(log, units) : emptyFormState()}
-            isSaving={isSaving}
-            weightUnit={units}
-            onSave={save}
-          />
-        </div>
+        <Card className="mb-4" id="dash-weight">
+          <div className="px-4 pt-3 pb-2 border-b border-border">
+            <p className="text-[10px] text-text-muted uppercase tracking-widest">Today’s log</p>
+          </div>
+          {/* Keyed by units only — never by log.id (it changes during the first save) */}
+          <DailyLogForm key={units} initialLog={log} units={units} onSave={save} />
+        </Card>
       )}
 
       {/* Mini charts */}

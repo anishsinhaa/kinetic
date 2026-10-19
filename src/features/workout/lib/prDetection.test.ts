@@ -34,9 +34,9 @@ describe('prDetection', () => {
       ],
       { a: { weight: 90, reps: 5 }, b: null },
     )
-    expect(hits).toHaveLength(2)
+    // Row has no previous best → first log, not a PR
+    expect(hits).toHaveLength(1)
     expect(hits[0]).toMatchObject({ exerciseName: 'Bench', weight: 100, reps: 5 })
-    expect(hits[1]?.exerciseName).toBe('Row')
   })
 
   it('bestPersonalRecord matches History all-time best selection', () => {

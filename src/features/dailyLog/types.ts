@@ -3,6 +3,9 @@
  * Used by components, hooks, and the service layer.
  */
 
+import type { WeightUnits } from '../../lib/supabase/database.types'
+import { kgToDisplay, roundDisplayWeight, toStoredKg } from '../settings/lib/units'
+
 export interface DailyLog {
   id: string
   userId: string
@@ -58,3 +61,29 @@ export const formStateToPayload = (form: DailyLogFormState): DailyLogPayload => 
   sleep: form.sleep !== '' ? parseFloat(form.sleep) : null,
   notes: form.notes,
 })
+
+/** Form state for a stored log; body weight is shown in the user's units. */
+export const logToDisplayForm = (
+  log: DailyLog | null | undefined,
+  units: WeightUnits,
+): DailyLogFormState => {
+  if (!log) return emptyFormState()
+  const base = logToFormState(log)
+  if (log.weight == null) return base
+  return {
+    ...base,
+    weight: String(roundDisplayWeight(kgToDisplay(log.weight, units), units)),
+  }
+}
+
+/** Payload for a form entered in the user's units; weight is stored as kg. */
+export const displayFormToPayload = (
+  form: DailyLogFormState,
+  units: WeightUnits,
+): DailyLogPayload => {
+  const payload = formStateToPayload(form)
+  if (payload.weight == null || !Number.isFinite(payload.weight)) {
+    return { ...payload, weight: null }
+  }
+  return { ...payload, weight: toStoredKg(payload.weight, units) }
+}

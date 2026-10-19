@@ -44,13 +44,18 @@ export function useSaveFeedback() {
       sleepQuality: number | null
       painFlag: boolean
       soreness: SorenessEntry[]
+      /** Local date to write (YYYY-MM-DD); defaults to today. */
+      date?: string
+      /** Existing feedback id for that date (speeds up the save). */
+      existingId?: string | null
     }) => {
       if (!userId) throw new Error('Not authenticated')
-      return saveFeedback(userId, payload)
+      const { date, existingId, ...data } = payload
+      return saveFeedback(userId, data, { date, existingId })
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['feedback', 'today', userId] })
-      void queryClient.invalidateQueries({ queryKey: ['feedback', 'history', userId] })
+      void queryClient.invalidateQueries({ queryKey: ['feedback'] })
+      void queryClient.invalidateQueries({ queryKey: ['history'] })
     },
   })
 }

@@ -239,6 +239,7 @@ function FeedbackForm({ existing }: { existing: BodyFeedback | null | undefined 
       sleepQuality,
       painFlag,
       soreness: buildSorenessList(),
+      existingId: existing?.id,
     })
     setLastSavedAt(result.savedAt)
   }
@@ -382,7 +383,7 @@ export default function Feedback() {
   const { data: existing, isLoading } = useTodayFeedback()
 
   return (
-    <div className="p-4 md:p-8">
+    <div className="p-4 md:p-8 pb-28 md:pb-8">
       {/* Header */}
       <div className="flex items-start justify-between mb-6 md:mb-8">
         <div>

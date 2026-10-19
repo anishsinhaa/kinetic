@@ -10,7 +10,9 @@ import {
   addExerciseToWorkout,
   createWorkout,
   deleteSet,
+  deleteSets,
   deleteWorkout,
+  deleteWorkoutExercises,
   finishWorkout as finishWorkoutDb,
   getLatestCompletedWorkout,
   getExercisePersonalRecord,
@@ -20,22 +22,24 @@ import {
   updateWorkoutExercise,
   upsertSet,
   getRecentWorkoutTypes,
-  deleteWorkoutExercise,
 } from '../features/workout/services/workoutService'
 import { useWorkoutStoreHydrated } from '../features/workout/hooks/useWorkoutStoreHydrated'
+import { useActiveSession } from '../features/workout/hooks/useActiveSession'
+import { useToast } from '../components/ui/toastContext'
+import { resolveSummaryTitle } from '../features/workout/lib/summaryTitle'
 import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { suggestNextType } from '../features/workout/lib/suggestNextType'
 import { totalVolumeKg } from '../features/workout/lib/volume'
-import { detectPrHits } from '../features/workout/lib/prDetection'
+import { bestPersonalRecord, detectFirstLogs, detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
 import {
-  displayWeightString,
+  displayWeightStringStepped,
+  formatPrLine,
+  formatSetLine,
   formatVolume,
-  formatWeight,
-  kgToDisplay,
-  roundDisplayWeight,
+  roundWeightForDisplay,
   toStoredKg,
 } from '../features/settings/lib/units'
 import {
@@ -86,10 +90,15 @@ export default function Workout() {
   const reduceMotion = useReducedMotion()
   const addSetLockRef = useRef(0)
   const storeHydrated = useWorkoutStoreHydrated()
+  const toast = useToast()
+  // Resets a stale persisted session (ended / missing row, stuck summary) on load
+  useActiveSession()
 
   const isRepeatMode = searchParams.get('repeat') === '1'
   const autoStart = searchParams.get('start') === '1'
   const preselectedType = searchParams.get('type')
+  // ?type=… from an auto-suggestion (suggested=1) is not an explicit user choice
+  const preselectedTypeExplicit = searchParams.get('suggested') !== '1'
 
   // Selectors only — never subscribe to the whole store (avoids update-depth loops)
   const phase = useWorkoutStore((s) => s.phase)
@@ -296,7 +305,7 @@ export default function Workout() {
     })
   }
 
-  const beginWorkoutWithType = (typeLabel: string) => {
+  const beginWorkoutWithType = (typeLabel: string, typeExplicit = false) => {
     if (currentWorkoutId || startingRef.current) return
     const normalizedType = typeLabel.trim()
     if (!normalizedType) return
@@ -309,7 +318,7 @@ export default function Workout() {
 
     const workoutId = newClientId()
     const startedAt = new Date().toISOString()
-    api.startWorkout(workoutId, today, startedAt, normalizedType)
+    api.startWorkout(workoutId, today, startedAt, normalizedType, typeExplicit)
     setSearchParams({}, { replace: true })
 
     void (async () => {
@@ -331,7 +340,11 @@ export default function Workout() {
                   initialSets:
                     ex.sets.length > 0
                       ? ex.sets.map((s) => ({
-                          weight: displayWeightString(s.weight, displayUnits),
+                          weight: displayWeightStringStepped(
+                            s.weight,
+                            displayUnits,
+                            useWorkoutStore.getState().weightStep,
+                          ),
                           reps: s.reps != null ? String(s.reps) : '',
                         }))
                       : undefined,
@@ -372,7 +385,7 @@ export default function Workout() {
       useWorkoutStore.getState().finishWorkout()
     }
 
-    beginWorkoutWithType(type)
+    beginWorkoutWithType(type, preselectedTypeExplicit)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per deep link
   }, [storeHydrated, autoStart, preselectedType])
 
@@ -417,6 +430,7 @@ export default function Workout() {
       useWorkoutStore.getState().updateExerciseMeta(added.id, { dbWorkoutExerciseId: dbWeId })
 
       const displayUnits = useWorkoutStore.getState().units
+      const step = useWorkoutStore.getState().weightStep
 
       type PrefillRow = {
         weight: number | null
@@ -445,25 +459,17 @@ export default function Workout() {
           weight: s.weight,
           reps: s.reps,
           displayWeight:
-            s.weight != null
-              ? roundDisplayWeight(kgToDisplay(s.weight, displayUnits), displayUnits)
-              : null,
+            s.weight != null ? roundWeightForDisplay(s.weight, displayUnits, step) : null,
         }))
       }
 
       const lastPerformance =
         prefillRows.length > 0
           ? `Last: ${prefillRows
-              .map((s) => `${s.displayWeight ?? '-'}x${s.reps ?? '-'}`)
-              .join(' · ')} ${displayUnits}`
+              .map((s) => formatSetLine(s.weight, s.reps, displayUnits, step))
+              .join(' · ')}`
           : 'No previous performance'
-      const personalRecord = pr
-        ? `PR: ${
-            pr.weight != null
-              ? roundDisplayWeight(kgToDisplay(pr.weight, displayUnits), displayUnits)
-              : '-'
-          }x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''} ${displayUnits}`
-        : 'No PR yet'
+      const personalRecord = pr ? formatPrLine(pr, displayUnits, step) : 'No PR yet'
       const last = prefillRows[0]
       const targetLabel = last
         ? `Target: ${targetPreview(last.displayWeight, last.reps, 'maintain', weightStep)}`
@@ -562,15 +568,14 @@ export default function Workout() {
     [exercises],
   )
 
-  const invalidateAfterWorkout = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] }),
-      queryClient.invalidateQueries({ queryKey: ['workout'] }),
-      queryClient.invalidateQueries({ queryKey: ['history'] }),
-      queryClient.refetchQueries({ queryKey: ['dashboard', 'stats', userId] }),
-      latestWorkoutQuery.refetch(),
-    ])
+  /** Targeted, fire-and-forget cache refresh — never blocks navigation. */
+  const invalidateAfterWorkout = () => {
+    void queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] })
+    void queryClient.invalidateQueries({ queryKey: ['workout', 'latest-completed', userId] })
+    void queryClient.invalidateQueries({ queryKey: ['workout', 'recent-types', userId] })
+    void queryClient.invalidateQueries({ queryKey: ['exercises', 'recent-ids', userId] })
+    void queryClient.invalidateQueries({ queryKey: ['history'] })
+    void queryClient.invalidateQueries({ queryKey: ['progress'] })
   }
 
   const handleDeleteSet = async (exerciseLocalId: string, setLocalId: string) => {
@@ -597,42 +602,28 @@ export default function Workout() {
   }
 
   const handleFinishConfirm = async () => {
-    if (!currentWorkoutId) return
+    if (!currentWorkoutId || isFinishing) return
     setIsFinishing(true)
     try {
       await persistQueueRef.current.flushAll()
 
       const state = useWorkoutStore.getState()
 
-      // Drop unchecked / empty rows from DB and store before totals
-      for (const ex of state.exercises) {
-        for (const s of ex.sets) {
-          if (s.completed) continue
-          try {
-            await deleteSet(s.id)
-          } catch {
-            // ignore — row may never have been persisted
-          }
-          useWorkoutStore.getState().removeSet(ex.id, s.id)
-        }
-      }
+      // Rows to drop: unchecked sets, and exercises with no completed set
+      const incompleteSetIds = state.exercises.flatMap((ex) =>
+        ex.sets.filter((s) => !s.completed).map((s) => s.id),
+      )
+      const emptyExercises = state.exercises.filter((ex) => !ex.sets.some((s) => s.completed))
+      const emptyWeIds = emptyExercises
+        .map((ex) => ex.dbWorkoutExerciseId)
+        .filter((id): id is string => Boolean(id))
 
-      // Drop exercises with zero completed sets (don't persist empty WEs)
-      const afterSets = useWorkoutStore.getState()
-      for (const ex of afterSets.exercises) {
-        const hasCompleted = ex.sets.some((s) => s.completed)
-        if (hasCompleted) continue
-        if (ex.dbWorkoutExerciseId) {
-          try {
-            await deleteWorkoutExercise(ex.dbWorkoutExerciseId)
-          } catch {
-            /* may already be gone */
-          }
-        }
-        useWorkoutStore.setState((s) => ({
-          exercises: s.exercises.filter((e) => e.id !== ex.id),
-        }))
-      }
+      // Local store first (synchronous) so totals below only see completed work
+      useWorkoutStore.setState((s) => ({
+        exercises: s.exercises
+          .filter((ex) => ex.sets.some((set) => set.completed))
+          .map((ex) => ({ ...ex, sets: ex.sets.filter((set) => set.completed) })),
+      }))
 
       const fresh = useWorkoutStore.getState()
       const displayUnits = fresh.units
@@ -655,21 +646,12 @@ export default function Workout() {
         await deleteWorkout(currentWorkoutId)
         useWorkoutStore.getState().finishWorkout()
         setConfirmFinish(false)
-        await invalidateAfterWorkout()
+        invalidateAfterWorkout()
         navigate('/')
         return
       }
 
       const volume = Math.round(totalVolumeKg(completedSets) * 10) / 10
-
-      // Exclude current workout so already-upserted sets don't mask new PRs
-      const prevPrs: Record<string, { weight: number; reps: number } | null> = {}
-      for (const ex of fresh.exercises) {
-        const pr = await getExercisePersonalRecord(userId, ex.exerciseId, currentWorkoutId)
-        prevPrs[ex.exerciseId] =
-          pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
-      }
-      const hits = detectPrHits(completedSets, prevPrs)
 
       const warmupSec = fresh.warmupStartedAt
         ? Math.round(
@@ -681,34 +663,74 @@ export default function Workout() {
           )
         : 0
 
+      // Everything independent runs in parallel: PR lookups (current workout
+      // excluded so already-upserted sets don't mask new PRs), cleanup deletes,
+      // and one UPDATE that ends the workout and writes feel/note/warmup.
+      const [prResults] = await Promise.all([
+        Promise.all(
+          fresh.exercises.map((ex) =>
+            getExercisePersonalRecord(userId, ex.exerciseId, currentWorkoutId),
+          ),
+        ),
+        deleteSets(incompleteSetIds).catch(() => {
+          /* rows may never have been persisted */
+        }),
+        deleteWorkoutExercises(emptyWeIds).catch(() => {
+          /* may already be gone */
+        }),
+        finishWorkoutDb(currentWorkoutId, {
+          feel: fresh.feel,
+          note: fresh.note.trim() || null,
+          warmup_started_at: fresh.warmupStartedAt,
+          warmup_ended_at: fresh.warmupEndedAt,
+          warmup_note: fresh.warmupNote.trim() || null,
+        }),
+      ])
+
+      const prevPrs: Record<string, { weight: number; reps: number } | null> = {}
+      fresh.exercises.forEach((ex, i) => {
+        const pr = prResults[i]
+        prevPrs[ex.exerciseId] =
+          pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
+      })
+      // A PR needs a previous best; first-ever sets are reported as "First log"
+      const hits = detectPrHits(completedSets, prevPrs)
+      const firstLogs = detectFirstLogs(completedSets, prevPrs)
+      const step = fresh.weightStep
+
       useWorkoutStore.getState().setSummarySnapshot({
         durationSec: Math.round(elapsedMs / 1000),
         warmupSec: Math.max(0, warmupSec),
         volumeKg: volume,
         setCount: completedSets.length,
+        title: resolveSummaryTitle({
+          label: fresh.workoutLabel,
+          typeExplicit: fresh.workoutTypeExplicit,
+          muscleGroups: fresh.exercises.map((e) => e.muscleGroup),
+        }),
         prLabels: hits.map(
-          (h) =>
-            `${h.exerciseName} ${formatWeight(h.weight, displayUnits)} × ${h.reps}`,
+          (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, displayUnits, step)}`,
         ),
-      })
-
-      await finishWorkoutDb(currentWorkoutId, {
-        feel: fresh.feel,
-        note: fresh.note.trim() || null,
-      })
-      await updateWorkoutMeta(currentWorkoutId, {
-        warmup_started_at: fresh.warmupStartedAt,
-        warmup_ended_at: fresh.warmupEndedAt,
-        warmup_note: fresh.warmupNote.trim() || null,
-        feel: fresh.feel,
-        note: fresh.note.trim() || null,
+        firstLogLabels: firstLogs.map(
+          (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, displayUnits, step)}`,
+        ),
+        exercises: fresh.exercises.map((ex) => ({
+          name: ex.name,
+          sets: ex.sets.map((s) => ({
+            weightKg:
+              s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
+            reps: s.reps === '' ? null : parseInt(s.reps, 10),
+          })),
+        })),
       })
 
       useWorkoutStore.getState().setPhase('summary')
       setConfirmFinish(false)
-      await invalidateAfterWorkout()
+      invalidateAfterWorkout()
     } catch (err) {
-      setSaveError((err as Error).message)
+      const message = (err as Error).message
+      setSaveError(message)
+      toast.show(`Couldn't finish workout: ${message}`, { kind: 'error' })
     } finally {
       setIsFinishing(false)
     }
@@ -731,7 +753,7 @@ export default function Workout() {
               <button
                 key={type}
                 type="button"
-                onClick={() => beginWorkoutWithType(type)}
+                onClick={() => beginWorkoutWithType(type, true)}
                 className={cn(
                   'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
                   suggestedHighlight === type
@@ -766,7 +788,9 @@ export default function Workout() {
           animate={{ opacity: 1, y: 0 }}
         >
           <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Session complete</p>
-          <h1 className="text-3xl font-black text-text-primary mb-6">{workoutLabel || 'Workout'}</h1>
+          <h1 className="text-3xl font-black text-text-primary mb-6">
+            {summarySnapshot.title || 'Workout'}
+          </h1>
 
           <div className="grid grid-cols-2 gap-3 mb-6">
             {[
@@ -783,6 +807,50 @@ export default function Workout() {
           </div>
 
           <PrCelebration labels={summarySnapshot.prLabels} />
+
+          {(summarySnapshot.firstLogLabels?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-border bg-surface p-4 mb-6">
+              <p className="text-[11px] text-text-secondary uppercase tracking-widest mb-2">
+                First log
+              </p>
+              <ul className="space-y-1">
+                {summarySnapshot.firstLogLabels?.map((label) => (
+                  <li key={label} className="text-sm text-text-primary">
+                    {label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(summarySnapshot.exercises?.length ?? 0) > 0 && (
+            <div className="space-y-3 mb-6">
+              {summarySnapshot.exercises?.map((ex, i) => {
+                const best = bestPersonalRecord(
+                  ex.sets.map((s) => ({ weight: s.weightKg, reps: s.reps })),
+                )
+                return (
+                  <div key={`${ex.name}-${i}`} className="rounded-xl border border-border bg-surface p-4">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-sm font-semibold text-text-primary">{ex.name}</p>
+                      {best && (
+                        <p className="text-[11px] text-primary shrink-0">
+                          Best {formatSetLine(best.weight, best.reps, units, weightStep)}
+                        </p>
+                      )}
+                    </div>
+                    <ul className="mt-2 space-y-0.5">
+                      {ex.sets.map((s, si) => (
+                        <li key={si} className="text-xs text-text-secondary tabular-nums">
+                          {si + 1}. {formatSetLine(s.weightKg, s.reps, units, weightStep)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
             How did it feel? (optional)
@@ -817,22 +885,21 @@ export default function Workout() {
             size="lg"
             className="w-full"
             onClick={() => {
-              void (async () => {
-                if (currentWorkoutId) {
-                  try {
-                    await updateWorkoutMeta(currentWorkoutId, {
-                      feel,
-                      note: note.trim() || null,
-                    })
-                  } catch {
-                    /* still leave summary */
-                  }
-                }
-                // Ensure dashboard "Workouts this week" refetches before home mounts
-                await invalidateAfterWorkout()
-                useWorkoutStore.getState().finishWorkout()
-                navigate('/')
-              })()
+              // Optimistic: leave immediately, save feel/note in the background
+              const workoutId = currentWorkoutId
+              const noteValue = note.trim() || null
+              const feelValue = feel
+              useWorkoutStore.getState().finishWorkout()
+              navigate('/')
+              if (workoutId && (feelValue != null || noteValue)) {
+                void updateWorkoutMeta(workoutId, { feel: feelValue, note: noteValue })
+                  .catch((err: Error) =>
+                    toast.show(`Couldn't save feel/note: ${err.message}`, { kind: 'error' }),
+                  )
+                  .finally(invalidateAfterWorkout)
+              } else {
+                invalidateAfterWorkout()
+              }
             }}
           >
             Done

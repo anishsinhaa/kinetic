@@ -181,7 +181,7 @@ export function MainLayout() {
         </header>
 
         {/* Page content — route transitions */}
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+        <main className="flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] md:pb-0">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}
@@ -189,7 +189,9 @@ export function MainLayout() {
               animate={{ opacity: 1, y: 0 }}
               exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              style={{ height: '100%' }}
+              // min-height (not height): a fixed 100% height lets content overflow past
+              // main's bottom padding, hiding page ends behind the bottom nav
+              style={{ minHeight: '100%' }}
             >
               <Suspense fallback={<PageFallback />}>
                 <Outlet />

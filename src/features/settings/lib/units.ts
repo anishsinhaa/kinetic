@@ -63,3 +63,76 @@ export function formatVolume(
 export function weightUnitLabel(units: WeightUnits): string {
   return units
 }
+
+/** Snap a number to the nearest multiple of `step` (float-noise free). */
+export function snapToStep(value: number, step: number): number {
+  if (!Number.isFinite(step) || step <= 0) return value
+  return Number((Math.round(value / step) * step).toFixed(4))
+}
+
+/**
+ * Weight shown in the UI for a stored kg value.
+ *
+ * kg values are shown as stored (2 decimals max). lb values are converted and
+ * snapped to the user's weight step so conversion noise (187.39, 220.46) never
+ * leaks into the UI. `step` is in display units (see Settings → Weight step).
+ * A value within 0.05 of a whole number is treated as that whole number, so a
+ * weight typed in lb (226) round-trips through kg storage unchanged.
+ */
+export function roundWeightForDisplay(
+  kg: number,
+  units: WeightUnits,
+  step?: number | null,
+): number {
+  if (units === 'kg') return roundDisplayWeight(kg, 'kg')
+  const lb = kgToDisplay(kg, 'lb')
+  const whole = Math.round(lb)
+  if (Math.abs(lb - whole) <= 0.05) return whole
+  if (step != null && Number.isFinite(step) && step > 0) return snapToStep(lb, step)
+  return whole
+}
+
+/** Like displayWeightString, but snapped to the user's step for lb. */
+export function displayWeightStringStepped(
+  kg: number | null | undefined,
+  units: WeightUnits,
+  step?: number | null,
+): string {
+  if (kg == null || !Number.isFinite(kg)) return ''
+  return String(roundWeightForDisplay(kg, units, step))
+}
+
+/** "100 kg × 5" / "226 lb × 5". Missing reps render as "—". */
+export function formatSetLine(
+  kg: number | null | undefined,
+  reps: number | null | undefined,
+  units: WeightUnits,
+  step?: number | null,
+): string {
+  const w =
+    kg == null || !Number.isFinite(kg) ? '—' : `${roundWeightForDisplay(kg, units, step)} ${units}`
+  const r = reps == null || !Number.isFinite(reps) ? '—' : String(reps)
+  return `${w} × ${r}`
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** "2026-10-18" → "18 Oct" (no timezone math). */
+export function formatShortDate(isoDate: string | null | undefined): string {
+  if (!isoDate) return ''
+  const m = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return ''
+  const month = MONTHS[Number(m[2]) - 1]
+  if (!month) return ''
+  return `${Number(m[3])} ${month}`
+}
+
+/** "PR 226 lb × 5 · 18 Oct" */
+export function formatPrLine(
+  pr: { weight: number | null; reps: number | null; date?: string | null },
+  units: WeightUnits,
+  step?: number | null,
+): string {
+  const date = formatShortDate(pr.date)
+  return `PR ${formatSetLine(pr.weight, pr.reps, units, step)}${date ? ` · ${date}` : ''}`
+}

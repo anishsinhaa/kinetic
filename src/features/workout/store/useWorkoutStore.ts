@@ -11,12 +11,31 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
+export interface WorkoutSummarySnapshot {
+  durationSec: number
+  warmupSec: number
+  volumeKg: number
+  setCount: number
+  /** Heading shown on the summary (actual type, or neutral "Workout"). */
+  title?: string
+  prLabels: string[]
+  /** Exercises logged for the first time — a baseline, not a PR. */
+  firstLogLabels?: string[]
+  /** Per-exercise breakdown captured before the store resets. */
+  exercises?: Array<{
+    name: string
+    sets: Array<{ weightKg: number | null; reps: number | null }>
+  }>
+}
+
 interface WorkoutStore {
   phase: WorkoutPhase
   currentWorkoutId: string | null
   workoutDate: string
   workoutStartedAt: string | null
   workoutLabel: string
+  /** True once the user explicitly chose the type (vs an auto-suggested default). */
+  workoutTypeExplicit: boolean
   workoutTypes: string[]
   suggestedType: string | null
   exercises: WorkoutExerciseDraft[]
@@ -30,17 +49,18 @@ interface WorkoutStore {
   units: WeightUnits
   feel: number | null
   note: string
-  summarySnapshot: {
-    durationSec: number
-    warmupSec: number
-    volumeKg: number
-    setCount: number
-    prLabels: string[]
-  } | null
+  summarySnapshot: WorkoutSummarySnapshot | null
 
-  startWorkout: (workoutId: string, date: string, startedAt: string, label?: string) => void
+  startWorkout: (
+    workoutId: string,
+    date: string,
+    startedAt: string,
+    label?: string,
+    typeExplicit?: boolean,
+  ) => void
   setPhase: (phase: WorkoutPhase) => void
-  setWorkoutLabel: (label: string) => void
+  /** Choosing a type through the UI marks it explicit. */
+  setWorkoutLabel: (label: string, explicit?: boolean) => void
   setWorkoutTypes: (types: string[]) => void
   setSuggestedType: (type: string | null) => void
   addWorkoutType: (label: string) => void
@@ -107,6 +127,7 @@ const initialSession = {
   workoutDate: new Date().toISOString().slice(0, 10),
   workoutStartedAt: null as string | null,
   workoutLabel: '',
+  workoutTypeExplicit: false,
   exercises: [] as WorkoutExerciseDraft[],
   warmupStartedAt: null as string | null,
   warmupEndedAt: null as string | null,
@@ -128,7 +149,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
       weightStep: 2.5,
       units: 'kg',
 
-      startWorkout: (workoutId, date, startedAt, label = '') =>
+      startWorkout: (workoutId, date, startedAt, label = '', typeExplicit = false) =>
         set({
           ...initialSession,
           phase: 'warmup',
@@ -136,6 +157,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           workoutDate: date,
           workoutStartedAt: startedAt,
           workoutLabel: label,
+          workoutTypeExplicit: typeExplicit,
           restTotalSeconds: get().restDefaultSeconds,
           workoutTypes: get().workoutTypes,
           suggestedType: get().suggestedType,
@@ -146,8 +168,15 @@ export const useWorkoutStore = create<WorkoutStore>()(
 
       setPhase: (phase) =>
         set((state) => (state.phase === phase ? state : { phase })),
-      setWorkoutLabel: (label) =>
-        set((state) => (state.workoutLabel === label ? state : { workoutLabel: label })),
+      setWorkoutLabel: (label, explicit = true) =>
+        set((state) =>
+          state.workoutLabel === label && (!explicit || state.workoutTypeExplicit)
+            ? state
+            : {
+                workoutLabel: label,
+                workoutTypeExplicit: explicit ? true : state.workoutTypeExplicit,
+              },
+        ),
       setWorkoutTypes: (types) =>
         set((state) => {
           const next = resolveWorkoutTypes(types)
@@ -373,6 +402,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         workoutDate: state.workoutDate,
         workoutStartedAt: state.workoutStartedAt,
         workoutLabel: state.workoutLabel,
+        workoutTypeExplicit: state.workoutTypeExplicit,
         workoutTypes: state.workoutTypes,
         suggestedType: state.suggestedType,
         exercises: state.exercises,
