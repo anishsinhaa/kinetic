@@ -51,6 +51,8 @@ export interface ExerciseRow {
   difficulty: string | null
   exercise_type: string | null
   instructions: string | null
+  /** Comma-separated aliases ("back squat, barbell squat") searched alongside `name`. */
+  search_terms: string | null
   is_custom: boolean
   created_by: string | null
   created_at: string

@@ -1,6 +1,8 @@
 import type { WorkoutExerciseTarget, WorkoutRow } from '../../lib/supabase/database.types'
 
-export type WorkoutPhase = 'idle' | 'type' | 'warmup' | 'training' | 'summary'
+// Warmup is an optional card inside the training view, not a phase. 'type' / 'warmup'
+// values persisted by older builds are coerced on rehydrate (see the store's merge).
+export type WorkoutPhase = 'idle' | 'training' | 'summary'
 
 export interface WorkoutSetDraft {
   id: string

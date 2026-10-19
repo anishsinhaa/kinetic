@@ -115,12 +115,12 @@ describe('Workout page render', () => {
     errorSpy.mockRestore()
   })
 
-  it('shows type picker for bare start=1 without looping', async () => {
+  it('starts the suggested type for bare start=1 without looping', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     renderWorkout('/workout?start=1')
 
     await waitFor(() => {
-      expect(screen.getByText('Pick a type')).toBeInTheDocument()
+      expect(useWorkoutStore.getState().currentWorkoutId).toBeTruthy()
     })
     await new Promise((r) => setTimeout(r, 30))
     assertNoUpdateDepthLoop(errorSpy)
@@ -135,9 +135,9 @@ describe('Workout page render', () => {
 
     await waitFor(() => {
       expect(useWorkoutStore.getState().currentWorkoutId).toBeTruthy()
-      expect(useWorkoutStore.getState().phase).toBe('warmup')
+      expect(useWorkoutStore.getState().phase).toBe('training')
     })
-    expect(await screen.findByRole('heading', { name: 'Warmup' })).toBeInTheDocument()
+    expect(await screen.findByText('Warmup')).toBeInTheDocument()
     await waitFor(() => {
       expect(createWorkout).toHaveBeenCalled()
     })
@@ -146,24 +146,20 @@ describe('Workout page render', () => {
     errorSpy.mockRestore()
   })
 
-  it('starts a workout from type chip without looping', async () => {
+  it('starts a workout from the Start button without looping', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(createWorkout).mockClear()
 
-    renderWorkout('/workout?start=1')
+    renderWorkout('/workout')
 
-    await waitFor(() => {
-      expect(screen.getByText('Pick a type')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /^push$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /start workout/i }))
 
     await waitFor(() => {
       expect(useWorkoutStore.getState().currentWorkoutId).toBeTruthy()
-      expect(useWorkoutStore.getState().phase).toBe('warmup')
+      expect(useWorkoutStore.getState().phase).toBe('training')
     })
 
-    expect(await screen.findByRole('heading', { name: 'Warmup' })).toBeInTheDocument()
+    expect(await screen.findByText('Warmup')).toBeInTheDocument()
     await waitFor(() => {
       expect(createWorkout).toHaveBeenCalled()
     })

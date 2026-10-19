@@ -8,8 +8,6 @@ type RestTimerRingProps = {
   onSkip: () => void
   onAdjust: (deltaSec: number) => void
   onComplete: () => void
-  /** When true, renders in-flow (for footer stack) instead of fixed overlay */
-  inline?: boolean
 }
 
 async function vibrateDone() {
@@ -27,14 +25,23 @@ async function vibrateDone() {
   }
 }
 
-/** Compact rest bar — prefer `inline` inside the footer so it never covers Finish. */
+function formatClock(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/**
+ * Large rest-timer panel pinned above the bottom nav. It lives apart from the
+ * Finish button (which is in the session header) and is unmounted by the page
+ * while the finish confirmation is open.
+ */
 export function RestTimerRing({
   endsAt,
   totalSeconds,
   onSkip,
   onAdjust,
   onComplete,
-  inline = false,
 }: RestTimerRingProps) {
   const [remainingSec, setRemainingSec] = useState(totalSeconds)
   const completedFor = useRef<string | null>(null)
@@ -45,8 +52,7 @@ export function RestTimerRing({
 
     const tick = () => {
       const ms = Math.max(0, new Date(endsAt).getTime() - Date.now())
-      const sec = Math.ceil(ms / 1000)
-      setRemainingSec(sec)
+      setRemainingSec(Math.ceil(ms / 1000))
       if (ms <= 0 && completedFor.current !== endsAt) {
         completedFor.current = endsAt
         void vibrateDone()
@@ -67,38 +73,51 @@ export function RestTimerRing({
 
   if (!endsAt) return null
 
-  const bar = (
-    <div className="bg-surface/95 backdrop-blur border border-border rounded-xl px-3 py-2 shadow-card flex items-center gap-3 w-full max-w-lg mx-auto">
-      <div className="tabular-nums font-black text-primary text-sm w-10 shrink-0">
-        {remainingSec}s
-      </div>
-      <div className="flex-1 h-1.5 bg-surface-3 rounded-full overflow-hidden">
-        <div
-          className="h-full bg-primary rounded-full transition-[width] duration-200"
-          style={{ width: `${Math.round(progress * 100)}%` }}
-        />
-      </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <Button variant="ghost" size="sm" onClick={() => onAdjust(-15)}>
-          −15
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => onAdjust(15)}>
-          +15
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onSkip}>
-          Skip
-        </Button>
-      </div>
-    </div>
-  )
-
-  if (inline) {
-    return <div className="w-full mb-2">{bar}</div>
-  }
-
   return (
-    <div className="fixed bottom-19 md:bottom-16 left-0 md:left-52 right-0 z-40 px-4 pointer-events-none">
-      <div className="pointer-events-auto">{bar}</div>
+    <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 left-0 md:left-52 right-0 z-30 px-3 pb-2 pointer-events-none">
+      <div
+        role="timer"
+        aria-label="Rest timer"
+        className="pointer-events-auto max-w-lg mx-auto bg-surface border border-primary/40 rounded-2xl shadow-card px-4 py-3"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-widest text-text-secondary">Rest</p>
+            <p className="tabular-nums font-black text-primary text-4xl leading-none">
+              {formatClock(remainingSec)}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              className="min-h-11 min-w-12"
+              aria-label="Subtract 15 seconds"
+              onClick={() => onAdjust(-15)}
+            >
+              −15
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              className="min-h-11 min-w-12"
+              aria-label="Add 15 seconds"
+              onClick={() => onAdjust(15)}
+            >
+              +15
+            </Button>
+            <Button variant="primary" size="md" className="min-h-11" onClick={onSkip}>
+              Skip
+            </Button>
+          </div>
+        </div>
+        <div className="mt-3 h-2 bg-surface-3 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-[width] duration-200"
+            style={{ width: `${Math.round(progress * 100)}%` }}
+          />
+        </div>
+      </div>
     </div>
   )
 }

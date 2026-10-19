@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Button } from '../components/ui/Button'
-import { Plus, Timer, Dumbbell, Loader2 } from 'lucide-react'
+import { BottomSheet } from '../components/ui/BottomSheet'
+import { ChevronDown, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
@@ -31,6 +32,7 @@ import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { suggestNextType } from '../features/workout/lib/suggestNextType'
+import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { totalVolumeKg } from '../features/workout/lib/volume'
 import { bestPersonalRecord, detectFirstLogs, detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
@@ -97,8 +99,6 @@ export default function Workout() {
   const isRepeatMode = searchParams.get('repeat') === '1'
   const autoStart = searchParams.get('start') === '1'
   const preselectedType = searchParams.get('type')
-  // ?type=… from an auto-suggestion (suggested=1) is not an explicit user choice
-  const preselectedTypeExplicit = searchParams.get('suggested') !== '1'
 
   // Selectors only — never subscribe to the whole store (avoids update-depth loops)
   const phase = useWorkoutStore((s) => s.phase)
@@ -110,6 +110,7 @@ export default function Workout() {
   const warmupStartedAt = useWorkoutStore((s) => s.warmupStartedAt)
   const warmupEndedAt = useWorkoutStore((s) => s.warmupEndedAt)
   const warmupNote = useWorkoutStore((s) => s.warmupNote)
+  const warmupDismissed = useWorkoutStore((s) => s.warmupDismissed)
   const restEndsAt = useWorkoutStore((s) => s.restEndsAt)
   const restTotalSeconds = useWorkoutStore((s) => s.restTotalSeconds)
   const weightStep = useWorkoutStore((s) => s.weightStep)
@@ -122,6 +123,8 @@ export default function Workout() {
   const [saveError, setSaveError] = useState('')
   const [tick, setTick] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [typeSheetOpen, setTypeSheetOpen] = useState(false)
+  const [pickedType, setPickedType] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [isFinishing, setIsFinishing] = useState(false)
   const [setStatusMap, setSetStatusMap] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
@@ -216,39 +219,31 @@ export default function Workout() {
     queryFn: () => getRecentWorkoutTypes(userId),
   })
 
-  useEffect(() => {
-    void getUserSettings(userId)
-      .then((s) => {
-        const api = useWorkoutStore.getState()
-        api.setWorkoutTypes(resolveWorkoutTypes(s.workoutTypes))
-        api.setPrefs({
-          weightStep: s.weightStep,
-          restDefaultSeconds: s.restTimerSeconds,
-          units: s.units,
-        })
-      })
-      .catch(() => {
-        useWorkoutStore.getState().setWorkoutTypes(resolveWorkoutTypes(null))
-      })
-  }, [userId])
+  // Shared with the Settings page: edits there show up here without a refetch,
+  // and the rest-timer default always comes from the same cached value.
+  const settingsQuery = useQuery({
+    queryKey: ['user-settings', userId],
+    queryFn: () => getUserSettings(userId),
+    staleTime: 5 * 60 * 1000,
+  })
+  const settings = settingsQuery.data
 
-  // Open type picker only when Start has no type (chips / suggested type auto-start below)
   useEffect(() => {
-    if (currentWorkoutId) return
-    if (preselectedType || isRepeatMode) return
-    if (!autoStart) return
-    if (useWorkoutStore.getState().phase === 'idle') {
-      useWorkoutStore.getState().setPhase('type')
+    if (!settings) return
+    const api = useWorkoutStore.getState()
+    api.setWorkoutTypes(resolveWorkoutTypes(settings.workoutTypes))
+    api.setPrefs({
+      weightStep: settings.weightStep,
+      restDefaultSeconds: settings.restTimerSeconds,
+      units: settings.units,
+    })
+  }, [settings])
+
+  useEffect(() => {
+    if (settingsQuery.isError) {
+      useWorkoutStore.getState().setWorkoutTypes(resolveWorkoutTypes(null))
     }
-  }, [autoStart, isRepeatMode, preselectedType, currentWorkoutId])
-
-  // Resume persisted session
-  useEffect(() => {
-    if (!currentWorkoutId || phase !== 'idle') return
-    useWorkoutStore
-      .getState()
-      .setPhase(warmupEndedAt || !warmupStartedAt ? 'training' : 'warmup')
-  }, [currentWorkoutId, phase, warmupEndedAt, warmupStartedAt])
+  }, [settingsQuery.isError])
 
   useEffect(() => {
     if (!currentWorkoutId || !workoutStartedAt) return
@@ -271,17 +266,14 @@ export default function Workout() {
   const typeChips = useMemo(() => resolveWorkoutTypes(workoutTypes), [workoutTypes])
 
   // Derive suggestion — never write it into the store during render/effects
-  const suggestedHighlight = useMemo(() => {
-    if (preselectedType) return preselectedType
-    if (isRepeatMode && latestWorkoutQuery.data?.label) return latestWorkoutQuery.data.label
-    return suggestNextType(recentTypesQuery.data ?? [], typeChips)
-  }, [
-    preselectedType,
-    isRepeatMode,
-    latestWorkoutQuery.data?.label,
-    recentTypesQuery.data,
-    typeChips,
-  ])
+  const suggestedType = useMemo(
+    () => suggestNextType(recentTypesQuery.data ?? [], typeChips) ?? typeChips[0] ?? '',
+    [recentTypesQuery.data, typeChips],
+  )
+  const idleType = pickedType ?? suggestedType
+  const suggestionsReady =
+    (settingsQuery.isSuccess || settingsQuery.isError) &&
+    (recentTypesQuery.isSuccess || recentTypesQuery.isError)
 
   const canEdit = Boolean(currentWorkoutId) && dbReady && phase === 'training'
 
@@ -305,7 +297,7 @@ export default function Workout() {
     })
   }
 
-  const beginWorkoutWithType = (typeLabel: string, typeExplicit = false) => {
+  const beginWorkoutWithType = (typeLabel: string, typeExplicit = false, repeat = false) => {
     if (currentWorkoutId || startingRef.current) return
     const normalizedType = typeLabel.trim()
     if (!normalizedType) return
@@ -326,7 +318,7 @@ export default function Workout() {
         await createWorkout(userId, today, normalizedType, workoutId)
         setDbReady(true)
 
-        if (isRepeatMode && latestWorkoutQuery.data?.exercises?.length) {
+        if (repeat && latestWorkoutQuery.data?.exercises?.length) {
           const displayUnits = useWorkoutStore.getState().units
           for (const ex of latestWorkoutQuery.data.exercises) {
             try {
@@ -363,31 +355,32 @@ export default function Workout() {
     })()
   }
 
-  // Dashboard chip / Start with type — honor URL type after persist rehydrates.
-  // Empty abandoned sessions must not steal the chosen chip (e.g. Push → Pull).
+  // Deep links: ?type=X starts X; a bare ?start=1 (Home's Start button) starts the
+  // suggested type. Empty abandoned sessions must not steal an explicitly chosen type.
   useEffect(() => {
     if (!storeHydrated || startingRef.current) return
-    const type = preselectedType?.trim()
-    if (!type) return
-    if (!(autoStart || Boolean(preselectedType))) return
+    const chosen = preselectedType?.trim()
+    if (!chosen && !autoStart) return
+    if (!chosen && !suggestionsReady) return
 
     const state = useWorkoutStore.getState()
     if (state.currentWorkoutId) {
       const hasCompleted = state.exercises.some((e) => e.sets.some((s) => s.completed))
-      if (hasCompleted) {
+      if (hasCompleted || !chosen) {
         // Real in-progress session — resume; drop deep-link params
         setSearchParams({}, { replace: true })
         return
       }
-      // Discard empty in-progress so the chip type wins
+      // Discard empty in-progress so the chosen type wins
       const abandonId = state.currentWorkoutId
       void deleteWorkout(abandonId).catch(() => {})
       useWorkoutStore.getState().finishWorkout()
     }
 
-    beginWorkoutWithType(type, preselectedTypeExplicit)
+    if (chosen) beginWorkoutWithType(chosen, true)
+    else beginWorkoutWithType(suggestedType, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per deep link
-  }, [storeHydrated, autoStart, preselectedType])
+  }, [storeHydrated, autoStart, preselectedType, suggestionsReady])
 
   // Repeat last — start with last type as soon as latest workout loads
   useEffect(() => {
@@ -396,7 +389,7 @@ export default function Workout() {
     if (!isRepeatMode) return
     const label = latestWorkoutQuery.data?.label?.trim()
     if (!label) return
-    beginWorkoutWithType(label)
+    beginWorkoutWithType(label, false, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeHydrated, isRepeatMode, latestWorkoutQuery.data?.label])
 
@@ -535,7 +528,7 @@ export default function Workout() {
 
   const handleCompleteSet = async (exerciseLocalId: string, setLocalId: string, index: number) => {
     const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
-    useWorkoutStore.getState().completeSet(exerciseLocalId, setLocalId)
+    useWorkoutStore.getState().completeSet(exerciseLocalId, setLocalId, settings?.restTimerSeconds)
     queuePersist(exerciseLocalId, setLocalId, ex?.dbWorkoutExerciseId, index)
     await persistQueueRef.current.flush(setLocalId)
   }
@@ -578,17 +571,32 @@ export default function Workout() {
     void queryClient.invalidateQueries({ queryKey: ['progress'] })
   }
 
-  const handleDeleteSet = async (exerciseLocalId: string, setLocalId: string) => {
+  const handleDeleteSet = (exerciseLocalId: string, setLocalId: string) => {
+    const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
+    const index = ex?.sets.findIndex((s) => s.id === setLocalId) ?? -1
+    const removed = index >= 0 ? ex?.sets[index] : undefined
+    if (!ex || !removed) return
+
     useWorkoutStore.getState().removeSet(exerciseLocalId, setLocalId)
-    try {
-      await deleteSet(setLocalId)
-    } catch {
+    void deleteSet(setLocalId).catch(() => {
       // row may never have been persisted
-    }
+    })
     setSetStatusMap((prev) => {
       const next = { ...prev }
       delete next[setLocalId]
       return next
+    })
+
+    // Undo puts the set back and re-saves it
+    toast.show('Set deleted', {
+      durationMs: 5000,
+      action: {
+        label: 'Undo',
+        onAction: () => {
+          useWorkoutStore.getState().restoreSet(exerciseLocalId, removed, index)
+          queuePersist(exerciseLocalId, setLocalId, ex.dbWorkoutExerciseId, index)
+        },
+      },
     })
   }
 
@@ -599,6 +607,16 @@ export default function Workout() {
     void persistQueueRef.current.flushAll().then(() => {
       useWorkoutStore.getState().addSet(exerciseLocalId)
     })
+  }
+
+  const handleSelectType = (type: string) => {
+    setTypeSheetOpen(false)
+    if (currentWorkoutId) {
+      useWorkoutStore.getState().setWorkoutLabel(type)
+      void updateWorkoutLabel(currentWorkoutId, type)
+    } else {
+      setPickedType(type)
+    }
   }
 
   const handleFinishConfirm = async () => {
@@ -736,45 +754,100 @@ export default function Workout() {
     }
   }
 
-  // ── Idle / type picker ─────────────────────────────────────────────────────
-  if (!currentWorkoutId || phase === 'type' || phase === 'idle') {
-    const showType = phase === 'type' || autoStart || isRepeatMode || Boolean(preselectedType)
+  const typeSheet = (
+    <BottomSheet
+      open={typeSheetOpen}
+      onClose={() => setTypeSheetOpen(false)}
+      title="Workout type"
+    >
+      <div className="p-4 flex flex-wrap gap-2">
+        {typeChips.map((type) => {
+          const active = (currentWorkoutId ? workoutLabel : idleType) === type
+          return (
+            <button
+              key={type}
+              type="button"
+              onClick={() => handleSelectType(type)}
+              className={cn(
+                'px-4 rounded-xl text-sm font-semibold uppercase tracking-wider border min-h-11',
+                active
+                  ? 'bg-primary text-black border-primary'
+                  : 'border-border text-text-secondary hover:border-primary',
+              )}
+            >
+              {type}
+            </button>
+          )
+        })}
+      </div>
+    </BottomSheet>
+  )
+
+  // ── Idle ───────────────────────────────────────────────────────────────────
+  if (!currentWorkoutId) {
+    const starting = (autoStart || Boolean(preselectedType) || isRepeatMode) && !saveError
+    const latest = latestWorkoutQuery.data
     return (
-      <div className="p-4 md:p-8 pb-28">
-        <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Workout</p>
-        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary mb-4">
-          {showType ? 'Pick a type' : 'Ready'}
-        </h1>
+      <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
+        <p className="text-[11px] text-primary uppercase tracking-widest mb-1">Workout</p>
+        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary mb-6">Ready</h1>
         {saveError && <p className="text-xs text-red-400 mb-3">{saveError}</p>}
 
-        {showType ? (
-          <div className="flex flex-wrap gap-2">
-            {typeChips.map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => beginWorkoutWithType(type, true)}
-                className={cn(
-                  'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
-                  suggestedHighlight === type
-                    ? 'bg-primary text-black border-primary'
-                    : 'border-border text-text-secondary hover:border-primary',
-                )}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
+        {starting ? (
+          <p className="flex items-center gap-2 text-sm text-text-secondary">
+            <Loader2 size={16} className="animate-spin text-primary" /> Starting workout…
+          </p>
         ) : (
-          <Button
-            variant="primary"
-            size="lg"
-            onClick={() => useWorkoutStore.getState().setPhase('type')}
-          >
-            <Dumbbell size={14} className="mr-2" />
-            Start Workout
-          </Button>
+          <div className="space-y-4">
+            <button
+              type="button"
+              onClick={() => setTypeSheetOpen(true)}
+              aria-label={`Workout type: ${idleType || 'none'}. Change`}
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 min-h-11 text-sm font-semibold uppercase tracking-wider text-text-primary hover:border-primary"
+            >
+              {idleType || 'Pick type'}
+              <ChevronDown size={14} className="text-text-secondary" />
+            </button>
+
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full min-h-14 text-base"
+              disabled={!idleType}
+              onClick={() => beginWorkoutWithType(idleType, pickedType != null)}
+            >
+              <Dumbbell size={16} className="mr-2" />
+              Start workout
+            </Button>
+
+            {latest && (
+              <button
+                type="button"
+                onClick={() => beginWorkoutWithType(latest.label || idleType, false, true)}
+                className="block mx-auto min-h-11 px-3 text-sm text-primary underline underline-offset-4"
+              >
+                Repeat last workout
+              </button>
+            )}
+
+            {latest && (
+              <div className="rounded-xl border border-border bg-surface p-4">
+                <p className="text-[11px] text-text-secondary uppercase tracking-widest mb-1">
+                  Last workout
+                </p>
+                <p className="text-sm font-semibold text-text-primary">
+                  {latest.label || 'Workout'} · {formatRelativeDate(latest.date)}
+                </p>
+                <p className="text-xs text-text-secondary mt-1">
+                  {latest.exerciseCount} exercise{latest.exerciseCount === 1 ? '' : 's'} ·{' '}
+                  {latest.setCount} set{latest.setCount === 1 ? '' : 's'} ·{' '}
+                  {formatVolume(latest.totalVolumeKg, units)}
+                </p>
+              </div>
+            )}
+          </div>
         )}
+        {typeSheet}
       </div>
     )
   }
@@ -787,7 +860,7 @@ export default function Workout() {
           initial={reduceMotion ? false : { opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Session complete</p>
+          <p className="text-[11px] text-primary uppercase tracking-widest mb-1">Session complete</p>
           <h1 className="text-3xl font-black text-text-primary mb-6">
             {summarySnapshot.title || 'Workout'}
           </h1>
@@ -800,7 +873,7 @@ export default function Workout() {
               ['Sets', String(summarySnapshot.setCount)],
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl border border-border bg-surface p-4">
-                <p className="text-[10px] text-text-muted uppercase tracking-widest">{label}</p>
+                <p className="text-[11px] text-text-muted uppercase tracking-widest">{label}</p>
                 <p className="text-xl font-black text-text-primary mt-1">{value}</p>
               </div>
             ))}
@@ -852,7 +925,7 @@ export default function Workout() {
             </div>
           )}
 
-          <p className="text-[10px] text-text-secondary uppercase tracking-widest mb-2">
+          <p className="text-[11px] text-text-secondary uppercase tracking-widest mb-2">
             How did it feel? (optional)
           </p>
           <div className="flex gap-2 mb-4">
@@ -909,123 +982,111 @@ export default function Workout() {
     )
   }
 
-  // ── Warmup ─────────────────────────────────────────────────────────────────
-  if (phase === 'warmup') {
-    return (
-      <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
-        <p className="text-[10px] text-primary uppercase tracking-widest mb-1">{workoutLabel}</p>
-        <h1 className="text-3xl font-black text-text-primary mb-2">Warmup</h1>
-        <p className="text-text-secondary text-sm mb-6">Optional — skip anytime.</p>
-
-        <div className="rounded-2xl border border-border bg-surface p-8 text-center mb-4">
-          <p className="text-[10px] text-text-muted uppercase tracking-widest mb-2 flex items-center justify-center gap-1">
-            <Timer size={12} /> Warmup clock
-          </p>
-          <p className="text-5xl font-black tabular-nums text-text-primary">
-            {formatElapsed(warmupElapsedMs)}
-          </p>
-        </div>
-
-        <textarea
-          value={warmupNote}
-          onChange={(e) => useWorkoutStore.getState().setWarmupNote(e.target.value)}
-          placeholder="Warmup note (optional)"
-          rows={2}
-          className="w-full mb-4 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
-        />
-
-        <div className="flex flex-col gap-2">
-          {!warmupStartedAt ? (
-            <Button variant="primary" size="lg" onClick={() => useWorkoutStore.getState().startWarmup()}>
-              Start Warmup
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              size="lg"
-              onClick={() => {
-                useWorkoutStore.getState().endWarmup()
-                if (currentWorkoutId) {
-                  void updateWorkoutMeta(currentWorkoutId, {
-                    warmup_started_at: useWorkoutStore.getState().warmupStartedAt,
-                    warmup_ended_at: new Date().toISOString(),
-                    warmup_note: warmupNote.trim() || null,
-                  })
-                }
-              }}
-            >
-              End Warmup
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="md"
-            onClick={() => {
-              useWorkoutStore.getState().skipWarmup()
-              if (currentWorkoutId) {
-                void updateWorkoutMeta(currentWorkoutId, {
-                  warmup_started_at: null,
-                  warmup_ended_at: null,
-                  warmup_note: warmupNote.trim() || null,
-                })
-              }
-            }}
+  // ── Training ───────────────────────────────────────────────────────────────
+  const showWarmup = !warmupDismissed && completedSetCount === 0
+  return (
+    <div className={cn(restEndsAt && !confirmFinish ? 'pb-56' : 'pb-32')}>
+      {/* Compact header: type pill · timer · Finish (sticks under the section tabs) */}
+      <div className="px-3 md:px-8 py-2 border-b border-border sticky top-[49px] bg-background/95 backdrop-blur z-20">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            disabled={!canEdit}
+            onClick={() => setTypeSheetOpen(true)}
+            aria-label={`Workout type: ${workoutLabel || 'Workout'}. Change`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 min-h-11 text-sm font-semibold uppercase tracking-wider text-text-primary hover:border-primary disabled:opacity-60 max-w-[45%]"
           >
-            Skip
+            <span className="truncate">{workoutLabel || 'Workout'}</span>
+            <ChevronDown size={14} className="text-text-secondary shrink-0" />
+          </button>
+          <p className="text-text-secondary text-sm flex items-center gap-1 tabular-nums">
+            <Timer size={14} />
+            {formatElapsed(elapsedMs)}
+            {!dbReady && <Loader2 size={12} className="animate-spin text-text-muted ml-1" />}
+          </p>
+          <Button
+            variant="primary"
+            size="md"
+            className="min-h-11"
+            disabled={!canEdit}
+            onClick={() => setConfirmFinish(true)}
+          >
+            Finish
           </Button>
         </div>
-        {saveError && <p className="text-xs text-red-400 mt-3">{saveError}</p>}
+        {saveError && <p className="text-xs text-red-400 mt-1">{saveError}</p>}
       </div>
-    )
-  }
 
-  // ── Training ───────────────────────────────────────────────────────────────
-  return (
-    <div className="pb-36">
-      <div className="px-4 md:px-8 pt-5 md:pt-8 pb-4 border-b border-border sticky top-0 bg-background/95 backdrop-blur z-20">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Session</p>
-            <h1 className="text-2xl md:text-4xl font-black uppercase text-text-primary">
-              {workoutLabel || 'Workout'}
-            </h1>
-            <p className="text-text-secondary text-sm mt-1 flex items-center gap-1 tabular-nums">
-              <Timer size={12} />
-              {formatElapsed(elapsedMs)}
-              {!dbReady && (
-                <span className="ml-2 text-text-muted flex items-center gap-1">
-                  <Loader2 size={10} className="animate-spin" /> syncing
-                </span>
+      <div className="px-3 md:px-8 pt-4 space-y-4">
+        {showWarmup && (
+          <div className="rounded-xl border border-border bg-surface p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-text-primary">
+                Warmup <span className="text-text-secondary font-normal">(optional)</span>
+              </p>
+              <button
+                type="button"
+                aria-label="Dismiss warmup"
+                className="min-h-11 min-w-11 flex items-center justify-center text-text-muted hover:text-text-primary"
+                onClick={() => {
+                  useWorkoutStore.getState().skipWarmup()
+                  if (currentWorkoutId) {
+                    void updateWorkoutMeta(currentWorkoutId, {
+                      warmup_started_at: null,
+                      warmup_ended_at: null,
+                      warmup_note: warmupNote.trim() || null,
+                    })
+                  }
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex items-center gap-3 mt-1">
+              <p className="text-2xl font-black tabular-nums text-text-primary">
+                {formatElapsed(warmupElapsedMs)}
+              </p>
+              {!warmupStartedAt ? (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className="min-h-11"
+                  onClick={() => useWorkoutStore.getState().startWarmup()}
+                >
+                  Start warmup
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="min-h-11"
+                  onClick={() => {
+                    useWorkoutStore.getState().endWarmup()
+                    if (currentWorkoutId) {
+                      void updateWorkoutMeta(currentWorkoutId, {
+                        warmup_started_at: useWorkoutStore.getState().warmupStartedAt,
+                        warmup_ended_at: useWorkoutStore.getState().warmupEndedAt,
+                        warmup_note: warmupNote.trim() || null,
+                      })
+                    }
+                  }}
+                >
+                  End warmup
+                </Button>
               )}
-            </p>
+            </div>
+            {warmupStartedAt && (
+              <textarea
+                value={warmupNote}
+                onChange={(e) => useWorkoutStore.getState().setWarmupNote(e.target.value)}
+                placeholder="Warmup note (optional)"
+                rows={2}
+                className="w-full mt-2 bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary"
+              />
+            )}
           </div>
-        </div>
+        )}
 
-        <div className="flex flex-wrap gap-2 mt-3">
-          {typeChips.map((type) => (
-            <button
-              key={type}
-              type="button"
-              disabled={!canEdit}
-              onClick={() => {
-                useWorkoutStore.getState().setWorkoutLabel(type)
-                if (currentWorkoutId) void updateWorkoutLabel(currentWorkoutId, type)
-              }}
-              className={cn(
-                'px-2.5 py-1.5 rounded-xl text-[10px] font-semibold uppercase tracking-wider border min-h-11',
-                workoutLabel === type
-                  ? 'bg-primary text-black border-primary'
-                  : 'border-border text-text-secondary',
-              )}
-            >
-              {type}
-            </button>
-          ))}
-        </div>
-        {saveError && <p className="text-xs text-red-400 mt-2">{saveError}</p>}
-      </div>
-
-      <div className="px-4 md:px-8 pt-4 space-y-4">
         {exercises.map((ex) => (
           <div key={ex.id} className="rounded-xl border border-border bg-surface overflow-hidden">
             <div className="px-4 py-3 border-b border-border">
@@ -1060,7 +1121,7 @@ export default function Workout() {
                       })
                     }}
                     className={cn(
-                      'px-2 py-1 rounded-lg text-[10px] uppercase tracking-wider border',
+                      'px-3 min-h-9 rounded-lg text-[11px] uppercase tracking-wider border',
                       ex.target === value
                         ? 'border-primary text-primary'
                         : 'border-border text-text-muted',
@@ -1070,14 +1131,6 @@ export default function Workout() {
                   </button>
                 ))}
               </div>
-            </div>
-
-            <div className="grid grid-cols-[2rem_1fr_1fr_2.5rem_2.5rem] gap-1.5 px-2 sm:px-3 py-2 text-[10px] text-text-muted uppercase tracking-widest border-b border-border">
-              <span>Set</span>
-              <span className="text-center">Weight ({units})</span>
-              <span className="text-center">Reps</span>
-              <span />
-              <span />
             </div>
 
             {ex.prefillStatus === 'pending' && (
@@ -1092,16 +1145,18 @@ export default function Workout() {
                 index={idx}
                 set={set}
                 weightStep={weightStep}
+                units={units}
                 disabled={!canEdit || ex.prefillStatus === 'pending'}
                 status={setStatusMap[set.id]}
                 onChange={(patch) => {
                   if (ex.prefillStatus === 'pending') return
+                  // Completed sets stay completed — edited in place, rest timer untouched
                   useWorkoutStore.getState().updateSet(ex.id, set.id, patch)
                   queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
                 }}
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
                 onUncomplete={() => void handleUncompleteSet(ex.id, set.id, idx)}
-                onDelete={() => void handleDeleteSet(ex.id, set.id)}
+                onDelete={() => handleDeleteSet(ex.id, set.id)}
                 onRetry={() => queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)}
               />
             ))}
@@ -1110,9 +1165,9 @@ export default function Workout() {
               type="button"
               disabled={!canEdit || ex.prefillStatus === 'pending'}
               onClick={() => handleAddSet(ex.id)}
-              className="w-full py-3 text-xs text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
+              className="w-full min-h-12 text-sm text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
             >
-              <Plus size={12} /> Add set
+              <Plus size={14} /> Add set
             </button>
           </div>
         ))}
@@ -1126,71 +1181,70 @@ export default function Workout() {
           <Plus size={16} />
           <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
         </button>
-
-        {/* Footer stack height reserve */}
-        <div className={cn('h-24', restEndsAt && 'h-36')} aria-hidden />
       </div>
 
-      <div
-        className={cn(
-          'fixed bottom-16 md:bottom-0 left-0 md:left-52 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-3',
-          confirmFinish ? 'z-50' : 'z-30',
-        )}
-      >
+      {/* Hidden while the finish confirmation is open so it can't cover the actions */}
+      {restEndsAt && !confirmFinish && (
         <RestTimerRing
-          inline
           endsAt={restEndsAt}
           totalSeconds={restTotalSeconds}
           onSkip={() => useWorkoutStore.getState().clearRest()}
           onAdjust={(d) => useWorkoutStore.getState().adjustRest(d)}
           onComplete={() => useWorkoutStore.getState().clearRest()}
         />
+      )}
 
-        {confirmFinish ? (
-          <div className="max-w-md mx-auto space-y-2">
-            {completedSetCount === 0 ? (
-              <p className="text-xs text-text-muted text-center">Discard empty workout?</p>
-            ) : (
-              incompleteSetCount > 0 && (
-                <p className="text-xs text-text-muted text-center">
-                  Discard {incompleteSetCount} incomplete set
-                  {incompleteSetCount === 1 ? '' : 's'}?
-                </p>
-              )
-            )}
-            <div className="flex gap-2">
-              <Button variant="ghost" size="md" className="flex-1" onClick={() => setConfirmFinish(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="md"
-                className="flex-1"
-                disabled={isFinishing}
-                onClick={() => void handleFinishConfirm()}
-              >
-                {isFinishing ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : completedSetCount === 0 ? (
-                  'Discard'
-                ) : (
-                  'Confirm finish'
-                )}
-              </Button>
-            </div>
+      <BottomSheet
+        open={confirmFinish}
+        onClose={() => {
+          if (!isFinishing) setConfirmFinish(false)
+        }}
+        title={completedSetCount === 0 ? 'Discard workout?' : 'Finish workout?'}
+      >
+        <div className="p-4 space-y-4">
+          {completedSetCount === 0 ? (
+            <p className="text-sm text-text-secondary">
+              No sets were completed, so this workout will be discarded.
+            </p>
+          ) : (
+            <p className="text-sm text-text-secondary">
+              {completedSetCount} completed set{completedSetCount === 1 ? '' : 's'} will be saved.
+              {incompleteSetCount > 0 &&
+                ` ${incompleteSetCount} incomplete set${incompleteSetCount === 1 ? '' : 's'} will be discarded.`}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="lg"
+              className="flex-1 min-h-12"
+              disabled={isFinishing}
+              onClick={() => setConfirmFinish(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              className="flex-1 min-h-12"
+              disabled={isFinishing}
+              onClick={() => void handleFinishConfirm()}
+            >
+              {isFinishing ? (
+                <>
+                  <Loader2 size={16} className="animate-spin mr-2" /> Saving…
+                </>
+              ) : completedSetCount === 0 ? (
+                'Discard'
+              ) : (
+                'Finish workout'
+              )}
+            </Button>
           </div>
-        ) : (
-          <Button
-            variant="primary"
-            size="lg"
-            className="w-full max-w-md mx-auto"
-            disabled={!canEdit}
-            onClick={() => setConfirmFinish(true)}
-          >
-            Finish Workout
-          </Button>
-        )}
-      </div>
+        </div>
+      </BottomSheet>
+
+      {typeSheet}
 
       <ExercisePickerSheet
         open={pickerOpen}

@@ -11,6 +11,13 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
+function coercePhase(phase: string | undefined, hasWorkout: boolean): WorkoutPhase {
+  if (phase === 'summary') return 'summary'
+  if (phase === 'training' || phase === 'warmup') return 'training'
+  if (phase === 'idle' || phase === 'type') return hasWorkout ? 'training' : 'idle'
+  return hasWorkout ? 'training' : 'idle'
+}
+
 export interface WorkoutSummarySnapshot {
   durationSec: number
   warmupSec: number
@@ -42,6 +49,8 @@ interface WorkoutStore {
   warmupStartedAt: string | null
   warmupEndedAt: string | null
   warmupNote: string
+  /** The in-session warmup card was ended / skipped / dismissed. */
+  warmupDismissed: boolean
   restEndsAt: string | null
   restTotalSeconds: number
   restDefaultSeconds: number
@@ -114,7 +123,10 @@ interface WorkoutStore {
     setLocalId: string,
     updates: Partial<WorkoutSetDraft>,
   ) => void
-  completeSet: (exerciseLocalId: string, setLocalId: string) => void
+  /** `restSeconds` overrides the stored default for the rest timer this completion starts. */
+  completeSet: (exerciseLocalId: string, setLocalId: string, restSeconds?: number) => void
+  /** Put a previously removed set back at its old position (delete → Undo). */
+  restoreSet: (exerciseLocalId: string, set: WorkoutSetDraft, index: number) => void
   uncompleteSet: (exerciseLocalId: string, setLocalId: string) => void
   removeSet: (exerciseLocalId: string, setLocalId: string) => void
   finishWorkout: () => void
@@ -132,6 +144,7 @@ const initialSession = {
   warmupStartedAt: null as string | null,
   warmupEndedAt: null as string | null,
   warmupNote: '',
+  warmupDismissed: false,
   restEndsAt: null as string | null,
   restTotalSeconds: 90,
   feel: null as number | null,
@@ -152,7 +165,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
       startWorkout: (workoutId, date, startedAt, label = '', typeExplicit = false) =>
         set({
           ...initialSession,
-          phase: 'warmup',
+          phase: 'training',
           currentWorkoutId: workoutId,
           workoutDate: date,
           workoutStartedAt: startedAt,
@@ -205,13 +218,13 @@ export const useWorkoutStore = create<WorkoutStore>()(
       endWarmup: () =>
         set({
           warmupEndedAt: new Date().toISOString(),
-          phase: 'training',
+          warmupDismissed: true,
         }),
       skipWarmup: () =>
         set({
           warmupStartedAt: null,
           warmupEndedAt: null,
-          phase: 'training',
+          warmupDismissed: true,
         }),
 
       setPrefs: (prefs) =>
@@ -326,7 +339,18 @@ export const useWorkoutStore = create<WorkoutStore>()(
           ),
         })),
 
-      completeSet: (exerciseLocalId, setLocalId) => {
+      restoreSet: (exerciseLocalId, setToRestore, index) => {
+        set((state) => ({
+          exercises: state.exercises.map((e) => {
+            if (e.id !== exerciseLocalId || e.sets.some((s) => s.id === setToRestore.id)) return e
+            const sets = [...e.sets]
+            sets.splice(Math.min(Math.max(0, index), sets.length), 0, setToRestore)
+            return { ...e, sets }
+          }),
+        }))
+      },
+
+      completeSet: (exerciseLocalId, setLocalId, restSeconds) => {
         const completedAt = new Date().toISOString()
         set((state) => ({
           exercises: state.exercises.map((e) =>
@@ -342,7 +366,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
                 },
           ),
         }))
-        get().startRest()
+        get().startRest(restSeconds)
       },
 
       uncompleteSet: (exerciseLocalId, setLocalId) => {
@@ -409,6 +433,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         warmupStartedAt: state.warmupStartedAt,
         warmupEndedAt: state.warmupEndedAt,
         warmupNote: state.warmupNote,
+        warmupDismissed: state.warmupDismissed,
         restEndsAt: state.restEndsAt,
         restTotalSeconds: state.restTotalSeconds,
         restDefaultSeconds: state.restDefaultSeconds,
@@ -436,7 +461,8 @@ export const useWorkoutStore = create<WorkoutStore>()(
           ...current,
           ...p,
           exercises,
-          phase: p.phase ?? (p.currentWorkoutId ? 'training' : 'idle'),
+          // Older builds persisted 'type' / 'warmup' phases that no longer exist
+          phase: coercePhase(p.phase as string | undefined, Boolean(p.currentWorkoutId)),
           workoutTypes: resolveWorkoutTypes(p.workoutTypes ?? current.workoutTypes),
         }
       },
