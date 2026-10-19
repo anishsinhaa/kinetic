@@ -35,12 +35,14 @@ vi.mock('../features/workout/services/workoutService', () => ({
   finishWorkout: vi.fn(async () => undefined),
   getLastPerformance: vi.fn(async () => []),
   getExercisePersonalRecord: vi.fn(async () => null),
+  getExercisePrefillContext: vi.fn(async () => ({ lastSets: [], pr: null })),
   updateWorkoutLabel: vi.fn(async () => undefined),
   updateWorkoutMeta: vi.fn(async () => undefined),
   updateWorkoutExercise: vi.fn(async () => undefined),
   upsertSet: vi.fn(async () => undefined),
   deleteSet: vi.fn(async () => undefined),
   deleteWorkout: vi.fn(async () => undefined),
+  deleteWorkoutExercise: vi.fn(async () => undefined),
 }))
 
 function renderWorkout(initialEntry = '/workout') {

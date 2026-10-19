@@ -24,6 +24,7 @@ import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import { useWorkoutStoreHydrated } from '../features/workout/hooks/useWorkoutStoreHydrated'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   getDashboardStats,
@@ -197,10 +198,14 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
 
+  const storeHydrated = useWorkoutStoreHydrated()
   const currentWorkoutId = useWorkoutStore((s) => s.currentWorkoutId)
   const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
   const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
   const units = useWeightUnits()
+  // Avoid flashing type chips before persist rehydrates an in-progress session
+  const sessionReady = storeHydrated
+  const activeWorkoutId = sessionReady ? currentWorkoutId : null
 
   const { log, isLoading: logLoading, isSaving, save } = useDailyLog(userId)
   const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
@@ -233,7 +238,7 @@ export default function Dashboard() {
   const queriesLoading =
     lastWorkoutQuery.isLoading || recentTypesQuery.isLoading || statsQuery.isLoading
 
-  const cta = currentWorkoutId
+  const cta = activeWorkoutId
     ? { label: 'Resume workout', to: '/workout', hint: workoutLabel || 'In progress' }
     : {
         label: 'Start Workout',
@@ -252,7 +257,7 @@ export default function Dashboard() {
         <p className="text-xs text-text-secondary uppercase tracking-widest mb-1">Home</p>
         <h1 className="text-4xl md:text-6xl font-black text-text-primary leading-none">Today</h1>
         {cta.hint && <p className="text-sm text-text-muted mt-2">{cta.hint}</p>}
-        {!cta.hint && !currentWorkoutId && recentTypesQuery.isLoading && (
+        {!cta.hint && !activeWorkoutId && recentTypesQuery.isLoading && (
           <SkeletonBlock className="h-4 w-40 mt-3" />
         )}
       </div>
@@ -263,7 +268,7 @@ export default function Dashboard() {
           <Dumbbell size={16} className="mr-2" />
           {cta.label}
         </Button>
-        {!currentWorkoutId &&
+        {!activeWorkoutId &&
           (lastWorkoutQuery.isLoading ? (
             <SkeletonBlock className="h-11 w-32" />
           ) : lastWorkoutQuery.data ? (
@@ -273,10 +278,10 @@ export default function Dashboard() {
           ) : null)}
       </div>
 
-      {/* Suggested type chips */}
-      {!currentWorkoutId && (
+      {/* Type chips — each chip starts THAT type (not the suggestion) */}
+      {!activeWorkoutId && (
         <div className="flex flex-wrap gap-2 mb-5">
-          {recentTypesQuery.isLoading
+          {!sessionReady || recentTypesQuery.isLoading
             ? Array.from({ length: 6 }).map((_, i) => (
                 <SkeletonBlock key={i} className="h-11 w-16" />
               ))
@@ -284,7 +289,9 @@ export default function Dashboard() {
                 <button
                   key={type}
                   type="button"
-                  onClick={() => navigate(`/workout?start=1&type=${encodeURIComponent(type)}`)}
+                  onClick={() =>
+                    navigate(`/workout?start=1&type=${encodeURIComponent(type)}`)
+                  }
                   className={cn(
                     'px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider border min-h-11',
                     suggestion === type
@@ -457,7 +464,7 @@ export default function Dashboard() {
           <Dumbbell size={16} className="mr-2" />
           {cta.label}
         </Button>
-        {!currentWorkoutId && lastWorkoutQuery.data && (
+        {!activeWorkoutId && lastWorkoutQuery.data && (
           <Button
             variant="secondary"
             size="md"

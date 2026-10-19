@@ -1,12 +1,12 @@
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
 import type {
-  SetRow,
   WorkoutExerciseRow,
   WorkoutExerciseTarget,
   WorkoutRow,
 } from '../../../lib/supabase/database.types'
 import type { AddSetInput, UpdateWorkoutMetaInput } from '../types'
+import { onlyExercisesWithCompletedSets } from '../lib/completedExercises'
 import { isCompletedSet, totalVolumeKg } from '../lib/volume'
 
 type LastPerformanceSet = { weight: number | null; reps: number | null }
@@ -137,6 +137,15 @@ export async function finishWorkout(
 /** Discard an in-progress / empty workout (cascades exercises + sets). */
 export async function deleteWorkout(workoutId: string): Promise<void> {
   const { error } = await supabase.from('workouts').delete().eq('id', workoutId)
+  if (error) throw toServiceError(error)
+}
+
+/** Remove a workout_exercise row (cascades its sets). */
+export async function deleteWorkoutExercise(workoutExerciseId: string): Promise<void> {
+  const { error } = await supabase
+    .from('workout_exercises')
+    .delete()
+    .eq('id', workoutExerciseId)
   if (error) throw toServiceError(error)
 }
 
@@ -314,33 +323,49 @@ export async function updateSet(
   if (error) throw toServiceError(error)
 }
 
-type LastWorkoutExerciseWithSets = {
-  id: string
-  sets: Array<Pick<SetRow, 'weight' | 'reps' | 'set_index'>>
-}
 
+/**
+ * Last completed session for an exercise — one indexed sets query (not a full WE scan).
+ * Returns completed sets only, ordered by set_index.
+ */
 export async function getLastPerformance(
   userId: string,
   exerciseId: string,
 ): Promise<LastPerformanceSet[]> {
-  const { data: workoutExercises, error } = await supabase
+  // Latest ended workout that includes this exercise
+  const { data: weRows, error: weError } = await supabase
     .from('workout_exercises')
-    .select(`
+    .select(
+      `
       id,
-      sets ( weight, reps, set_index ),
-      workouts!inner ( user_id, date )
-    `)
+      workouts!inner ( user_id, ended_at )
+    `,
+    )
     .eq('exercise_id', exerciseId)
     .eq('workouts.user_id', userId)
-    .order('date', { ascending: false, foreignTable: 'workouts' })
+    .not('workouts.ended_at', 'is', null)
+    .order('ended_at', { ascending: false, foreignTable: 'workouts' })
     .limit(1)
 
-  if (error) throw toServiceError(error)
-  const first = (workoutExercises as unknown as LastWorkoutExerciseWithSets[])[0]
-  if (!first) return []
+  if (weError) throw toServiceError(weError)
+  const weId = (weRows as unknown as Array<{ id: string }>)?.[0]?.id
+  if (!weId) return []
 
-  return (first.sets ?? [])
-    .sort((a, b) => (a.set_index ?? 0) - (b.set_index ?? 0))
+  const { data: sets, error: setsError } = await supabase
+    .from('sets')
+    .select('weight, reps, set_index, completed_at')
+    .eq('workout_exercise_id', weId)
+    .order('set_index', { ascending: true })
+
+  if (setsError) throw toServiceError(setsError)
+
+  return ((sets ?? []) as Array<{
+    weight: number | null
+    reps: number | null
+    set_index: number | null
+    completed_at: string | null
+  }>)
+    .filter((s) => isCompletedSet(s))
     .map((s) => ({ weight: s.weight, reps: s.reps }))
 }
 
@@ -363,6 +388,7 @@ export async function getExercisePersonalRecord(
   /** Exclude the in-progress workout so finish summary can detect new PRs */
   excludeWorkoutId?: string | null,
 ): Promise<ExercisePR | null> {
+  // Pull a small top-weight slice; filter incomplete / excluded workouts client-side
   const { data, error } = await supabase
     .from('sets')
     .select(`
@@ -377,32 +403,25 @@ export async function getExercisePersonalRecord(
     `)
     .eq('workout_exercises.exercise_id', exerciseId)
     .eq('workout_exercises.workouts.user_id', userId)
+    .not('workout_exercises.workouts.ended_at', 'is', null)
     .not('weight', 'is', null)
     .not('reps', 'is', null)
     .order('weight', { ascending: false })
     .order('reps', { ascending: false })
-    .limit(40)
+    .limit(12)
 
   if (error) throw toServiceError(error)
 
   const rows = (data ?? []) as unknown as PRSetRow[]
-  const candidates = rows.filter((row) => {
+  let best: { weight: number; reps: number; date: string | null } | null = null
+  for (const row of rows) {
+    if (row.weight == null || row.reps == null) continue
+    if (row.completed_at === null) continue
     const we = row.workout_exercises
     const workouts = we?.workouts
     const workout = Array.isArray(workouts) ? workouts[0] : workouts
     const workoutId = we?.workout_id ?? workout?.id
-    if (excludeWorkoutId && workoutId === excludeWorkoutId) return false
-    // Exclude explicitly incomplete rows; keep legacy rows where completed_at is absent
-    if (row.completed_at === null) return false
-    return true
-  })
-
-  // Pick best by shared PR rules (heavier, or more reps at same weight)
-  let best: { weight: number; reps: number; date: string | null } | null = null
-  for (const row of candidates) {
-    if (row.weight == null || row.reps == null) continue
-    const workouts = row.workout_exercises?.workouts
-    const workout = Array.isArray(workouts) ? workouts[0] : workouts
+    if (excludeWorkoutId && workoutId === excludeWorkoutId) continue
     const date = workout?.date ?? null
     if (
       !best ||
@@ -414,6 +433,19 @@ export async function getExercisePersonalRecord(
   }
 
   return best
+}
+
+/** Parallel last-session + PR fetch for exercise cards (avoids waterfall). */
+export async function getExercisePrefillContext(
+  userId: string,
+  exerciseId: string,
+  excludeWorkoutId?: string | null,
+): Promise<{ lastSets: LastPerformanceSet[]; pr: ExercisePR | null }> {
+  const [lastSets, pr] = await Promise.all([
+    getLastPerformance(userId, exerciseId),
+    getExercisePersonalRecord(userId, exerciseId, excludeWorkoutId),
+  ])
+  return { lastSets, pr }
 }
 
 /** Recent completed workout types (most recent first). */
@@ -648,22 +680,24 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
     (a, b) => (a.order_index ?? 0) - (b.order_index ?? 0),
   )
 
-  const exercises: LatestWorkoutExercise[] = exerciseRows
-    .map((we) => {
-      const ex = Array.isArray(we.exercises) ? we.exercises[0] : we.exercises
-      if (!ex) return null
-      const sets = (we.sets ?? [])
-        .filter((s) => isCompletedSet(s))
-        .map((s) => ({ weight: s.weight, reps: s.reps }))
-      return {
-        exerciseId: we.exercise_id,
-        name: ex.name,
-        muscleGroup: ex.muscle_group,
-        orderIndex: we.order_index ?? 0,
-        sets,
-      }
-    })
-    .filter((e): e is LatestWorkoutExercise => e !== null)
+  const exercises: LatestWorkoutExercise[] = onlyExercisesWithCompletedSets(
+    exerciseRows
+      .map((we) => {
+        const ex = Array.isArray(we.exercises) ? we.exercises[0] : we.exercises
+        if (!ex) return null
+        const sets = (we.sets ?? [])
+          .filter((s) => isCompletedSet(s))
+          .map((s) => ({ weight: s.weight, reps: s.reps }))
+        return {
+          exerciseId: we.exercise_id,
+          name: ex.name,
+          muscleGroup: ex.muscle_group,
+          orderIndex: we.order_index ?? 0,
+          sets,
+        }
+      })
+      .filter((e): e is LatestWorkoutExercise => e !== null),
+  )
 
   const exerciseNames = exercises.map((e) => e.name)
 

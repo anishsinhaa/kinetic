@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search, Check, Loader2 } from 'lucide-react'
 import { BottomSheet } from '../../../components/ui/BottomSheet'
 import { cn } from '../../../lib/utils'
@@ -7,7 +7,10 @@ import {
   getUserCustomExercises,
   searchExercisesFromDb,
 } from '../services/exerciseService'
-import { getRecentExerciseIds } from '../services/workoutService'
+import {
+  getExercisePrefillContext,
+  getRecentExerciseIds,
+} from '../services/workoutService'
 import { musclesForWorkoutType } from '../lib/typeMuscleMap'
 import type { Exercise } from '../../exercises/types'
 
@@ -30,6 +33,7 @@ export function ExercisePickerSheet({
 }: ExercisePickerSheetProps) {
   const [search, setSearch] = useState('')
   const muscles = musclesForWorkoutType(workoutType)
+  const queryClient = useQueryClient()
 
   const recentQuery = useQuery({
     queryKey: ['exercises', 'recent-ids', userId],
@@ -37,6 +41,19 @@ export function ExercisePickerSheet({
     enabled: open,
     staleTime: 5 * 60 * 1000,
   })
+
+  // Warm last-session/PR cache for recent picks so "Loading last session…" is instant
+  useEffect(() => {
+    if (!open) return
+    const ids = (recentQuery.data ?? []).slice(0, 10)
+    for (const exerciseId of ids) {
+      void queryClient.prefetchQuery({
+        queryKey: ['exercise-prefill', userId, exerciseId],
+        queryFn: () => getExercisePrefillContext(userId, exerciseId),
+        staleTime: 1000 * 60 * 5,
+      })
+    }
+  }, [open, recentQuery.data, userId, queryClient])
 
   const libraryQuery = useQuery({
     queryKey: ['exercises', 'library', search, null],

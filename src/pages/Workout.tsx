@@ -13,14 +13,16 @@ import {
   deleteWorkout,
   finishWorkout as finishWorkoutDb,
   getLatestCompletedWorkout,
-  getLastPerformance,
   getExercisePersonalRecord,
+  getExercisePrefillContext,
   updateWorkoutLabel,
   updateWorkoutMeta,
   updateWorkoutExercise,
   upsertSet,
   getRecentWorkoutTypes,
+  deleteWorkoutExercise,
 } from '../features/workout/services/workoutService'
+import { useWorkoutStoreHydrated } from '../features/workout/hooks/useWorkoutStoreHydrated'
 import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
@@ -83,6 +85,7 @@ export default function Workout() {
   const [searchParams, setSearchParams] = useSearchParams()
   const reduceMotion = useReducedMotion()
   const addSetLockRef = useRef(0)
+  const storeHydrated = useWorkoutStoreHydrated()
 
   const isRepeatMode = searchParams.get('repeat') === '1'
   const autoStart = searchParams.get('start') === '1'
@@ -347,25 +350,42 @@ export default function Workout() {
     })()
   }
 
-  // Dashboard chip / Start with suggested type — skip the second "Pick a type" tap
+  // Dashboard chip / Start with type — honor URL type after persist rehydrates.
+  // Empty abandoned sessions must not steal the chosen chip (e.g. Push → Pull).
   useEffect(() => {
-    if (currentWorkoutId || startingRef.current) return
+    if (!storeHydrated || startingRef.current) return
     const type = preselectedType?.trim()
     if (!type) return
     if (!(autoStart || Boolean(preselectedType))) return
+
+    const state = useWorkoutStore.getState()
+    if (state.currentWorkoutId) {
+      const hasCompleted = state.exercises.some((e) => e.sets.some((s) => s.completed))
+      if (hasCompleted) {
+        // Real in-progress session — resume; drop deep-link params
+        setSearchParams({}, { replace: true })
+        return
+      }
+      // Discard empty in-progress so the chip type wins
+      const abandonId = state.currentWorkoutId
+      void deleteWorkout(abandonId).catch(() => {})
+      useWorkoutStore.getState().finishWorkout()
+    }
+
     beginWorkoutWithType(type)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per deep link
-  }, [autoStart, preselectedType, currentWorkoutId])
+  }, [storeHydrated, autoStart, preselectedType])
 
   // Repeat last — start with last type as soon as latest workout loads
   useEffect(() => {
-    if (currentWorkoutId || startingRef.current) return
+    if (!storeHydrated || startingRef.current) return
+    if (useWorkoutStore.getState().currentWorkoutId) return
     if (!isRepeatMode) return
     const label = latestWorkoutQuery.data?.label?.trim()
     if (!label) return
     beginWorkoutWithType(label)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRepeatMode, latestWorkoutQuery.data?.label, currentWorkoutId])
+  }, [storeHydrated, isRepeatMode, latestWorkoutQuery.data?.label])
 
   const addExerciseFromLibrary = async (
     exercise: Exercise,
@@ -397,30 +417,43 @@ export default function Workout() {
       useWorkoutStore.getState().updateExerciseMeta(added.id, { dbWorkoutExerciseId: dbWeId })
 
       const displayUnits = useWorkoutStore.getState().units
-      // DB weights are kg; convert to display for UI / labels / prefill
-      const lastSetsKg =
-        options?.initialSets != null
-          ? options.initialSets.map((s) => ({
-              weight:
-                s.weight === ''
-                  ? null
-                  : toStoredKg(parseFloat(s.weight), displayUnits),
-              reps: s.reps === '' ? null : parseInt(s.reps, 10),
-              displayWeight: s.weight === '' ? null : parseFloat(s.weight),
-            }))
-          : (await getLastPerformance(userId, exercise.id)).map((s) => ({
-              weight: s.weight,
-              reps: s.reps,
-              displayWeight:
-                s.weight != null
-                  ? roundDisplayWeight(kgToDisplay(s.weight, displayUnits), displayUnits)
-                  : null,
-            }))
 
-      const pr = await getExercisePersonalRecord(userId, exercise.id, workoutId)
+      type PrefillRow = {
+        weight: number | null
+        reps: number | null
+        displayWeight: number | null
+      }
+      let prefillRows: PrefillRow[] = []
+      let pr: Awaited<ReturnType<typeof getExercisePersonalRecord>> = null
+
+      if (options?.initialSets != null) {
+        // Repeat-last: strings are already in display units
+        prefillRows = options.initialSets.map((s) => ({
+          weight:
+            s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
+          reps: s.reps === '' ? null : parseInt(s.reps, 10),
+          displayWeight: s.weight === '' ? null : parseFloat(s.weight),
+        }))
+      } else {
+        const ctx = await queryClient.fetchQuery({
+          queryKey: ['exercise-prefill', userId, exercise.id],
+          queryFn: () => getExercisePrefillContext(userId, exercise.id, workoutId),
+          staleTime: 1000 * 60 * 5,
+        })
+        pr = ctx.pr
+        prefillRows = ctx.lastSets.map((s) => ({
+          weight: s.weight,
+          reps: s.reps,
+          displayWeight:
+            s.weight != null
+              ? roundDisplayWeight(kgToDisplay(s.weight, displayUnits), displayUnits)
+              : null,
+        }))
+      }
+
       const lastPerformance =
-        lastSetsKg.length > 0
-          ? `Last: ${lastSetsKg
+        prefillRows.length > 0
+          ? `Last: ${prefillRows
               .map((s) => `${s.displayWeight ?? '-'}x${s.reps ?? '-'}`)
               .join(' · ')} ${displayUnits}`
           : 'No previous performance'
@@ -431,7 +464,7 @@ export default function Workout() {
               : '-'
           }x${pr.reps ?? '-'}${pr.date ? ` (${pr.date})` : ''} ${displayUnits}`
         : 'No PR yet'
-      const last = lastSetsKg[0]
+      const last = prefillRows[0]
       const targetLabel = last
         ? `Target: ${targetPreview(last.displayWeight, last.reps, 'maintain', weightStep)}`
         : undefined
@@ -441,13 +474,13 @@ export default function Workout() {
       const untouched = current ? isExerciseUntouched(current.sets) : false
       const applySets = shouldApplySetPrefill({
         untouched,
-        hasPrefillRows: needsAsyncPrefill && lastSetsKg.length > 0,
+        hasPrefillRows: needsAsyncPrefill && prefillRows.length > 0,
         alreadyApplied: current?.prefillStatus === 'ready',
       })
 
       if (applySets) {
         const oldIds = current?.sets.map((s) => s.id) ?? []
-        const newSets = buildPrefillDraftSets(lastSetsKg, newClientId)
+        const newSets = buildPrefillDraftSets(prefillRows, newClientId)
         useWorkoutStore.getState().updateExerciseMeta(added.id, {
           dbWorkoutExerciseId: dbWeId,
           lastPerformance,
@@ -473,11 +506,13 @@ export default function Workout() {
         })
       }
 
-      // Persist only after prefill decision — avoids duplicate set rows in history
+      // Persist only non-empty drafts after prefill — empty exercises stay local until a set is logged
       const fresh = useWorkoutStore.getState().exercises.find((e) => e.id === added.id)
       if (fresh?.dbWorkoutExerciseId) {
         for (let i = 0; i < fresh.sets.length; i++) {
-          queuePersist(fresh.id, fresh.sets[i].id, fresh.dbWorkoutExerciseId, i)
+          const set = fresh.sets[i]
+          if (!set.completed && set.weight === '' && set.reps === '') continue
+          queuePersist(fresh.id, set.id, fresh.dbWorkoutExerciseId, i)
         }
         await persistQueueRef.current.flushAll()
       }
@@ -582,9 +617,26 @@ export default function Workout() {
         }
       }
 
+      // Drop exercises with zero completed sets (don't persist empty WEs)
+      const afterSets = useWorkoutStore.getState()
+      for (const ex of afterSets.exercises) {
+        const hasCompleted = ex.sets.some((s) => s.completed)
+        if (hasCompleted) continue
+        if (ex.dbWorkoutExerciseId) {
+          try {
+            await deleteWorkoutExercise(ex.dbWorkoutExerciseId)
+          } catch {
+            /* may already be gone */
+          }
+        }
+        useWorkoutStore.setState((s) => ({
+          exercises: s.exercises.filter((e) => e.id !== ex.id),
+        }))
+      }
+
       const fresh = useWorkoutStore.getState()
       const displayUnits = fresh.units
-      // Volume / PR math uses canonical kg
+      // Volume / PR math uses canonical kg — only exercises that still have completed sets
       const completedSets = fresh.exercises.flatMap((e) =>
         e.sets
           .filter((s) => s.completed)

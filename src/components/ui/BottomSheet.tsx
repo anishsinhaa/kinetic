@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -10,6 +11,10 @@ type BottomSheetProps = {
   children: ReactNode
   className?: string
 }
+
+/** Mobile bottom tab bar is h-16 (4rem); keep sheet actions above it + home indicator. */
+const MOBILE_NAV_CLEARANCE =
+  'pb-[calc(4rem+env(safe-area-inset-bottom,0px)+1rem)] md:pb-4'
 
 export function BottomSheet({ open, onClose, title, children, className }: BottomSheetProps) {
   const reduceMotion = useReducedMotion()
@@ -27,10 +32,18 @@ export function BottomSheet({ open, onClose, title, children, className }: Botto
     }
   }, [open, onClose])
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+        <div
+          className={cn(
+            // Above MainLayout mobile nav (z-50) so confirm actions stay tappable
+            'fixed inset-0 z-[100] flex items-end md:items-center justify-center',
+            MOBILE_NAV_CLEARANCE,
+          )}
+        >
           <motion.button
             type="button"
             aria-label="Close"
@@ -46,7 +59,7 @@ export function BottomSheet({ open, onClose, title, children, className }: Botto
             aria-modal="true"
             aria-label={title}
             className={cn(
-              'relative w-full md:max-w-lg max-h-[88vh] bg-surface border border-border rounded-t-2xl md:rounded-2xl shadow-card flex flex-col',
+              'relative w-full md:max-w-lg max-h-[min(88vh,calc(100dvh-5.5rem))] bg-surface border border-border rounded-t-2xl md:rounded-2xl shadow-card flex flex-col',
               className,
             )}
             initial={reduceMotion ? false : { y: '100%', opacity: 0.8 }}
@@ -69,6 +82,7 @@ export function BottomSheet({ open, onClose, title, children, className }: Botto
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
