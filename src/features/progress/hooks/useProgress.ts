@@ -37,6 +37,7 @@ export function useProgressData(selectedExerciseId: string | null) {
   return {
     histories,
     isLoading: histLoading || logsLoading,
+    dailyLogs,
     weightSeries,
     weeklyVolume,
     prList,

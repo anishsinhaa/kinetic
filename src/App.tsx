@@ -6,7 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { ToastProvider } from './components/ui/Toast'
 import { MainLayout } from './layouts/MainLayout'
 import { SectionLayout } from './layouts/SectionLayout'
-import { LEGACY_REDIRECTS, WORKOUT_TABS } from './lib/navRoutes'
+import { LEGACY_REDIRECTS, PROGRESS_TABS, WORKOUT_TABS } from './lib/navRoutes'
 import { useAuthListener, useCurrentUser } from './features/auth/useAuth'
 import { lazyWithReload } from './lib/lazyWithReload'
 
@@ -18,6 +18,7 @@ const Workout    = lazyWithReload(() => import('./pages/Workout'))
 const History    = lazyWithReload(() => import('./pages/History'))
 const Exercises  = lazyWithReload(() => import('./pages/Exercises'))
 const Progress   = lazyWithReload(() => import('./pages/Progress'))
+const DailyLogs  = lazyWithReload(() => import('./pages/DailyLogs'))
 const Feedback   = lazyWithReload(() => import('./pages/Feedback'))
 const Settings   = lazyWithReload(() => import('./pages/Settings'))
 
@@ -73,8 +74,11 @@ function AppShell() {
             <Route path="recovery" element={<Feedback />} />
             <Route path="library" element={<Exercises />} />
           </Route>
-          <Route path="/progress" element={<Progress />} />
-          <Route path="/progress/history" element={<History />} />
+          <Route path="/progress" element={<SectionLayout tabs={PROGRESS_TABS} label="Progress" />}>
+            <Route index element={<Progress />} />
+            <Route path="history" element={<History />} />
+            <Route path="logs" element={<DailyLogs />} />
+          </Route>
           <Route path="/settings" element={<Settings />} />
           {LEGACY_REDIRECTS.map(({ from, to }) => (
             <Route key={from} path={from} element={<Navigate to={to} replace />} />

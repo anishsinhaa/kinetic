@@ -11,9 +11,12 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { TrendingUp, Dumbbell, Loader2, ChevronDown, Flame } from 'lucide-react'
+import { TrendingUp, Dumbbell, Loader2, ChevronDown, Flame, Search, Activity } from 'lucide-react'
 import { useProgressData } from '../features/progress/hooks/useProgress'
+import { dailyMetricSeries, niceTicks } from '../features/progress/lib/progressAggregators'
 import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import { BottomSheet } from '../components/ui/BottomSheet'
+import { todayDateString } from '../features/dailyLog/services/dailyLogService'
 import {
   formatWeight,
   kgToDisplay,
@@ -27,22 +30,41 @@ const pageVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.25, 0.1, 0.25, 1] as const } },
 } as const
 
+const RANGES = [7, 30, 90] as const
+type Range = (typeof RANGES)[number]
+
+function fmtShortDate(iso: string): string {
+  try {
+    return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+    })
+  } catch {
+    return iso
+  }
+}
+
 function Section({
   title,
   icon: Icon,
   children,
+  action,
 }: {
   title: string
   icon?: React.ElementType
   children: React.ReactNode
+  action?: React.ReactNode
 }) {
   return (
     <section className="mb-8">
-      <h2 className="text-[10px] text-text-secondary uppercase tracking-widest font-semibold mb-3 flex items-center gap-2">
-        <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
-        {Icon && <Icon size={11} className="text-primary" />}
-        {title}
-      </h2>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h2 className="text-[11px] text-text-secondary uppercase tracking-widest font-semibold flex items-center gap-2">
+          <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
+          {Icon && <Icon size={12} className="text-primary" />}
+          {title}
+        </h2>
+        {action}
+      </div>
       {children}
     </section>
   )
@@ -95,44 +117,198 @@ function KineticTooltip({
   )
 }
 
-// ── Exercise picker ───────────────────────────────────────────────────────────
+// ── Daily-metric chart (rounded Y-axis ticks) ─────────────────────────────────
+function MetricChart({
+  title,
+  data,
+  color,
+  gradientId,
+  unit,
+  decimals = 0,
+  emptyMsg,
+  animate,
+}: {
+  title: string
+  data: Array<{ date: string; value: number }>
+  color: string
+  gradientId: string
+  unit: string
+  decimals?: number
+  emptyMsg: string
+  animate: boolean
+}) {
+  const { domain, ticks, step } = useMemo(() => niceTicks(data.map((d) => d.value)), [data])
+  if (data.length === 0) return <EmptyState msg={emptyMsg} />
+  const tickDecimals = Math.max(decimals, step < 1 ? 1 : 0)
+  return (
+    <ChartCard>
+      <p className="text-xs text-text-muted mb-3 font-semibold uppercase tracking-wide">
+        {title}
+      </p>
+      <ResponsiveContainer width="100%" height={160}>
+        <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.25} />
+              <stop offset="95%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize: 11, fill: '#64748b' }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={fmtShortDate}
+            minTickGap={24}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: '#64748b' }}
+            tickLine={false}
+            axisLine={false}
+            width={44}
+            domain={domain}
+            ticks={ticks}
+            interval={0}
+            tickFormatter={(v: number) =>
+              v.toLocaleString(undefined, {
+                minimumFractionDigits: tickDecimals,
+                maximumFractionDigits: tickDecimals,
+              })
+            }
+          />
+          <Tooltip
+            content={
+              <KineticTooltip
+                valueFormatter={(v) =>
+                  `${v.toLocaleString(undefined, { maximumFractionDigits: decimals })} ${unit}`
+                }
+              />
+            }
+          />
+          <Area
+            type="monotone"
+            dataKey="value"
+            name={title}
+            stroke={color}
+            strokeWidth={2}
+            fill={`url(#${gradientId})`}
+            dot={data.length < 15 ? { r: 3, fill: color } : false}
+            isAnimationActive={animate}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  )
+}
+
+// ── Exercise picker: searchable sheet instead of a native <select> ────────────
+type PickerExercise = { exerciseId: string; exerciseName: string; muscleGroup: string }
+
 function ExercisePicker({
   exercises,
   selectedId,
   onSelect,
 }: {
-  exercises: Array<{ exerciseId: string; exerciseName: string; muscleGroup: string }>
+  exercises: PickerExercise[]
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const selected = exercises.find((e) => e.exerciseId === selectedId)
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? exercises.filter(
+        (e) =>
+          e.exerciseName.toLowerCase().includes(q) || e.muscleGroup.toLowerCase().includes(q),
+      )
+    : exercises
+
   return (
-    <div className="relative">
-      <select
-        value={selectedId ?? ''}
-        onChange={(e) => onSelect(e.target.value)}
-        className="w-full appearance-none bg-surface-2 border border-border text-text-primary text-sm rounded-xl pl-4 pr-9 py-3 font-medium focus:outline-none focus:border-primary cursor-pointer min-h-11"
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
         aria-label="Select exercise"
+        className="w-full flex items-center justify-between gap-3 bg-surface-2 border border-border text-text-primary text-sm rounded-xl px-4 min-h-12 font-medium hover:border-primary text-left"
       >
-        <option value="" disabled>
-          Pick an exercise…
-        </option>
-        {exercises.map((ex) => (
-          <option key={ex.exerciseId} value={ex.exerciseId}>
-            {ex.exerciseName} ({ex.muscleGroup})
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        size={16}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted"
-      />
-      {selected && (
-        <p className="mt-1.5 text-xs text-text-muted px-1">
-          Showing{' '}
-          <span className="text-text-primary font-semibold">{selected.exerciseName}</span>
-        </p>
-      )}
+        <span className="truncate">
+          {selected ? selected.exerciseName : 'Pick an exercise…'}
+          {selected && (
+            <span className="text-text-secondary font-normal"> · {selected.muscleGroup}</span>
+          )}
+        </span>
+        <ChevronDown size={16} className="shrink-0 text-text-muted" />
+      </button>
+
+      <BottomSheet
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Exercise"
+        className="h-[min(80dvh,640px)]"
+      >
+        <div className="sticky top-0 z-10 bg-surface p-4 pb-3 border-b border-border">
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search exercises…"
+              aria-label="Search exercises"
+              className="w-full bg-surface-2 border border-border rounded-xl pl-10 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary min-h-11"
+            />
+          </div>
+        </div>
+        <div className="p-4 space-y-2">
+          {filtered.map((ex) => (
+            <button
+              key={ex.exerciseId}
+              type="button"
+              onClick={() => {
+                onSelect(ex.exerciseId)
+                setOpen(false)
+                setQuery('')
+              }}
+              className={cn(
+                'w-full text-left px-4 rounded-xl border min-h-12 py-2',
+                ex.exerciseId === selectedId
+                  ? 'border-primary bg-primary/10'
+                  : 'border-border bg-surface-2 hover:border-primary',
+              )}
+            >
+              <p className="text-sm font-semibold text-text-primary truncate">{ex.exerciseName}</p>
+              <p className="text-[11px] uppercase tracking-widest text-text-secondary">
+                {ex.muscleGroup}
+              </p>
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-sm text-text-muted text-center py-8">No exercises match.</p>
+          )}
+        </div>
+      </BottomSheet>
+    </>
+  )
+}
+
+function RangeSelector({ value, onChange }: { value: Range; onChange: (r: Range) => void }) {
+  return (
+    <div role="group" aria-label="Date range" className="flex gap-1 bg-surface-2 border border-border rounded-xl p-1">
+      {RANGES.map((r) => (
+        <button
+          key={r}
+          type="button"
+          onClick={() => onChange(r)}
+          aria-pressed={value === r}
+          className={cn(
+            'min-h-9 px-3 rounded-lg text-xs font-semibold',
+            value === r ? 'bg-primary text-black' : 'text-text-secondary hover:text-text-primary',
+          )}
+        >
+          {r}d
+        </button>
+      ))}
     </div>
   )
 }
@@ -140,19 +316,23 @@ function ExercisePicker({
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Progress() {
   const [pickedId, setPickedId] = useState<string | null>(null)
+  const [range, setRange] = useState<Range>(30)
+  const [showAllSessions, setShowAllSessions] = useState(false)
   const reduceMotion = useReducedMotion()
   const units = useWeightUnits()
 
   const {
     histories,
     isLoading,
-    weightSeries,
+    dailyLogs,
     weeklyVolume,
     prList,
     selectedExerciseId,
     selectedHistory,
     exerciseSeries,
   } = useProgressData(pickedId)
+
+  const today = todayDateString()
 
   // Convert kg series → display units for charts/labels
   const recentWeekly = useMemo(
@@ -163,13 +343,25 @@ export default function Progress() {
       })),
     [weeklyVolume, units],
   )
-  const recentWeight = useMemo(
+  const weightData = useMemo(
     () =>
-      weightSeries.slice(-90).map((p) => ({
-        ...p,
-        weight: roundDisplayWeight(kgToDisplay(p.weight, units), units),
+      dailyMetricSeries(dailyLogs, 'weight', range, today).map((p) => ({
+        date: p.date,
+        value: roundDisplayWeight(kgToDisplay(p.value, units), units),
       })),
-    [weightSeries, units],
+    [dailyLogs, range, today, units],
+  )
+  const caloriesData = useMemo(
+    () => dailyMetricSeries(dailyLogs, 'calories', range, today),
+    [dailyLogs, range, today],
+  )
+  const proteinData = useMemo(
+    () => dailyMetricSeries(dailyLogs, 'protein', range, today),
+    [dailyLogs, range, today],
+  )
+  const sleepData = useMemo(
+    () => dailyMetricSeries(dailyLogs, 'sleep', range, today),
+    [dailyLogs, range, today],
   )
   const recentSeries = useMemo(
     () =>
@@ -183,6 +375,10 @@ export default function Progress() {
       })),
     [exerciseSeries, units],
   )
+  const weightTicks = useMemo(() => niceTicks(recentSeries.map((p) => p.bestWeight)), [recentSeries])
+
+  const sessions = selectedHistory?.sessions ?? []
+  const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 8)
 
   const motionProps = reduceMotion
     ? {}
@@ -191,7 +387,7 @@ export default function Progress() {
   return (
     <motion.div className="p-4 md:p-8 max-w-5xl mx-auto" {...motionProps}>
       <div className="mb-6 md:mb-8">
-        <p className="text-[10px] text-primary uppercase tracking-widest mb-1">Analytics</p>
+        <p className="text-[11px] text-primary uppercase tracking-widest mb-1">Analytics</p>
         <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary flex items-center gap-3">
           <TrendingUp size={32} className="text-primary shrink-0" />
           Progress
@@ -209,7 +405,7 @@ export default function Progress() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* ── Left column ── */}
           <div className="space-y-6">
-            {/* Per-exercise charts */}
+            {/* Per-exercise charts + session list */}
             <Section title="Exercise Progress" icon={Dumbbell}>
               {histories.length === 0 ? (
                 <EmptyState msg="Log some workouts to see per-exercise progress." />
@@ -218,7 +414,10 @@ export default function Progress() {
                   <ExercisePicker
                     exercises={histories}
                     selectedId={selectedExerciseId}
-                    onSelect={setPickedId}
+                    onSelect={(id) => {
+                      setPickedId(id)
+                      setShowAllSessions(false)
+                    }}
                   />
                   {selectedHistory && recentSeries.length === 0 && (
                     <EmptyState msg="No completed sets recorded for this exercise yet." />
@@ -230,7 +429,7 @@ export default function Progress() {
                           Best set — weight ({units})
                         </p>
                         <ResponsiveContainer width="100%" height={160}>
-                          <AreaChart data={recentSeries} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                          <AreaChart data={recentSeries} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                             <defs>
                               <linearGradient id="wGrad" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.25} />
@@ -238,8 +437,16 @@ export default function Progress() {
                               </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(d: string) => d.slice(5)} />
-                            <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={36} />
+                            <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmtShortDate} minTickGap={24} />
+                            <YAxis
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                              tickLine={false}
+                              axisLine={false}
+                              width={40}
+                              domain={weightTicks.domain}
+                              ticks={weightTicks.ticks}
+                              interval={0}
+                            />
                             <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} ${units}`} />} />
                             <Area
                               type="monotone"
@@ -259,10 +466,10 @@ export default function Progress() {
                           Session volume ({units})
                         </p>
                         <ResponsiveContainer width="100%" height={140}>
-                          <BarChart data={recentSeries} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                          <BarChart data={recentSeries} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(d: string) => d.slice(5)} />
-                            <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={40} />
+                            <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmtShortDate} minTickGap={24} />
+                            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => String(Math.round(v))} />
                             <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                             <Bar
                               dataKey="volume"
@@ -277,6 +484,46 @@ export default function Progress() {
                       </ChartCard>
                     </>
                   )}
+
+                  {/* Every session of this exercise (read-only — delete a workout from History) */}
+                  {sessions.length > 0 && (
+                    <div className="rounded-xl border border-border bg-surface overflow-hidden">
+                      <p className="px-4 py-3 text-[11px] text-text-secondary uppercase tracking-widest border-b border-border">
+                        Sessions ({sessions.length})
+                      </p>
+                      {visibleSessions.map((session, i) => (
+                        <div
+                          key={session.workoutId}
+                          className={cn('px-4 py-3', i > 0 && 'border-t border-border')}
+                        >
+                          <div className="flex items-baseline justify-between gap-3">
+                            <p className="text-sm font-semibold text-text-primary">
+                              {fmtShortDate(session.date)}
+                            </p>
+                            {session.feel != null && (
+                              <span className="text-[11px] text-primary font-medium">
+                                Feel {session.feel}/5
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-text-secondary mt-1 tabular-nums">
+                            {session.sets
+                              .map((s) => `${formatWeight(s.weight, units)} × ${s.reps ?? '—'}`)
+                              .join(' · ')}
+                          </p>
+                        </div>
+                      ))}
+                      {sessions.length > 8 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllSessions((v) => !v)}
+                          className="w-full min-h-11 text-sm text-primary border-t border-border hover:bg-surface-2"
+                        >
+                          {showAllSessions ? 'Show fewer' : `Show all ${sessions.length}`}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </Section>
@@ -288,10 +535,10 @@ export default function Progress() {
               ) : (
                 <ChartCard>
                   <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={recentWeekly} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                    <BarChart data={recentWeekly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => String(Math.round(v))} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => String(Math.round(v))} />
                       <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                       <Bar
                         dataKey="volume"
@@ -310,41 +557,52 @@ export default function Progress() {
 
           {/* ── Right column ── */}
           <div className="space-y-6">
-            {/* Body weight trend */}
-            <Section title="Body Weight">
-              {recentWeight.length < 2 ? (
-                <EmptyState msg="Log your morning weight on at least 2 days to see a trend." />
-              ) : (
-                <ChartCard>
-                  <p className="text-xs text-text-muted mb-3 font-semibold uppercase tracking-wide">
-                    Weight trend ({units})
-                  </p>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <AreaChart data={recentWeight} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                      <defs>
-                        <linearGradient id="bwGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#34d399" stopOpacity={0.25} />
-                          <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(d: string) => d.slice(5)} />
-                      <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={36} domain={['auto', 'auto']} />
-                      <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} ${units}`} />} />
-                      <Area
-                        type="monotone"
-                        dataKey="weight"
-                        name="Weight"
-                        stroke="#34d399"
-                        strokeWidth={2}
-                        fill="url(#bwGrad)"
-                        dot={false}
-                        isAnimationActive={!reduceMotion}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </ChartCard>
-              )}
+            {/* Body & nutrition — one shared range */}
+            <Section
+              title="Body & Nutrition"
+              icon={Activity}
+              action={<RangeSelector value={range} onChange={setRange} />}
+            >
+              <div className="space-y-4">
+                <MetricChart
+                  title={`Body weight (${units})`}
+                  data={weightData}
+                  color="#34d399"
+                  gradientId="bwGrad"
+                  unit={units}
+                  decimals={1}
+                  emptyMsg={`No weight logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+                <MetricChart
+                  title="Calories (kcal)"
+                  data={caloriesData}
+                  color="#fb923c"
+                  gradientId="calGrad"
+                  unit="kcal"
+                  emptyMsg={`No calories logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+                <MetricChart
+                  title="Protein (g)"
+                  data={proteinData}
+                  color="#22d3ee"
+                  gradientId="proGrad"
+                  unit="g"
+                  emptyMsg={`No protein logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+                <MetricChart
+                  title="Sleep (hours)"
+                  data={sleepData}
+                  color="#a78bfa"
+                  gradientId="slpGrad"
+                  unit="h"
+                  decimals={1}
+                  emptyMsg={`No sleep logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+              </div>
             </Section>
 
             {/* PR list */}
@@ -364,7 +622,7 @@ export default function Progress() {
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-text-primary truncate">{pr.exerciseName}</p>
                         {pr.achievedDate && (
-                          <p className="text-xs text-text-muted mt-0.5">{pr.achievedDate}</p>
+                          <p className="text-xs text-text-muted mt-0.5">{fmtShortDate(pr.achievedDate)}</p>
                         )}
                       </div>
                       <div className="text-right shrink-0">

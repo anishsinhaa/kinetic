@@ -186,3 +186,63 @@ export function allTimePrList(histories: ExerciseHistory[]): ExercisePrSummary[]
     })
     .sort((a, b) => b.weight - a.weight)
 }
+
+// --- Daily metrics (calories / protein / sleep / body weight) ---------------
+
+export type DailyMetricKey = 'weight' | 'calories' | 'protein' | 'sleep'
+
+export interface MetricPoint {
+  date: string
+  value: number
+}
+
+function shiftDate(dateStr: string, deltaDays: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + deltaDays)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * One metric from the daily logs, restricted to the last `days` days
+ * (inclusive of `today`), chronological. Missing values are skipped.
+ */
+export function dailyMetricSeries(
+  logs: DailyLogEntry[],
+  key: DailyMetricKey,
+  days: number,
+  today: string,
+): MetricPoint[] {
+  const cutoff = shiftDate(today, -(days - 1))
+  return logs
+    .filter((l) => l[key] != null && l.date >= cutoff && l.date <= today)
+    .map((l) => ({ date: l.date, value: l[key] as number }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+}
+
+/**
+ * Round-number Y-axis ticks (e.g. 70, 72, 74 rather than 69.8, 71.2 ...) that
+ * enclose all values.
+ */
+export function niceTicks(
+  values: number[],
+  targetCount = 4,
+): { domain: [number, number]; ticks: number[]; step: number } {
+  if (values.length === 0) return { domain: [0, 1], ticks: [0, 1], step: 1 }
+  let lo = Math.min(...values)
+  let hi = Math.max(...values)
+  if (lo === hi) {
+    lo -= 1
+    hi += 1
+  }
+  const raw = (hi - lo) / targetCount
+  const pow = 10 ** Math.floor(Math.log10(raw))
+  const f = raw / pow
+  const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow
+  const start = Math.floor(lo / step) * step
+  const end = Math.ceil(hi / step) * step
+  const ticks: number[] = []
+  for (let v = start; v <= end + step / 1e6; v += step) {
+    ticks.push(Number(v.toFixed(6)))
+  }
+  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, step }
+}
