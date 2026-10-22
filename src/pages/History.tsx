@@ -7,7 +7,7 @@ import { useCurrentUser } from '../features/auth/useAuth'
 import { useDailyLogs, useExerciseHistory } from '../features/history/hooks/useHistory'
 import type { DailyLogEntry, ExerciseHistory, SetRecord } from '../features/history/types'
 import type { DashboardStats } from '../features/workout/services/workoutService'
-import { deleteWorkout } from '../features/workout/services/workoutService'
+import { deleteWorkout, startOfLocalWeekMonday } from '../features/workout/services/workoutService'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { formatVolume, formatWeight } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
@@ -126,9 +126,7 @@ export default function History() {
       exercises: queryClient.getQueryData<ExerciseHistory[]>(exerciseKey),
       stats: queryClient.getQueryData<DashboardStats>(statsKey),
     }
-    const weekAgo = new Date()
-    weekAgo.setDate(weekAgo.getDate() - 6)
-    const weekAgoStr = weekAgo.toISOString().slice(0, 10)
+    const weekStart = startOfLocalWeekMonday()
 
     queryClient.setQueryData<DailyLogEntry[]>(historyKey, (old) =>
       old?.flatMap((row) => {
@@ -156,7 +154,7 @@ export default function History() {
         .filter((ex) => ex.sessions.length > 0),
     )
     queryClient.setQueryData<DashboardStats>(statsKey, (old) => {
-      if (!old || pendingDelete.date < weekAgoStr) return old
+      if (!old || pendingDelete.date < weekStart) return old
       return { ...old, workoutsThisWeek: Math.max(0, old.workoutsThisWeek - 1) }
     })
 

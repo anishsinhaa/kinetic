@@ -5,6 +5,8 @@ import { CheckCircle2, ChevronRight, Dumbbell, Flame, HeartPulse, NotebookPen } 
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { Card } from '../components/ui/Card'
 import { useDailyLog } from '../features/dailyLog/hooks/useDailyLog'
+import { todayDateString } from '../features/dailyLog/services/dailyLogService'
+import { useDailyLogs } from '../features/history/hooks/useHistory'
 import { LogDaySheet } from '../features/dailyLog/components/LogDaySheet'
 import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { RecoveryPanel } from '../features/feedback/components/RecoveryPanel'
@@ -113,6 +115,7 @@ export default function Dashboard() {
   }, [activeSession])
 
   const { log, isLoading: logLoading } = useDailyLog(userId)
+  const logsQuery = useDailyLogs()
   const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
 
   const lastWorkoutQuery = useQuery({
@@ -126,11 +129,18 @@ export default function Dashboard() {
   })
 
   const avgWeight = useMemo(() => {
-    const trend = statsQuery.data?.weightTrend ?? []
-    if (trend.length === 0) return null
-    const avgKg = trend.reduce((sum, t) => sum + t.weight, 0) / trend.length
+    if (!logsQuery.isFetched) return null
+    const today = todayDateString()
+    const start = new Date()
+    start.setDate(start.getDate() - 6)
+    const startKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+    const weights = (logsQuery.data ?? []).filter(
+      (row) => row.weight != null && row.date >= startKey && row.date <= today,
+    )
+    if (weights.length === 0) return null
+    const avgKg = weights.reduce((sum, row) => sum + (row.weight ?? 0), 0) / weights.length
     return roundBodyWeight(avgKg, units)
-  }, [statsQuery.data, units])
+  }, [logsQuery.isFetched, logsQuery.data, units])
 
   const score = todayFeedback ? recoveryScoreFromFeedback(todayFeedback) : null
   const soreCount = todayFeedback?.soreness.length ?? 0
@@ -193,10 +203,15 @@ export default function Dashboard() {
           </>
         ) : (
           <>
-            <StatTile label="7-day avg weight" hint={avgWeight == null ? 'No weigh-ins yet' : undefined}>
-              {avgWeight != null ? (
+            <StatTile
+              label="7-day avg weight"
+              hint={logsQuery.isFetched && avgWeight == null ? 'No weigh-ins yet' : undefined}
+            >
+              {!logsQuery.isFetched ? (
+                <SkeletonBlock className="h-8 w-24" />
+              ) : avgWeight != null ? (
                 <>
-                  {avgWeight}
+                  {avgWeight.toFixed(1)}
                   <span className="text-sm font-medium text-text-secondary ml-1">{units}</span>
                 </>
               ) : (

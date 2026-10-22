@@ -79,6 +79,9 @@ function Stepper({
         <input
           type="number"
           inputMode={inputMode}
+          // Default step is 1, so the browser rewrites 83.3 to 83 on blur and the
+          // snapped 82.5 never shows. `any` lets our weight step own the value.
+          step={snapStep ? 'any' : '1'}
           disabled={disabled}
           aria-label={label}
           value={value}

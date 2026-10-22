@@ -106,7 +106,6 @@ export default function Workout() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const reduceMotion = useReducedMotion()
-  const addSetLockRef = useRef(0)
   const storeHydrated = useWorkoutStoreHydrated()
   const toast = useToast()
   // Resets a stale persisted session (ended / missing row, stuck summary) on load
@@ -365,33 +364,53 @@ export default function Workout() {
           const ordered = [...latestWorkoutQuery.data.exercises].sort(
             (a, b) => a.orderIndex - b.orderIndex,
           )
-          for (const ex of ordered) {
-            if (useWorkoutStore.getState().currentWorkoutId !== workoutId) break
-            try {
+          // Prefill every exercise together, then add the cards in one pass.
+          const prepared = await Promise.all(
+            ordered.map(async (ex) => {
               const sets = [...ex.sets].sort((a, b) => a.setIndex - b.setIndex)
-              await addExerciseFromLibrary(
-                {
-                  id: ex.exerciseId,
-                  name: ex.name,
-                  muscleGroup: ex.muscleGroup,
-                } as Exercise,
-                {
-                  initialSets:
-                    sets.length > 0
-                      ? sets.map((s) => ({
-                          weight: displayWeightStringStepped(
-                            s.weight,
-                            displayUnits,
-                            useWorkoutStore.getState().weightStep,
-                          ),
-                          reps: s.reps != null ? String(s.reps) : '',
-                        }))
-                      : undefined,
-                },
-              )
-            } catch {
-              // skip this exercise and keep copying the rest
-            }
+              let prefill: Awaited<ReturnType<typeof getExercisePrefillContext>> | null = null
+              try {
+                prefill = await queryClient.fetchQuery({
+                  queryKey: ['exercise-prefill', userId, ex.exerciseId],
+                  queryFn: () => getExercisePrefillContext(userId, ex.exerciseId, workoutId),
+                  staleTime: 1000 * 60 * 5,
+                })
+              } catch {
+                prefill = null
+              }
+              return { ex, sets, prefill }
+            }),
+          )
+          if (useWorkoutStore.getState().currentWorkoutId === workoutId) {
+            await Promise.all(
+              prepared.map(async ({ ex, sets, prefill }) => {
+                try {
+                  await addExerciseFromLibrary(
+                    {
+                      id: ex.exerciseId,
+                      name: ex.name,
+                      muscleGroup: ex.muscleGroup,
+                    } as Exercise,
+                    {
+                      initialSets:
+                        sets.length > 0
+                          ? sets.map((s) => ({
+                              weight: displayWeightStringStepped(
+                                s.weight,
+                                displayUnits,
+                                useWorkoutStore.getState().weightStep,
+                              ),
+                              reps: s.reps != null ? String(s.reps) : '',
+                            }))
+                          : undefined,
+                      ...(prefill ? { prefill } : {}),
+                    },
+                  )
+                } catch {
+                  // skip this exercise and keep copying the rest
+                }
+              }),
+            )
           }
         }
       } catch (err) {
@@ -443,20 +462,43 @@ export default function Workout() {
 
   const addExerciseFromLibrary = async (
     exercise: Exercise,
-    options?: { initialSets?: Array<{ weight: string; reps: string }> },
+    options?: {
+      initialSets?: Array<{ weight: string; reps: string }>
+      /** Already loaded. The card is created with Last/PR instead of waiting on a fetch. */
+      prefill?: Awaited<ReturnType<typeof getExercisePrefillContext>>
+    },
   ) => {
     const workoutId = useWorkoutStore.getState().currentWorkoutId
     if (!workoutId) return
 
-    const needsAsyncPrefill = options?.initialSets == null
+    const known = options?.prefill
+    const needsAsyncPrefill = options?.initialSets == null && !known
+    const displayUnitsNow = useWorkoutStore.getState().units
+    const stepNow = useWorkoutStore.getState().weightStep
+    const lastPerformance = known
+      ? known.lastSets.length > 0
+        ? `Last: ${known.lastSets
+            .map((s) => formatSetLine(s.weight, s.reps, displayUnitsNow, stepNow))
+            .join(' · ')}`
+        : 'No previous performance'
+      : needsAsyncPrefill
+        ? 'Loading…'
+        : undefined
+    const personalRecord = known
+      ? known.pr
+        ? formatPrLine(known.pr, displayUnitsNow, stepNow)
+        : 'No PR yet'
+      : needsAsyncPrefill
+        ? '…'
+        : undefined
 
     // Optimistic card — set edits blocked until prefill settles (pending)
     useWorkoutStore.getState().addExercise({
       exerciseId: exercise.id,
       name: exercise.name,
       muscleGroup: exercise.muscleGroup,
-      lastPerformance: needsAsyncPrefill ? 'Loading…' : undefined,
-      personalRecord: needsAsyncPrefill ? '…' : undefined,
+      lastPerformance,
+      personalRecord,
       target: 'maintain',
       prefillStatus: needsAsyncPrefill ? 'pending' : 'ready',
       initialSets: options?.initialSets ?? [{ weight: '', reps: '' }],
@@ -483,11 +525,14 @@ export default function Workout() {
         displayWeight: number | null
       }
       // Same Last/PR lookup a normal add uses, including when sets were copied.
-      const ctx = await queryClient.fetchQuery({
-        queryKey: ['exercise-prefill', userId, exercise.id],
-        queryFn: () => getExercisePrefillContext(userId, exercise.id, workoutId),
-        staleTime: 1000 * 60 * 5,
-      })
+      const ctx =
+        known ??
+        (await queryClient.fetchQuery({
+          queryKey: ['exercise-prefill', userId, exercise.id],
+          queryFn: () => getExercisePrefillContext(userId, exercise.id, workoutId),
+          staleTime: 1000 * 60 * 5,
+        }))
+      if (!ctx) return
       const pr = ctx.pr
       const prefillRows: PrefillRow[] =
         options?.initialSets != null
@@ -629,6 +674,14 @@ export default function Workout() {
     void queryClient.invalidateQueries({ queryKey: ['exercises', 'recent-ids', userId] })
     void queryClient.invalidateQueries({ queryKey: ['history'], refetchType: 'all' })
     void queryClient.invalidateQueries({ queryKey: ['progress'], refetchType: 'all' })
+    // Last-session / PR cache is per exercise. Drop it so the next add shows this workout.
+    const exerciseIds = useWorkoutStore.getState().exercises.map((ex) => ex.exerciseId)
+    for (const exerciseId of exerciseIds) {
+      void queryClient.invalidateQueries({
+        queryKey: ['exercise-prefill', userId, exerciseId],
+        refetchType: 'all',
+      })
+    }
   }
 
   const handleDeleteSet = (exerciseLocalId: string, setLocalId: string) => {
@@ -661,12 +714,7 @@ export default function Workout() {
   }
 
   const handleAddSet = (exerciseLocalId: string) => {
-    const now = Date.now()
-    if (now - addSetLockRef.current < 400) return
-    addSetLockRef.current = now
-    void persistQueueRef.current.flushAll().then(() => {
-      useWorkoutStore.getState().addSet(exerciseLocalId)
-    })
+    useWorkoutStore.getState().addSet(exerciseLocalId)
   }
 
   const handleSelectType = (type: string) => {
@@ -721,21 +769,19 @@ export default function Workout() {
         return
       }
 
-      await workoutReadyRef.current
-      await persistQueueRef.current.flushAll()
-
       const state = useWorkoutStore.getState()
+      const workoutId = currentWorkoutId
 
       // Rows to drop: unchecked sets, and exercises with no completed set
       const incompleteSetIds = state.exercises.flatMap((ex) =>
         ex.sets.filter((s) => !s.completed).map((s) => s.id),
       )
-      const emptyExercises = state.exercises.filter((ex) => !ex.sets.some((s) => s.completed))
-      const emptyWeIds = emptyExercises
+      const emptyWeIds = state.exercises
+        .filter((ex) => !ex.sets.some((s) => s.completed))
         .map((ex) => ex.dbWorkoutExerciseId)
         .filter((id): id is string => Boolean(id))
 
-      // Local store first (synchronous) so totals below only see completed work
+      // Local store first (synchronous) so the summary only sees completed work
       useWorkoutStore.setState((s) => ({
         exercises: s.exercises
           .filter((ex) => ex.sets.some((set) => set.completed))
@@ -743,24 +789,54 @@ export default function Workout() {
       }))
 
       const fresh = useWorkoutStore.getState()
-      const displayUnits = fresh.units
-      // Volume / PR math uses canonical kg — only exercises that still have completed sets
-      const completedSets = fresh.exercises.flatMap((e) =>
-        e.sets
-          .filter((s) => s.completed)
-          .map((s) => ({
-            exerciseId: e.exerciseId,
-            exerciseName: e.name,
-            weight:
-              s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
-            reps: s.reps === '' ? null : parseInt(s.reps, 10),
-            completed: true as const,
+      const publishSummary = (
+        session: typeof fresh,
+        labels?: { prLabels: string[]; firstLogLabels: string[] },
+      ) => {
+        const unitsNow = session.units
+        const stepNow = session.weightStep
+        const rows = session.exercises.flatMap((e) =>
+          e.sets
+            .filter((s) => s.completed)
+            .map((s) => ({
+              exerciseId: e.exerciseId,
+              exerciseName: e.name,
+              weight: s.weight === '' ? null : toStoredKg(parseFloat(s.weight), unitsNow),
+              reps: s.reps === '' ? null : parseInt(s.reps, 10),
+              completed: true as const,
+            })),
+        )
+        const warmupSec = session.warmupStartedAt
+          ? Math.round(
+              ((session.warmupEndedAt
+                ? new Date(session.warmupEndedAt).getTime()
+                : Date.now()) -
+                new Date(session.warmupStartedAt).getTime()) /
+                1000,
+            )
+          : 0
+        useWorkoutStore.getState().setSummarySnapshot({
+          durationSec: Math.round(elapsedMs / 1000),
+          warmupSec: Math.max(0, warmupSec),
+          volumeKg: volumeKgMatchingDisplay(rows, unitsNow, stepNow),
+          setCount: rows.length,
+          title: resolveSummaryTitle({ label: session.workoutLabel }),
+          prLabels: labels?.prLabels ?? session.summarySnapshot?.prLabels ?? [],
+          firstLogLabels:
+            labels?.firstLogLabels ?? session.summarySnapshot?.firstLogLabels ?? [],
+          exercises: session.exercises.map((ex) => ({
+            name: ex.name,
+            sets: ex.sets.map((s) => ({
+              weightKg: s.weight === '' ? null : toStoredKg(parseFloat(s.weight), unitsNow),
+              reps: s.reps === '' ? null : parseInt(s.reps, 10),
+            })),
           })),
-      )
+        })
+      }
 
       // Empty workout — discard entirely (don't count in history/stats)
-      if (completedSets.length === 0) {
-        await deleteWorkout(currentWorkoutId)
+      if (!fresh.exercises.some((ex) => ex.sets.some((s) => s.completed))) {
+        await deleteWorkout(workoutId)
         useWorkoutStore.getState().finishWorkout()
         setConfirmFinish(false)
         invalidateAfterWorkout()
@@ -768,23 +844,21 @@ export default function Workout() {
         return
       }
 
-      const warmupSec = fresh.warmupStartedAt
-        ? Math.round(
-            ((fresh.warmupEndedAt
-              ? new Date(fresh.warmupEndedAt).getTime()
-              : Date.now()) -
-              new Date(fresh.warmupStartedAt).getTime()) /
-              1000,
-          )
-        : 0
+      // Summary first. Saves and PR lookups continue behind it.
+      publishSummary(fresh, { prLabels: [], firstLogLabels: [] })
+      useWorkoutStore.getState().setPhase('summary')
+      setConfirmFinish(false)
+      setIsFinishing(false)
 
-      // Everything independent runs in parallel: PR lookups (current workout
-      // excluded so already-upserted sets don't mask new PRs), cleanup deletes,
-      // and one UPDATE that ends the workout and writes feel/note/warmup.
+      await workoutReadyRef.current
+      await persistQueueRef.current.flushAll()
+      const flushed = useWorkoutStore.getState()
+      publishSummary(flushed)
+
       const [prResults] = await Promise.all([
         Promise.all(
-          fresh.exercises.map((ex) =>
-            getExercisePersonalRecord(userId, ex.exerciseId, currentWorkoutId),
+          flushed.exercises.map((ex) =>
+            getExercisePersonalRecord(userId, ex.exerciseId, workoutId),
           ),
         ),
         deleteSets(incompleteSetIds).catch(() => {
@@ -793,24 +867,19 @@ export default function Workout() {
         deleteWorkoutExercises(emptyWeIds).catch(() => {
           /* may already be gone */
         }),
-        finishWorkoutDb(currentWorkoutId, {
-          feel: fresh.feel,
-          note: fresh.note.trim() || null,
-          warmup_started_at: fresh.warmupStartedAt,
-          warmup_ended_at: fresh.warmupEndedAt,
-          warmup_note: fresh.warmupNote.trim() || null,
+        finishWorkoutDb(workoutId, {
+          feel: flushed.feel,
+          note: flushed.note.trim() || null,
+          warmup_started_at: flushed.warmupStartedAt,
+          warmup_ended_at: flushed.warmupEndedAt,
+          warmup_note: flushed.warmupNote.trim() || null,
         }),
       ])
 
       const prevPrs: Record<string, { weight: number; reps: number } | null> = {}
-      fresh.exercises.forEach((ex, i) => {
-        const pr = prResults[i]
-        prevPrs[ex.exerciseId] =
-          pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
-      })
-      // Re-read after the save stamp so the breakdown matches the flushed rows.
       const saved = useWorkoutStore.getState()
       const savedUnits = saved.units
+      const step = saved.weightStep
       const savedSets = saved.exercises.flatMap((e) =>
         e.sets
           .filter((s) => s.completed)
@@ -822,36 +891,21 @@ export default function Workout() {
             completed: true as const,
           })),
       )
-      const step = saved.weightStep
-      const savedVolume = volumeKgMatchingDisplay(savedSets, savedUnits, step)
-      // A PR needs a previous best; first-ever sets are reported as "First log"
+      flushed.exercises.forEach((ex, i) => {
+        const pr = prResults[i]
+        prevPrs[ex.exerciseId] =
+          pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
+      })
       const hits = detectPrHits(savedSets, prevPrs)
       const firstLogs = detectFirstLogs(savedSets, prevPrs)
-
-      useWorkoutStore.getState().setSummarySnapshot({
-        durationSec: Math.round(elapsedMs / 1000),
-        warmupSec: Math.max(0, warmupSec),
-        volumeKg: savedVolume,
-        setCount: savedSets.length,
-        title: resolveSummaryTitle({ label: saved.workoutLabel }),
+      publishSummary(saved, {
         prLabels: hits.map(
           (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, savedUnits, step)}`,
         ),
         firstLogLabels: firstLogs.map(
           (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, savedUnits, step)}`,
         ),
-        exercises: saved.exercises.map((ex) => ({
-          name: ex.name,
-          sets: ex.sets.map((s) => ({
-            weightKg:
-              s.weight === '' ? null : toStoredKg(parseFloat(s.weight), savedUnits),
-            reps: s.reps === '' ? null : parseInt(s.reps, 10),
-          })),
-        })),
       })
-
-      useWorkoutStore.getState().setPhase('summary')
-      setConfirmFinish(false)
       invalidateAfterWorkout()
     } catch (err) {
       const message = (err as Error).message

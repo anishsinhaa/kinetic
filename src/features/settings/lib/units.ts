@@ -92,10 +92,10 @@ export function convertWeightStep(step: number, from: WeightUnits, to: WeightUni
   return snapToStep(converted, 0.25)
 }
 
-/** Body weight stays at 0.1 in the display unit. It does not use the lifting step. */
+/** Body weight at 0.1 in the display unit (173.57 → 173.6). Not the lifting step. */
 export function roundBodyWeight(kg: number, units: WeightUnits): number {
   const display = kgToDisplay(kg, units)
-  return Math.round(display * 10) / 10
+  return Number(display.toFixed(1))
 }
 
 /**

@@ -533,10 +533,21 @@ export type DashboardStats = {
   streakDays: number
 }
 
+/** Monday of this week as YYYY-MM-DD in the local timezone (not a rolling 7 days, not UTC). */
+export function startOfLocalWeekMonday(now = new Date()): string {
+  const day = now.getDay()
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (day === 0 ? 6 : day - 1))
+  const yyyy = monday.getFullYear()
+  const mm = String(monday.getMonth() + 1).padStart(2, '0')
+  const dd = String(monday.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
 export async function getDashboardStats(userId: string): Promise<DashboardStats> {
   const weekAgo = new Date()
   weekAgo.setDate(weekAgo.getDate() - 6)
   const weekAgoStr = weekAgo.toISOString().slice(0, 10)
+  const weekStart = startOfLocalWeekMonday()
 
   const [weights, workouts] = await Promise.all([
     supabase
@@ -564,8 +575,8 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
 
   const workoutRows = workouts.data ?? []
   const workoutDates = new Set(workoutRows.map((r) => r.date as string))
-  // Count every completed session this week (not unique days)
-  const workoutsThisWeek = workoutRows.filter((r) => (r.date as string) >= weekAgoStr).length
+  // Completed sessions in the current local calendar week (Monday through today).
+  const workoutsThisWeek = workoutRows.filter((r) => (r.date as string) >= weekStart).length
 
   // Streak: consecutive calendar days with a completed workout ending today/yesterday
   let streakDays = 0
