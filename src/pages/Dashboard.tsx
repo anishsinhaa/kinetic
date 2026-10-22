@@ -138,8 +138,9 @@ export default function Dashboard() {
       (row) => row.weight != null && row.date >= startKey && row.date <= today,
     )
     if (weights.length === 0) return null
-    const avgKg = weights.reduce((sum, row) => sum + (row.weight ?? 0), 0) / weights.length
-    return roundBodyWeight(avgKg, units)
+    const shown = weights.map((row) => roundBodyWeight(row.weight ?? 0, units))
+    const avg = shown.reduce((sum, value) => sum + value, 0) / shown.length
+    return Math.round(avg * 10) / 10
   }, [logsQuery.isFetched, logsQuery.data, units])
 
   const score = todayFeedback ? recoveryScoreFromFeedback(todayFeedback) : null

@@ -41,9 +41,11 @@ import {
   formatSetLine,
   formatVolume,
   roundWeightForDisplay,
+  snapToStep,
   toStoredKg,
   volumeKgMatchingDisplay,
 } from '../features/settings/lib/units'
+import { MAX_REPS, MAX_SET_WEIGHT_KG } from '../features/workout/constants'
 import {
   buildPrefillDraftSets,
   isExerciseUntouched,
@@ -174,12 +176,16 @@ export default function Workout() {
         }
 
         const units = useWorkoutStore.getState().units
-        const reps =
+        const rawReps =
           payload.reps != null && Number.isFinite(payload.reps)
             ? payload.reps
             : setItem.reps === ''
               ? null
               : Number.parseInt(setItem.reps, 10)
+        const reps =
+          rawReps != null && Number.isFinite(rawReps)
+            ? Math.min(MAX_REPS, Math.max(0, Math.round(rawReps)))
+            : null
         // The queued payload is the latest edit. Prefer it over the store row so a
         // summary built after this flush can't keep the pre-edit weight.
         const displayWeight =
@@ -188,13 +194,14 @@ export default function Workout() {
             : setItem.weight === ''
               ? null
               : Number.parseFloat(setItem.weight)
-        // Store kg canonically — UI fields are in the user's display unit
+        // Store kg canonically — UI fields are in the user's display unit.
+        // Clamp before insert: NUMERIC(6,2) rejects anything above 9999.99 kg.
         const weightKg =
           displayWeight != null && Number.isFinite(displayWeight)
-            ? toStoredKg(displayWeight, units)
+            ? Math.min(MAX_SET_WEIGHT_KG, Math.max(0, toStoredKg(displayWeight, units)))
             : null
         const setPayload = {
-          reps: reps != null && Number.isFinite(reps) ? reps : null,
+          reps,
           weight: weightKg,
           to_failure: setItem.toFailure,
           set_index: payload.setIndex,
@@ -215,8 +222,6 @@ export default function Workout() {
           })
           useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
             dbSetId: payload.setId,
-            weight: displayWeight == null ? '' : String(displayWeight),
-            reps: reps == null ? '' : String(reps),
           })
           setSaveError('Offline — will sync when back online')
           setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
@@ -226,8 +231,6 @@ export default function Workout() {
         await upsertSet(payload.setId, weId, setPayload)
         useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
           dbSetId: payload.setId,
-          weight: displayWeight == null ? '' : String(displayWeight),
-          reps: reps == null ? '' : String(reps),
         })
         setSaveError('')
         setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
@@ -305,6 +308,7 @@ export default function Workout() {
   const suggestionsReady =
     (settingsQuery.isSuccess || settingsQuery.isError) &&
     (recentTypesQuery.isSuccess || recentTypesQuery.isError)
+  const typePending = !suggestionsReady && pickedType == null
 
   // Don't wait on the workout-create round trip. The id exists as soon as Start
   // runs; DB inserts queue on `workoutReadyRef` until the row is actually there.
@@ -621,6 +625,16 @@ export default function Workout() {
 
   const handleCompleteSet = async (exerciseLocalId: string, setLocalId: string, index: number) => {
     const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
+    const setItem = ex?.sets.find((s) => s.id === setLocalId)
+    // Complete swallows mousedown, so the weight field never blurs and snap-on-blur never runs.
+    if (setItem && setItem.weight !== '') {
+      const n = parseFloat(setItem.weight)
+      if (Number.isFinite(n)) {
+        useWorkoutStore.getState().updateSet(exerciseLocalId, setLocalId, {
+          weight: String(snapToStep(n, useWorkoutStore.getState().weightStep)),
+        })
+      }
+    }
     useWorkoutStore.getState().completeSet(exerciseLocalId, setLocalId, settings?.restTimerSeconds)
     queuePersist(exerciseLocalId, setLocalId, ex?.dbWorkoutExerciseId, index)
     await persistQueueRef.current.flush(setLocalId)
@@ -964,10 +978,14 @@ export default function Workout() {
             <button
               type="button"
               onClick={() => setTypeSheetOpen(true)}
-              aria-label={`Workout type: ${idleType || 'none'}. Change`}
+              aria-label={
+                typePending
+                  ? 'Workout type loading'
+                  : `Workout type: ${idleType || 'none'}. Change`
+              }
               className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 min-h-11 text-sm font-semibold uppercase tracking-wider text-text-primary hover:border-primary"
             >
-              {idleType || 'Pick type'}
+              {typePending ? '…' : idleType || 'Pick type'}
               <ChevronDown size={14} className="text-text-secondary" />
             </button>
 
@@ -975,7 +993,7 @@ export default function Workout() {
               variant="primary"
               size="lg"
               className="w-full min-h-14 text-base"
-              disabled={!idleType}
+              disabled={typePending || !idleType}
               onClick={() => beginWorkoutWithType(idleType, pickedType != null)}
             >
               <Dumbbell size={16} className="mr-2" />
@@ -985,8 +1003,9 @@ export default function Workout() {
             {latest && (
               <button
                 type="button"
+                disabled={typePending}
                 onClick={() => beginWorkoutWithType(latest.label || idleType, false, true)}
-                className="block mx-auto min-h-11 px-3 text-sm text-primary underline underline-offset-4"
+                className="block mx-auto min-h-11 px-3 text-sm text-primary underline underline-offset-4 disabled:opacity-40"
               >
                 Repeat last workout
               </button>

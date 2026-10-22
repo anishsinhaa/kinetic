@@ -3,9 +3,17 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { Check, Minus, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { selectOnFocus } from '../../../lib/selectOnFocus'
-import { snapToStep } from '../../settings/lib/units'
+import { kgToDisplay, snapToStep } from '../../settings/lib/units'
+import { MAX_REPS, MAX_SET_WEIGHT_KG } from '../constants'
 import type { WeightUnits } from '../../../lib/supabase/database.types'
 import type { WorkoutSetDraft } from '../types'
+
+function maxWeightInDisplay(units: WeightUnits, step: number): number {
+  const raw = kgToDisplay(MAX_SET_WEIGHT_KG, units)
+  if (!step || step <= 0) return raw
+  const floored = Math.floor((raw + 1e-9) / step) * step
+  return snapToStep(floored, step)
+}
 
 type SetStepperRowProps = {
   index: number
@@ -37,6 +45,7 @@ function Stepper({
   inputMode,
   disabled,
   snapStep,
+  max,
   onType,
   onMinus,
   onPlus,
@@ -48,6 +57,8 @@ function Stepper({
   disabled: boolean
   /** When set, snap a prefilled value once, and snap again on blur. Never while typing. */
   snapStep?: number
+  /** Inclusive upper bound in the same units as `value`. */
+  max?: number
   onType: (v: string) => void
   onMinus: () => void
   onPlus: () => void
@@ -82,6 +93,8 @@ function Stepper({
           // Default step is 1, so the browser rewrites 83.3 to 83 on blur and the
           // snapped 82.5 never shows. `any` lets our weight step own the value.
           step={snapStep ? 'any' : '1'}
+          min={0}
+          max={max}
           disabled={disabled}
           aria-label={label}
           value={value}
@@ -91,12 +104,14 @@ function Stepper({
           }}
           onBlur={(e) => {
             focused.current = false
-            if (!snapStep) return
             const raw = e.currentTarget.value
             if (raw === '') return
-            const n = parseFloat(raw)
+            let n = parseFloat(raw)
             if (!Number.isFinite(n)) return
-            const next = String(snapToStep(n, snapStep))
+            if (snapStep && snapStep > 0) n = snapToStep(n, snapStep)
+            if (n < 0) n = 0
+            if (max != null && Number.isFinite(max)) n = Math.min(n, max)
+            const next = String(n)
             if (next !== raw) onType(next)
           }}
           onChange={(e) => {
@@ -200,6 +215,7 @@ export function SetStepperRow({
           inputMode="decimal"
           disabled={locked}
           snapStep={weightStep}
+          max={maxWeightInDisplay(units, weightStep)}
           onType={(v) => onChange({ weight: v })}
           onMinus={() =>
             onChange({ weight: String(snapToStep(Math.max(0, weight - weightStep), weightStep)) })
@@ -212,6 +228,7 @@ export function SetStepperRow({
           value={set.reps}
           inputMode="numeric"
           disabled={locked}
+          max={MAX_REPS}
           onType={(v) => onChange({ reps: v })}
           onMinus={() => onChange({ reps: String(Math.max(0, reps - 1)) })}
           onPlus={() => onChange({ reps: String(reps + 1) })}

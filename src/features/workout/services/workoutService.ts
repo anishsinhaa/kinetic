@@ -388,29 +388,50 @@ export async function getLastPerformance(
     .eq('exercise_id', exerciseId)
     .eq('workouts.user_id', userId)
     .not('workouts.ended_at', 'is', null)
-    .order('ended_at', { ascending: false, foreignTable: 'workouts' })
-    .limit(1)
+    .order('workouts(ended_at)', { ascending: false })
+    .limit(5)
 
   if (weError) throw toServiceError(weError)
-  const weId = (weRows as unknown as Array<{ id: string }>)?.[0]?.id
-  if (!weId) return []
+  const ids = ((weRows ?? []) as unknown as Array<{ id: string }>).map((row) => row.id)
+  if (ids.length === 0) return []
 
   const { data: sets, error: setsError } = await supabase
     .from('sets')
-    .select('weight, reps, set_index, completed_at')
-    .eq('workout_exercise_id', weId)
-    .order('set_index', { ascending: true })
+    .select('workout_exercise_id, weight, reps, set_index, completed_at')
+    .in('workout_exercise_id', ids)
 
   if (setsError) throw toServiceError(setsError)
 
-  return ((sets ?? []) as Array<{
+  const byExercise = new Map<
+    string,
+    Array<{
+      weight: number | null
+      reps: number | null
+      set_index: number | null
+      completed_at: string | null
+    }>
+  >()
+  for (const row of (sets ?? []) as Array<{
+    workout_exercise_id: string
     weight: number | null
     reps: number | null
     set_index: number | null
     completed_at: string | null
-  }>)
-    .filter((s) => isCompletedSet(s))
-    .map((s) => ({ weight: s.weight, reps: s.reps }))
+  }>) {
+    const list = byExercise.get(row.workout_exercise_id) ?? []
+    list.push(row)
+    byExercise.set(row.workout_exercise_id, list)
+  }
+
+  for (const id of ids) {
+    const completed = (byExercise.get(id) ?? [])
+      .filter((s) => isCompletedSet(s))
+      .sort((a, b) => (a.set_index ?? 0) - (b.set_index ?? 0))
+    if (completed.length > 0) {
+      return completed.map((s) => ({ weight: s.weight, reps: s.reps }))
+    }
+  }
+  return []
 }
 
 type PRSetRow = {
@@ -612,7 +633,7 @@ export async function getRecentExerciseIds(
     `)
     .eq('workouts.user_id', userId)
     .not('workouts.ended_at', 'is', null)
-    .order('ended_at', { ascending: false, foreignTable: 'workouts' })
+    .order('workouts(ended_at)', { ascending: false })
     .limit(limit)
 
   if (error) throw toServiceError(error)

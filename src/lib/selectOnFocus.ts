@@ -20,7 +20,10 @@ export function selectOnFocus(e: FocusEvent<HTMLInputElement>) {
   const onMouseUp = (ev: MouseEvent) => {
     ev.preventDefault()
     selectIfUnchanged()
+  }
+  const onBlur = () => {
     el.removeEventListener('mouseup', onMouseUp)
   }
-  el.addEventListener('mouseup', onMouseUp)
+  el.addEventListener('mouseup', onMouseUp, { once: true })
+  el.addEventListener('blur', onBlur, { once: true })
 }
