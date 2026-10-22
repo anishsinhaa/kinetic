@@ -13,14 +13,14 @@ import {
 } from 'recharts'
 import { TrendingUp, Dumbbell, Loader2, ChevronDown, Flame, Search, Activity } from 'lucide-react'
 import { useProgressData } from '../features/progress/hooks/useProgress'
-import { dailyMetricSeries, niceTicks } from '../features/progress/lib/progressAggregators'
-import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import { dailyMetricSeries, formatChartTick, niceTicks } from '../features/progress/lib/progressAggregators'
+import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { todayDateString } from '../features/dailyLog/services/dailyLogService'
 import {
   formatWeight,
   kgToDisplay,
-  roundDisplayWeight,
+  roundWeightForDisplay,
 } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
 
@@ -137,9 +137,8 @@ function MetricChart({
   emptyMsg: string
   animate: boolean
 }) {
-  const { domain, ticks, step } = useMemo(() => niceTicks(data.map((d) => d.value)), [data])
+  const { domain, ticks } = useMemo(() => niceTicks(data.map((d) => d.value)), [data])
   if (data.length === 0) return <EmptyState msg={emptyMsg} />
-  const tickDecimals = Math.max(decimals, step < 1 ? 1 : 0)
   return (
     <ChartCard>
       <p className="text-xs text-text-muted mb-3 font-semibold uppercase tracking-wide">
@@ -166,16 +165,11 @@ function MetricChart({
             tick={{ fontSize: 11, fill: '#64748b' }}
             tickLine={false}
             axisLine={false}
-            width={44}
+            width={48}
             domain={domain}
             ticks={ticks}
             interval={0}
-            tickFormatter={(v: number) =>
-              v.toLocaleString(undefined, {
-                minimumFractionDigits: tickDecimals,
-                maximumFractionDigits: tickDecimals,
-              })
-            }
+            tickFormatter={(v: number) => formatChartTick(v)}
           />
           <Tooltip
             content={
@@ -319,7 +313,7 @@ export default function Progress() {
   const [range, setRange] = useState<Range>(30)
   const [showAllSessions, setShowAllSessions] = useState(false)
   const reduceMotion = useReducedMotion()
-  const units = useWeightUnits()
+  const { units, step } = useWeightDisplay()
 
   const {
     histories,
@@ -347,9 +341,9 @@ export default function Progress() {
     () =>
       dailyMetricSeries(dailyLogs, 'weight', range, today).map((p) => ({
         date: p.date,
-        value: roundDisplayWeight(kgToDisplay(p.value, units), units),
+        value: roundWeightForDisplay(p.value, units, step),
       })),
-    [dailyLogs, range, today, units],
+    [dailyLogs, range, today, units, step],
   )
   const caloriesData = useMemo(
     () => dailyMetricSeries(dailyLogs, 'calories', range, today),
@@ -368,14 +362,20 @@ export default function Progress() {
       exerciseSeries.slice(-30).map((p) => ({
         ...p,
         bestWeight:
-          p.bestWeight != null
-            ? roundDisplayWeight(kgToDisplay(p.bestWeight, units), units)
-            : p.bestWeight,
+          p.bestWeight != null ? roundWeightForDisplay(p.bestWeight, units, step) : p.bestWeight,
         volume: units === 'kg' ? p.volume : kgToDisplay(p.volume, units),
       })),
-    [exerciseSeries, units],
+    [exerciseSeries, units, step],
   )
-  const weightTicks = useMemo(() => niceTicks(recentSeries.map((p) => p.bestWeight)), [recentSeries])
+  const weightTicks = useMemo(
+    () => niceTicks(recentSeries.map((p) => p.bestWeight).filter((v): v is number => v != null)),
+    [recentSeries],
+  )
+  const sessionVolumeTicks = useMemo(
+    () => niceTicks(recentSeries.map((p) => p.volume)),
+    [recentSeries],
+  )
+  const weeklyTicks = useMemo(() => niceTicks(recentWeekly.map((p) => p.volume)), [recentWeekly])
 
   const sessions = selectedHistory?.sessions ?? []
   const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 8)
@@ -442,10 +442,11 @@ export default function Progress() {
                               tick={{ fontSize: 11, fill: '#64748b' }}
                               tickLine={false}
                               axisLine={false}
-                              width={40}
+                              width={48}
                               domain={weightTicks.domain}
                               ticks={weightTicks.ticks}
                               interval={0}
+                              tickFormatter={(v: number) => formatChartTick(v)}
                             />
                             <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} ${units}`} />} />
                             <Area
@@ -469,7 +470,16 @@ export default function Progress() {
                           <BarChart data={recentSeries} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                             <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmtShortDate} minTickGap={24} />
-                            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => String(Math.round(v))} />
+                            <YAxis
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                              tickLine={false}
+                              axisLine={false}
+                              width={48}
+                              domain={sessionVolumeTicks.domain}
+                              ticks={sessionVolumeTicks.ticks}
+                              interval={0}
+                              tickFormatter={(v: number) => formatChartTick(v)}
+                            />
                             <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                             <Bar
                               dataKey="volume"
@@ -508,7 +518,7 @@ export default function Progress() {
                           </div>
                           <p className="text-xs text-text-secondary mt-1 tabular-nums">
                             {session.sets
-                              .map((s) => `${formatWeight(s.weight, units)} × ${s.reps ?? '—'}`)
+                              .map((s) => `${formatWeight(s.weight, units, { step })} × ${s.reps ?? '—'}`)
                               .join(' · ')}
                           </p>
                         </div>
@@ -538,7 +548,16 @@ export default function Progress() {
                     <BarChart data={recentWeekly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => String(Math.round(v))} />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: '#64748b' }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={48}
+                        domain={weeklyTicks.domain}
+                        ticks={weeklyTicks.ticks}
+                        interval={0}
+                        tickFormatter={(v: number) => formatChartTick(v)}
+                      />
                       <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                       <Bar
                         dataKey="volume"
@@ -627,7 +646,7 @@ export default function Progress() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-bold text-primary tabular-nums">
-                          {formatWeight(pr.weight, units)} × {pr.reps}
+                          {formatWeight(pr.weight, units, { step })} × {pr.reps}
                         </p>
                       </div>
                     </div>

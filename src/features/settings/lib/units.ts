@@ -41,9 +41,12 @@ export function displayWeightString(
 export function formatWeight(
   kg: number | null | undefined,
   units: WeightUnits,
-  opts?: { decimals?: number },
+  opts?: { decimals?: number; step?: number | null },
 ): string {
   if (kg == null || !Number.isFinite(kg)) return '—'
+  if (opts?.step != null && Number.isFinite(opts.step) && opts.step > 0) {
+    return `${roundWeightForDisplay(kg, units, opts.step)} ${units}`
+  }
   const display = kgToDisplay(kg, units)
   const decimals = opts?.decimals ?? (units === 'lb' ? 1 : 2)
   const n = Number(display.toFixed(decimals))
@@ -84,12 +87,15 @@ export function roundWeightForDisplay(
   units: WeightUnits,
   step?: number | null,
 ): number {
+  const display = units === 'kg' ? kg : kgToDisplay(kg, 'lb')
+  // A value typed as a whole number (226 lb) round-trips through kg storage.
+  if (units === 'lb') {
+    const whole = Math.round(display)
+    if (Math.abs(display - whole) <= 0.05) return whole
+  }
+  if (step != null && Number.isFinite(step) && step > 0) return snapToStep(display, step)
   if (units === 'kg') return roundDisplayWeight(kg, 'kg')
-  const lb = kgToDisplay(kg, 'lb')
-  const whole = Math.round(lb)
-  if (Math.abs(lb - whole) <= 0.05) return whole
-  if (step != null && Number.isFinite(step) && step > 0) return snapToStep(lb, step)
-  return whole
+  return Math.round(display)
 }
 
 /** Like displayWeightString, but snapped to the user's step for lb. */

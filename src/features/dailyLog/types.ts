@@ -4,7 +4,7 @@
  */
 
 import type { WeightUnits } from '../../lib/supabase/database.types'
-import { kgToDisplay, roundDisplayWeight, toStoredKg } from '../settings/lib/units'
+import { roundWeightForDisplay, toStoredKg } from '../settings/lib/units'
 
 export interface DailyLog {
   id: string
@@ -66,13 +66,14 @@ export const formStateToPayload = (form: DailyLogFormState): DailyLogPayload => 
 export const logToDisplayForm = (
   log: DailyLog | null | undefined,
   units: WeightUnits,
+  step?: number | null,
 ): DailyLogFormState => {
   if (!log) return emptyFormState()
   const base = logToFormState(log)
   if (log.weight == null) return base
   return {
     ...base,
-    weight: String(roundDisplayWeight(kgToDisplay(log.weight, units), units)),
+    weight: String(roundWeightForDisplay(log.weight, units, step)),
   }
 }
 

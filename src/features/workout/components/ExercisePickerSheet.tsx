@@ -69,7 +69,7 @@ export function ExercisePickerSheet({
 }: ExercisePickerSheetProps) {
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [typeFilterOn, setTypeFilterOn] = useState(true)
+  const [typeFilterOn, setTypeFilterOn] = useState(false)
   const muscles = musclesForWorkoutType(workoutType)
   const queryClient = useQueryClient()
 

@@ -39,18 +39,15 @@ export function muscleGroupsMatchType(type: string, muscleGroups: Array<string |
 }
 
 /**
- * Summary heading for a finished session.
- * - A type the user explicitly picked is always shown.
- * - An auto-suggested type is only shown if the logged muscles agree with it,
- *   otherwise the neutral "Workout" (never a wrong "Pull" for bench/row/squat).
+ * Summary heading for a finished session. Same source History uses: the type
+ * saved on the workout (`workout_type`, kept on the session as `workoutLabel`).
+ * "Workout" only when that type is missing.
  */
 export function resolveSummaryTitle(input: {
   label: string
-  typeExplicit: boolean
-  muscleGroups: Array<string | null | undefined>
+  typeExplicit?: boolean
+  muscleGroups?: Array<string | null | undefined>
 }): string {
   const label = input.label.trim()
-  if (!label) return 'Workout'
-  if (input.typeExplicit) return label
-  return muscleGroupsMatchType(label, input.muscleGroups) ? label : 'Workout'
+  return label || 'Workout'
 }

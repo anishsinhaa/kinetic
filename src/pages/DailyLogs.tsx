@@ -10,9 +10,12 @@ import { recoveryLabel, recoveryScoreFromFeedback } from '../features/feedback/t
 import type { BodyFeedback } from '../features/feedback/types'
 import type { DailyLogEntry } from '../features/history/types'
 import { LogDaySheet } from '../features/dailyLog/components/LogDaySheet'
+import { dailyLogKeys } from '../features/dailyLog/hooks/useDailyLog'
 import { RecoveryPanel } from '../features/feedback/components/RecoveryPanel'
 import { deleteDailyLog } from '../features/dailyLog/services/dailyLogService'
-import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import type { DailyLog } from '../features/dailyLog/types'
+import type { DashboardStats } from '../features/workout/services/workoutService'
+import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { formatWeight } from '../features/settings/lib/units'
 import { pluralize } from '../lib/pluralize'
 
@@ -54,7 +57,7 @@ const iconBtn =
 export default function DailyLogs() {
   const { user } = useCurrentUser()
   const userId = user!.id
-  const units = useWeightUnits()
+  const { units, step } = useWeightDisplay()
   const queryClient = useQueryClient()
   const logsQuery = useDailyLogs()
   const feedbackQuery = useFeedbackHistory()
@@ -89,22 +92,80 @@ export default function DailyLogs() {
 
   const handleDelete = async () => {
     if (!pendingDelete) return
+    const { kind, date } = pendingDelete
     setDeleting(true)
     setDeleteError('')
+
+    const historyKey = ['history', 'daily-logs', userId] as const
+    const feedbackKey = ['feedback', 'history', userId] as const
+    const todayFeedbackKey = ['feedback', 'today', userId] as const
+    const dateFeedbackKey = ['feedback', 'date', userId, date] as const
+    const todayLogKey = dailyLogKeys.today(userId)
+    const byDateKey = dailyLogKeys.byDate(userId, date)
+    const statsKey = ['dashboard', 'stats', userId] as const
+    const previous = {
+      history: queryClient.getQueryData<DailyLogEntry[]>(historyKey),
+      feedback: queryClient.getQueryData<BodyFeedback[]>(feedbackKey),
+      todayFeedback: queryClient.getQueryData<BodyFeedback | null>(todayFeedbackKey),
+      dateFeedback: queryClient.getQueryData(dateFeedbackKey),
+      todayLog: queryClient.getQueryData<DailyLog | null>(todayLogKey),
+      byDate: queryClient.getQueryData(byDateKey),
+      stats: queryClient.getQueryData<DashboardStats>(statsKey),
+    }
+
+    const rollback = () => {
+      queryClient.setQueryData(historyKey, previous.history)
+      queryClient.setQueryData(feedbackKey, previous.feedback)
+      queryClient.setQueryData(todayFeedbackKey, previous.todayFeedback)
+      queryClient.setQueryData(dateFeedbackKey, previous.dateFeedback)
+      queryClient.setQueryData(todayLogKey, previous.todayLog)
+      queryClient.setQueryData(byDateKey, previous.byDate)
+      queryClient.setQueryData(statsKey, previous.stats)
+    }
+
     try {
-      if (pendingDelete.kind === 'log') {
-        await deleteDailyLog(userId, pendingDelete.date)
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['daily_logs', userId] }),
-          queryClient.invalidateQueries({ queryKey: ['history'] }),
-          queryClient.invalidateQueries({ queryKey: ['progress'] }),
-          queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
-        ])
+      if (kind === 'log') {
+        queryClient.setQueryData<DailyLogEntry[]>(historyKey, (old) =>
+          old?.flatMap((row) => {
+            if (row.date !== date) return [row]
+            if (row.workouts.length === 0) return []
+            return [
+              {
+                ...row,
+                id: `workout-day-${date}`,
+                weight: null,
+                calories: null,
+                protein: null,
+                sleep: null,
+                notes: null,
+              },
+            ]
+          }),
+        )
+        queryClient.setQueryData<DailyLog | null>(todayLogKey, (old) =>
+          old && old.date === date ? null : old,
+        )
+        queryClient.setQueryData(byDateKey, null)
+        queryClient.setQueryData<DashboardStats>(statsKey, (old) =>
+          old ? { ...old, weightTrend: old.weightTrend.filter((p) => p.date !== date) } : old,
+        )
+        await deleteDailyLog(userId, date)
       } else {
-        await deleteFeedback.mutateAsync(pendingDelete.date)
+        queryClient.setQueryData<BodyFeedback[]>(feedbackKey, (old) =>
+          old?.filter((entry) => entry.date !== date),
+        )
+        queryClient.setQueryData(dateFeedbackKey, null)
+        queryClient.setQueryData<BodyFeedback | null>(todayFeedbackKey, (old) =>
+          old && old.date === date ? null : old,
+        )
+        await deleteFeedback.mutateAsync(date)
       }
       setPendingDelete(null)
+      void queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] })
+      void queryClient.invalidateQueries({ queryKey: ['history', 'daily-logs', userId] })
+      void queryClient.invalidateQueries({ queryKey: ['daily_logs', userId] })
     } catch (err) {
+      rollback()
       setDeleteError((err as Error).message)
     } finally {
       setDeleting(false)
@@ -155,7 +216,7 @@ export default function DailyLogs() {
         {entries.slice(0, visible).map((entry) => {
           const { row, feedback } = entry
           const metrics: Array<[string, string]> = []
-          if (row?.weight != null) metrics.push(['Weight', formatWeight(row.weight, units)])
+          if (row?.weight != null) metrics.push(['Weight', formatWeight(row.weight, units, { step })])
           if (row?.calories != null) metrics.push(['Calories', `${row.calories.toLocaleString()} kcal`])
           if (row?.protein != null) metrics.push(['Protein', `${row.protein} g`])
           if (row?.sleep != null) metrics.push(['Sleep', fmtSleep(row.sleep)])

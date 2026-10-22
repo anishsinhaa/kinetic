@@ -63,6 +63,22 @@ function newClientId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
+/** Nudge the page only when the next set sits under the floating rest bar. */
+function revealRowAboveRest(completedSetId: string) {
+  const current = document.querySelector(`[data-set-id="${completedSetId}"]`)
+  if (!(current instanceof HTMLElement)) return
+  const next = current.nextElementSibling
+  const target = next instanceof HTMLElement ? next : current
+  const bar = document.querySelector('[role="timer"]')
+  const limit =
+    bar instanceof HTMLElement ? bar.getBoundingClientRect().top : window.innerHeight
+  const rect = target.getBoundingClientRect()
+  if (rect.bottom <= limit - 8) return
+  const scroller = current.closest('main')
+  if (!(scroller instanceof HTMLElement)) return
+  scroller.scrollBy({ top: rect.bottom - limit + 12, behavior: 'smooth' })
+}
+
 function formatElapsed(ms: number) {
   const h = String(Math.floor(ms / 3600000)).padStart(2, '0')
   const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0')
@@ -129,6 +145,8 @@ export default function Workout() {
   const [isFinishing, setIsFinishing] = useState(false)
   const [setStatusMap, setSetStatusMap] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
   const startingRef = useRef(false)
+  /** Resolves when the in-flight createWorkout finishes (already resolved when idle). */
+  const workoutReadyRef = useRef<Promise<void>>(Promise.resolve())
 
   const persistQueueRef = useRef(
     createSetPersistQueue(async (payload) => {
@@ -158,9 +176,19 @@ export default function Workout() {
 
         const units = useWorkoutStore.getState().units
         const reps =
-          setItem.reps === '' ? null : Number.parseInt(setItem.reps, 10)
+          payload.reps != null && Number.isFinite(payload.reps)
+            ? payload.reps
+            : setItem.reps === ''
+              ? null
+              : Number.parseInt(setItem.reps, 10)
+        // The queued payload is the latest edit. Prefer it over the store row so a
+        // summary built after this flush can't keep the pre-edit weight.
         const displayWeight =
-          setItem.weight === '' ? null : Number.parseFloat(setItem.weight)
+          payload.weight != null && Number.isFinite(payload.weight)
+            ? payload.weight
+            : setItem.weight === ''
+              ? null
+              : Number.parseFloat(setItem.weight)
         // Store kg canonically — UI fields are in the user's display unit
         const weightKg =
           displayWeight != null && Number.isFinite(displayWeight)
@@ -188,6 +216,8 @@ export default function Workout() {
           })
           useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
             dbSetId: payload.setId,
+            weight: displayWeight == null ? '' : String(displayWeight),
+            reps: reps == null ? '' : String(reps),
           })
           setSaveError('Offline — will sync when back online')
           setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
@@ -197,6 +227,8 @@ export default function Workout() {
         await upsertSet(payload.setId, weId, setPayload)
         useWorkoutStore.getState().updateSet(fresh.exercise.id, payload.setId, {
           dbSetId: payload.setId,
+          weight: displayWeight == null ? '' : String(displayWeight),
+          reps: reps == null ? '' : String(reps),
         })
         setSaveError('')
         setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'saved' }))
@@ -275,7 +307,9 @@ export default function Workout() {
     (settingsQuery.isSuccess || settingsQuery.isError) &&
     (recentTypesQuery.isSuccess || recentTypesQuery.isError)
 
-  const canEdit = Boolean(currentWorkoutId) && dbReady && phase === 'training'
+  // Don't wait on the workout-create round trip. The id exists as soon as Start
+  // runs; DB inserts queue on `workoutReadyRef` until the row is actually there.
+  const canEdit = Boolean(currentWorkoutId) && phase === 'training'
 
   const queuePersist = (
     exerciseLocalId: string,
@@ -312,6 +346,11 @@ export default function Workout() {
     const startedAt = new Date().toISOString()
     api.startWorkout(workoutId, today, startedAt, normalizedType, typeExplicit)
     setSearchParams({}, { replace: true })
+
+    let markReady = () => {}
+    workoutReadyRef.current = new Promise<void>((resolve) => {
+      markReady = resolve
+    })
 
     void (async () => {
       try {
@@ -351,6 +390,7 @@ export default function Workout() {
         setSaveError((err as Error).message)
       } finally {
         startingRef.current = false
+        markReady()
       }
     })()
   }
@@ -418,8 +458,12 @@ export default function Workout() {
     if (!added) return
 
     try {
+      // The card is already on screen. Wait for the workout row before the FK insert.
+      await workoutReadyRef.current
+      const liveWorkoutId = useWorkoutStore.getState().currentWorkoutId
+      if (!liveWorkoutId) return
       const orderIndex = useWorkoutStore.getState().exercises.findIndex((e) => e.id === added.id)
-      const dbWeId = await addExerciseToWorkout(workoutId, exercise.id, Math.max(0, orderIndex))
+      const dbWeId = await addExerciseToWorkout(liveWorkoutId, exercise.id, Math.max(0, orderIndex))
       useWorkoutStore.getState().updateExerciseMeta(added.id, { dbWorkoutExerciseId: dbWeId })
 
       const displayUnits = useWorkoutStore.getState().units
@@ -531,6 +575,11 @@ export default function Workout() {
     useWorkoutStore.getState().completeSet(exerciseLocalId, setLocalId, settings?.restTimerSeconds)
     queuePersist(exerciseLocalId, setLocalId, ex?.dbWorkoutExerciseId, index)
     await persistQueueRef.current.flush(setLocalId)
+    // The rest bar covers the lower rows. Scroll only when the next row is actually
+    // hidden behind it — don't jump the page on every completed set.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => revealRowAboveRest(setLocalId))
+    })
   }
 
   const handleUncompleteSet = async (
@@ -623,6 +672,12 @@ export default function Workout() {
     if (!currentWorkoutId || isFinishing) return
     setIsFinishing(true)
     try {
+      // Commit a focused weight/reps field (blur snaps and writes the store) before
+      // the summary reads it. Otherwise a fast edit is saved but the snapshot
+      // still has the previous value.
+      const active = document.activeElement
+      if (active instanceof HTMLElement) active.blur()
+      await workoutReadyRef.current
       await persistQueueRef.current.flushAll()
 
       const state = useWorkoutStore.getState()
@@ -669,8 +724,6 @@ export default function Workout() {
         return
       }
 
-      const volume = Math.round(totalVolumeKg(completedSets) * 10) / 10
-
       const warmupSec = fresh.warmupStartedAt
         ? Math.round(
             ((fresh.warmupEndedAt
@@ -711,32 +764,43 @@ export default function Workout() {
         prevPrs[ex.exerciseId] =
           pr?.weight != null && pr.reps != null ? { weight: pr.weight, reps: pr.reps } : null
       })
+      // Re-read after the save stamp so the breakdown matches the flushed rows.
+      const saved = useWorkoutStore.getState()
+      const savedUnits = saved.units
+      const savedSets = saved.exercises.flatMap((e) =>
+        e.sets
+          .filter((s) => s.completed)
+          .map((s) => ({
+            exerciseId: e.exerciseId,
+            exerciseName: e.name,
+            weight: s.weight === '' ? null : toStoredKg(parseFloat(s.weight), savedUnits),
+            reps: s.reps === '' ? null : parseInt(s.reps, 10),
+            completed: true as const,
+          })),
+      )
+      const savedVolume = Math.round(totalVolumeKg(savedSets) * 10) / 10
+      const step = saved.weightStep
       // A PR needs a previous best; first-ever sets are reported as "First log"
-      const hits = detectPrHits(completedSets, prevPrs)
-      const firstLogs = detectFirstLogs(completedSets, prevPrs)
-      const step = fresh.weightStep
+      const hits = detectPrHits(savedSets, prevPrs)
+      const firstLogs = detectFirstLogs(savedSets, prevPrs)
 
       useWorkoutStore.getState().setSummarySnapshot({
         durationSec: Math.round(elapsedMs / 1000),
         warmupSec: Math.max(0, warmupSec),
-        volumeKg: volume,
-        setCount: completedSets.length,
-        title: resolveSummaryTitle({
-          label: fresh.workoutLabel,
-          typeExplicit: fresh.workoutTypeExplicit,
-          muscleGroups: fresh.exercises.map((e) => e.muscleGroup),
-        }),
+        volumeKg: savedVolume,
+        setCount: savedSets.length,
+        title: resolveSummaryTitle({ label: saved.workoutLabel }),
         prLabels: hits.map(
-          (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, displayUnits, step)}`,
+          (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, savedUnits, step)}`,
         ),
         firstLogLabels: firstLogs.map(
-          (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, displayUnits, step)}`,
+          (h) => `${h.exerciseName} ${formatSetLine(h.weight, h.reps, savedUnits, step)}`,
         ),
-        exercises: fresh.exercises.map((ex) => ({
+        exercises: saved.exercises.map((ex) => ({
           name: ex.name,
           sets: ex.sets.map((s) => ({
             weightKg:
-              s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
+              s.weight === '' ? null : toStoredKg(parseFloat(s.weight), savedUnits),
             reps: s.reps === '' ? null : parseInt(s.reps, 10),
           })),
         })),
@@ -985,7 +1049,13 @@ export default function Workout() {
   // ── Training ───────────────────────────────────────────────────────────────
   const showWarmup = !warmupDismissed && completedSetCount === 0
   return (
-    <div className={cn(restEndsAt && !confirmFinish ? 'pb-56' : 'pb-32')}>
+    <div
+      className={cn(
+        restEndsAt && !confirmFinish
+          ? 'pb-[calc(10rem+4rem+env(safe-area-inset-bottom,0px))]'
+          : 'pb-32',
+      )}
+    >
       {/* Compact header: type pill · timer · Finish (sticks under the section tabs) */}
       <div className="px-3 md:px-8 py-2 border-b border-border sticky top-12.25 bg-background/95 backdrop-blur z-20">
         <div className="flex items-center justify-between gap-2">

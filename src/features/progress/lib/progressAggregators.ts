@@ -219,30 +219,53 @@ export function dailyMetricSeries(
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
 }
 
+const NICE_FACTORS = [1, 2, 2.5, 5, 10]
+
+function niceStep(span: number, targetCount: number): number {
+  const raw = Math.max(span, 1e-9) / targetCount
+  const pow = 10 ** Math.floor(Math.log10(raw))
+  const f = raw / pow
+  const factor = NICE_FACTORS.find((c) => c >= f - 1e-9) ?? 10
+  return factor * pow
+}
+
 /**
- * Round-number Y-axis ticks (e.g. 70, 72, 74 rather than 69.8, 71.2 ...) that
- * enclose all values.
+ * Y-axis ticks on a 1 / 2 / 2.5 / 5 / 10 × 10ⁿ step. The domain is padded
+ * around the data (one step of headroom when a point sits on the edge) so a
+ * squat chart near 220 is not drawn from 0 and not as 220.2 / 220.4.
  */
 export function niceTicks(
   values: number[],
   targetCount = 4,
 ): { domain: [number, number]; ticks: number[]; step: number } {
-  if (values.length === 0) return { domain: [0, 1], ticks: [0, 1], step: 1 }
-  let lo = Math.min(...values)
-  let hi = Math.max(...values)
-  if (lo === hi) {
-    lo -= 1
-    hi += 1
-  }
-  const raw = (hi - lo) / targetCount
-  const pow = 10 ** Math.floor(Math.log10(raw))
-  const f = raw / pow
-  const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow
-  const start = Math.floor(lo / step) * step
-  const end = Math.ceil(hi / step) * step
+  const finite = values.filter((v) => Number.isFinite(v))
+  if (finite.length === 0) return { domain: [0, 1], ticks: [0, 1], step: 1 }
+  const dataLo = Math.min(...finite)
+  const dataHi = Math.max(...finite)
+  const span = dataHi - dataLo
+  const mag = Math.max(Math.abs(dataLo), Math.abs(dataHi), 1)
+  const pad = Math.max(span * 0.12, mag * 0.025)
+  const step = niceStep(Math.max(span + pad * 2, mag * 0.05), targetCount)
+  let start = Math.floor(dataLo / step) * step
+  let end = Math.ceil(dataHi / step) * step
+  if (dataLo - start < step * 0.3) start -= step
+  if (end - dataHi < step * 0.3) end += step
+  if (start === end) end = start + step
   const ticks: number[] = []
   for (let v = start; v <= end + step / 1e6; v += step) {
     ticks.push(Number(v.toFixed(6)))
   }
   return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, step }
+}
+
+/** Axis label: whole numbers as integers, thousands as "1.5k" / "2k". */
+export function formatChartTick(value: number): string {
+  if (!Number.isFinite(value)) return ''
+  const abs = Math.abs(value)
+  if (abs >= 1000) {
+    const scaled = Math.round((value / 1000) * 10) / 10
+    return `${Number.isInteger(scaled) ? scaled.toFixed(0) : scaled}k`
+  }
+  if (Math.abs(value - Math.round(value)) < 1e-6) return String(Math.round(value))
+  return String(Math.round(value * 100) / 100)
 }

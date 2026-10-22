@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react'
 import { BottomSheet } from '../../../components/ui/BottomSheet'
-import { useWeightUnits } from '../../settings/hooks/useWeightUnits'
+import { useWeightDisplay } from '../../settings/hooks/useWeightUnits'
 import { useDailyLog } from '../hooks/useDailyLog'
 import { DailyLogForm } from './DailyLogForm'
 
@@ -15,24 +15,28 @@ type LogDaySheetProps = {
 
 /** The one "Log day" sheet — used by Home and by the Daily logs page. */
 export function LogDaySheet({ open, onClose, userId, date, title }: LogDaySheetProps) {
-  const units = useWeightUnits()
+  const { units, step, ready } = useWeightDisplay()
   const { log, isLoading, save } = useDailyLog(userId, date)
+  // Wait until the saved log AND the display units are known, then mount the form
+  // once. Mounting earlier (units defaulting to kg, or an empty log) and then
+  // remounting drops whatever the user already typed.
+  const formReady = open && ready && !isLoading
 
   return (
     <BottomSheet open={open} onClose={onClose} title={title ?? (date ? `Log ${date}` : 'Log day')}>
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="animate-spin text-primary" size={20} />
-        </div>
-      ) : (
-        // Keyed by date + units only — never by log.id (it changes during the first save)
+      {formReady ? (
         <DailyLogForm
-          key={`${date ?? 'today'}-${units}`}
+          key={date ?? 'today'}
           initialLog={log}
           units={units}
+          weightStep={step}
           onSave={save}
           onSaved={() => window.setTimeout(onClose, 600)}
         />
+      ) : (
+        <div className="flex justify-center py-12">
+          <Loader2 className="animate-spin text-primary" size={20} />
+        </div>
       )}
     </BottomSheet>
   )

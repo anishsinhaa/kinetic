@@ -10,7 +10,7 @@ import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { RecoveryPanel } from '../features/feedback/components/RecoveryPanel'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
 import { useCurrentUser } from '../features/auth/useAuth'
-import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { useActiveSession } from '../features/workout/hooks/useActiveSession'
 import {
   getDashboardStats,
@@ -18,7 +18,7 @@ import {
 } from '../features/workout/services/workoutService'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { pluralize } from '../lib/pluralize'
-import { formatVolume, kgToDisplay } from '../features/settings/lib/units'
+import { formatVolume, roundWeightForDisplay } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
 
 function SkeletonBlock({ className }: { className?: string }) {
@@ -96,7 +96,7 @@ export default function Dashboard() {
   const { user } = useCurrentUser()
   const userId = user!.id
   const navigate = useNavigate()
-  const units = useWeightUnits()
+  const { units, step } = useWeightDisplay()
 
   // "Active" = store points at a workouts row that is still open (not a stale id)
   const { activeSession } = useActiveSession()
@@ -129,8 +129,8 @@ export default function Dashboard() {
     const trend = statsQuery.data?.weightTrend ?? []
     if (trend.length === 0) return null
     const avgKg = trend.reduce((sum, t) => sum + t.weight, 0) / trend.length
-    return Math.round(kgToDisplay(avgKg, units) * 10) / 10
-  }, [statsQuery.data, units])
+    return roundWeightForDisplay(avgKg, units, step)
+  }, [statsQuery.data, units, step])
 
   const score = todayFeedback ? recoveryScoreFromFeedback(todayFeedback) : null
   const soreCount = todayFeedback?.soreness.length ?? 0

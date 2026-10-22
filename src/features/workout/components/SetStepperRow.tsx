@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Check, Minus, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { selectOnFocus } from '../../../lib/selectOnFocus'
+import { snapToStep } from '../../settings/lib/units'
 import type { WeightUnits } from '../../../lib/supabase/database.types'
 import type { WorkoutSetDraft } from '../types'
 
@@ -34,6 +36,7 @@ function Stepper({
   value,
   inputMode,
   disabled,
+  snapStep,
   onType,
   onMinus,
   onPlus,
@@ -43,10 +46,24 @@ function Stepper({
   value: string
   inputMode: 'decimal' | 'numeric'
   disabled: boolean
+  /** When set, snap a prefilled value once, and snap again on blur. Never while typing. */
+  snapStep?: number
   onType: (v: string) => void
   onMinus: () => void
   onPlus: () => void
 }) {
+  const edited = useRef(false)
+  const focused = useRef(false)
+
+  useEffect(() => {
+    if (!snapStep || edited.current || focused.current || disabled) return
+    if (value === '') return
+    const n = parseFloat(value)
+    if (!Number.isFinite(n)) return
+    const next = String(snapToStep(n, snapStep))
+    if (next !== value) onType(next)
+  }, [value, snapStep, disabled, onType])
+
   return (
     <div className="flex items-center gap-1.5 min-w-0">
       <button
@@ -65,8 +82,24 @@ function Stepper({
           disabled={disabled}
           aria-label={label}
           value={value}
-          onFocus={selectOnFocus}
-          onChange={(e) => onType(e.target.value)}
+          onFocus={(e) => {
+            focused.current = true
+            selectOnFocus(e)
+          }}
+          onBlur={(e) => {
+            focused.current = false
+            if (!snapStep) return
+            const raw = e.currentTarget.value
+            if (raw === '') return
+            const n = parseFloat(raw)
+            if (!Number.isFinite(n)) return
+            const next = String(snapToStep(n, snapStep))
+            if (next !== raw) onType(next)
+          }}
+          onChange={(e) => {
+            edited.current = true
+            onType(e.target.value)
+          }}
           className="w-full min-h-11 bg-surface-2 border border-border rounded-xl pl-1 pr-1 text-center text-base font-semibold text-text-primary focus:outline-hidden focus:border-primary disabled:opacity-60"
         />
         <span className="pointer-events-none absolute right-1.5 bottom-0.5 text-[9px] text-text-muted leading-none">
@@ -107,7 +140,7 @@ export function SetStepperRow({
 
   return (
     <motion.div
-      layout
+      data-set-id={set.id}
       className={cn(
         'px-3 py-3 border-b border-border space-y-2',
         set.completed && 'bg-primary/5',
@@ -132,6 +165,7 @@ export function SetStepperRow({
           <button
             type="button"
             disabled={locked || (!set.completed && (set.weight === '' || set.reps === ''))}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => (set.completed ? onUncomplete() : onComplete())}
             className={cn(
               'min-h-11 min-w-11 rounded-xl flex items-center justify-center border transition-colors',
@@ -162,9 +196,12 @@ export function SetStepperRow({
           value={set.weight}
           inputMode="decimal"
           disabled={locked}
+          snapStep={weightStep}
           onType={(v) => onChange({ weight: v })}
-          onMinus={() => onChange({ weight: String(Math.max(0, +(weight - weightStep).toFixed(2))) })}
-          onPlus={() => onChange({ weight: String(+(weight + weightStep).toFixed(2)) })}
+          onMinus={() =>
+            onChange({ weight: String(snapToStep(Math.max(0, weight - weightStep), weightStep)) })
+          }
+          onPlus={() => onChange({ weight: String(snapToStep(weight + weightStep, weightStep)) })}
         />
         <Stepper
           label={`Reps, set ${n}`}

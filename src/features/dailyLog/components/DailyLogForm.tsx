@@ -3,6 +3,7 @@ import { CheckCircle2, Loader2 } from 'lucide-react'
 import { Button } from '../../../components/ui/Button'
 import { useToast } from '../../../components/ui/toastContext'
 import { selectOnFocus } from '../../../lib/selectOnFocus'
+import { snapToStep } from '../../settings/lib/units'
 import type { WeightUnits } from '../../../lib/supabase/database.types'
 import {
   type DailyLog,
@@ -16,6 +17,8 @@ type DailyLogFormProps = {
   /** Existing row for the date being edited (null/undefined = empty form). */
   initialLog: DailyLog | null | undefined
   units: WeightUnits
+  /** User's weight step, in display units. Applied once up front and on blur. */
+  weightStep?: number
   /** Persist the payload (weight already converted to kg). */
   onSave: (payload: DailyLogPayload) => Promise<unknown>
   /** Called after a successful save. */
@@ -29,9 +32,13 @@ type DailyLogFormProps = {
  * (new → optimistic → real UUID) during the first save and a remount would
  * wipe whatever was typed into the other fields.
  */
-export function DailyLogForm({ initialLog, units, onSave, onSaved }: DailyLogFormProps) {
+export function DailyLogForm({ initialLog, units, weightStep, onSave, onSaved }: DailyLogFormProps) {
   const toast = useToast()
-  const [form, setForm] = useState<DailyLogFormState>(() => logToDisplayForm(initialLog, units))
+  // Initial value is captured once. A later log/units change must not remount or
+  // overwrite what the user has started typing (see LogDaySheet's key).
+  const [form, setForm] = useState<DailyLogFormState>(() =>
+    logToDisplayForm(initialLog, units, weightStep),
+  )
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const numericFields = [
@@ -78,6 +85,15 @@ export function DailyLogForm({ initialLog, units, onSave, onSaved }: DailyLogFor
               min={0}
               value={form[key]}
               onFocus={selectOnFocus}
+              onBlur={(e) => {
+                if (key !== 'weight' || !weightStep) return
+                const raw = e.currentTarget.value
+                if (raw === '') return
+                const n = parseFloat(raw)
+                if (!Number.isFinite(n)) return
+                const next = String(snapToStep(n, weightStep))
+                if (next !== raw) setField('weight', next)
+              }}
               onChange={(e) => setField(key, e.target.value)}
               className="mt-1 w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-center font-semibold text-text-primary focus:outline-hidden focus:border-primary min-h-11"
               placeholder="—"

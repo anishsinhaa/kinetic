@@ -3,10 +3,12 @@ import { useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, ChevronDown, Dumbbell, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
+import { useCurrentUser } from '../features/auth/useAuth'
 import { useDailyLogs, useExerciseHistory } from '../features/history/hooks/useHistory'
-import type { SetRecord } from '../features/history/types'
+import type { DailyLogEntry, ExerciseHistory, SetRecord } from '../features/history/types'
+import type { DashboardStats } from '../features/workout/services/workoutService'
 import { deleteWorkout } from '../features/workout/services/workoutService'
-import { useWeightUnits } from '../features/settings/hooks/useWeightUnits'
+import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { formatVolume, formatWeight } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
 import { pluralize } from '../lib/pluralize'
@@ -61,9 +63,11 @@ async function invalidateHistoryCaches(queryClient: ReturnType<typeof useQueryCl
 
 /** Completed workouts as cards, newest first. Tapping a card shows its exercises and sets. */
 export default function History() {
+  const { user } = useCurrentUser()
+  const userId = user!.id
   const { data: logs, isLoading, error } = useDailyLogs()
   const { data: exerciseHistory } = useExerciseHistory()
-  const units = useWeightUnits()
+  const { units, step } = useWeightDisplay()
   const queryClient = useQueryClient()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [visible, setVisible] = useState(PAGE_SIZE)
@@ -106,11 +110,58 @@ export default function History() {
     if (!pendingDelete) return
     setDeleting(true)
     setDeleteError('')
+
+    const historyKey = ['history', 'daily-logs', userId] as const
+    const exerciseKey = ['history', 'exercise-history', userId] as const
+    const statsKey = ['dashboard', 'stats', userId] as const
+    const previous = {
+      history: queryClient.getQueryData<DailyLogEntry[]>(historyKey),
+      exercises: queryClient.getQueryData<ExerciseHistory[]>(exerciseKey),
+      stats: queryClient.getQueryData<DashboardStats>(statsKey),
+    }
+    const weekAgo = new Date()
+    weekAgo.setDate(weekAgo.getDate() - 6)
+    const weekAgoStr = weekAgo.toISOString().slice(0, 10)
+
+    queryClient.setQueryData<DailyLogEntry[]>(historyKey, (old) =>
+      old?.flatMap((row) => {
+        if (!row.workouts.some((w) => w.id === pendingDelete.id)) return [row]
+        const workouts = row.workouts.filter((w) => w.id !== pendingDelete.id)
+        if (workouts.length === 0 && row.id.startsWith('workout-day-')) return []
+        const latest = workouts[workouts.length - 1]
+        return [
+          {
+            ...row,
+            workouts,
+            workoutCount: workouts.length,
+            workoutType: latest?.label ?? null,
+            workoutDurationMins: latest?.durationMins ?? null,
+          },
+        ]
+      }),
+    )
+    queryClient.setQueryData<ExerciseHistory[]>(exerciseKey, (old) =>
+      old
+        ?.map((ex) => ({
+          ...ex,
+          sessions: ex.sessions.filter((s) => s.workoutId !== pendingDelete.id),
+        }))
+        .filter((ex) => ex.sessions.length > 0),
+    )
+    queryClient.setQueryData<DashboardStats>(statsKey, (old) => {
+      if (!old || pendingDelete.date < weekAgoStr) return old
+      return { ...old, workoutsThisWeek: Math.max(0, old.workoutsThisWeek - 1) }
+    })
+
     try {
       await deleteWorkout(pendingDelete.id)
       setPendingDelete(null)
       await invalidateHistoryCaches(queryClient)
+      void queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] })
     } catch (err) {
+      queryClient.setQueryData(historyKey, previous.history)
+      queryClient.setQueryData(exerciseKey, previous.exercises)
+      queryClient.setQueryData(statsKey, previous.stats)
       setDeleteError((err as Error).message)
     } finally {
       setDeleting(false)
@@ -201,7 +252,7 @@ export default function History() {
                         <p className="text-sm font-semibold text-text-primary">{ex.name}</p>
                         <p className="text-xs text-text-secondary mt-0.5 tabular-nums">
                           {ex.sets
-                            .map((s) => `${formatWeight(s.weight, units)} × ${s.reps ?? '—'}`)
+                            .map((s) => `${formatWeight(s.weight, units, { step })} × ${s.reps ?? '—'}`)
                             .join(' · ')}
                         </p>
                       </div>
