@@ -49,7 +49,7 @@ type WorkoutDetail = {
   volumeKg: number
   feel: number | null
   note: string | null
-  exercises: Array<{ name: string; sets: SetRecord[] }>
+  exercises: Array<{ name: string; sets: SetRecord[]; orderIndex: number }>
 }
 
 async function invalidateHistoryCaches(queryClient: ReturnType<typeof useQueryClient>) {
@@ -99,9 +99,16 @@ export default function History() {
         d.volumeKg += s.totalVolume
         d.feel = s.feel ?? d.feel
         d.note = s.note ?? d.note
-        d.exercises.push({ name: ex.exerciseName, sets: s.sets })
+        d.exercises.push({
+          name: ex.exerciseName,
+          sets: s.sets,
+          orderIndex: s.orderIndex ?? 0,
+        })
         map.set(s.workoutId, d)
       }
+    }
+    for (const detail of map.values()) {
+      detail.exercises.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
     }
     return map
   }, [exerciseHistory])

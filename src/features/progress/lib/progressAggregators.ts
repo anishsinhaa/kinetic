@@ -230,42 +230,56 @@ function niceStep(span: number, targetCount: number): number {
 }
 
 /**
- * Y-axis ticks on a 1 / 2 / 2.5 / 5 / 10 × 10ⁿ step. The domain is padded
- * around the data (one step of headroom when a point sits on the edge) so a
- * squat chart near 220 is not drawn from 0 and not as 220.2 / 220.4.
+ * Y-axis ticks on a 1 / 2 / 2.5 / 5 / 10 × 10ⁿ step. Weight charts are padded
+ * around the data. Bar and volume charts pass `fromZero` so the axis starts at 0.
  */
 export function niceTicks(
   values: number[],
   targetCount = 4,
+  options?: { fromZero?: boolean },
 ): { domain: [number, number]; ticks: number[]; step: number } {
   const finite = values.filter((v) => Number.isFinite(v))
   if (finite.length === 0) return { domain: [0, 1], ticks: [0, 1], step: 1 }
   const dataLo = Math.min(...finite)
   const dataHi = Math.max(...finite)
-  const span = dataHi - dataLo
+  const fromZero = options?.fromZero === true
+  const span = fromZero ? dataHi : dataHi - dataLo
   const mag = Math.max(Math.abs(dataLo), Math.abs(dataHi), 1)
-  const pad = Math.max(span * 0.12, mag * 0.025)
+  const pad = fromZero ? 0 : Math.max(span * 0.12, mag * 0.025)
   const step = niceStep(Math.max(span + pad * 2, mag * 0.05), targetCount)
-  let start = Math.floor(dataLo / step) * step
+  let start = fromZero ? 0 : Math.floor(dataLo / step) * step
   let end = Math.ceil(dataHi / step) * step
-  if (dataLo - start < step * 0.3) start -= step
+  if (!fromZero && dataLo - start < step * 0.3) start -= step
   if (end - dataHi < step * 0.3) end += step
   if (start === end) end = start + step
   const ticks: number[] = []
   for (let v = start; v <= end + step / 1e6; v += step) {
     ticks.push(Number(v.toFixed(6)))
   }
-  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, step }
+  return { domain: [ticks[0] ?? 0, ticks[ticks.length - 1] ?? 1], ticks, step }
 }
 
-/** Axis label: whole numbers as integers, thousands as "1.5k" / "2k". */
-export function formatChartTick(value: number): string {
+/** Axis label: whole numbers as integers, thousands as "1.5k" / "2k" / "2.45k". */
+export function formatChartTick(value: number, kDecimals = 1): string {
   if (!Number.isFinite(value)) return ''
   const abs = Math.abs(value)
   if (abs >= 1000) {
-    const scaled = Math.round((value / 1000) * 10) / 10
-    return `${Number.isInteger(scaled) ? scaled.toFixed(0) : scaled}k`
+    const rounded = Number((value / 1000).toFixed(kDecimals))
+    if (kDecimals <= 1 && Number.isInteger(rounded)) return `${rounded}k`
+    if (kDecimals <= 1) return `${rounded}k`
+    return `${rounded.toFixed(kDecimals)}k`
   }
   if (Math.abs(value - Math.round(value)) < 1e-6) return String(Math.round(value))
   return String(Math.round(value * 100) / 100)
+}
+
+/** One formatter for a tick list. Adds k-decimals until every label is unique. */
+export function chartTickFormatter(ticks: number[]): (value: number) => string {
+  let kDecimals = 1
+  for (; kDecimals < 4; kDecimals++) {
+    const labels = ticks.map((tick) => formatChartTick(tick, kDecimals))
+    if (new Set(labels).size === labels.length) break
+  }
+  const decimals = Math.min(kDecimals, 3)
+  return (value: number) => formatChartTick(value, decimals)
 }

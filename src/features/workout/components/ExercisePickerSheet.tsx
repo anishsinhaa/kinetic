@@ -70,6 +70,14 @@ export function ExercisePickerSheet({
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
   const [typeFilterOn, setTypeFilterOn] = useState(false)
+  const [seenOpen, setSeenOpen] = useState(open)
+  if (open !== seenOpen) {
+    setSeenOpen(open)
+    if (open) {
+      setSearch('')
+      setDebounced('')
+    }
+  }
   const muscles = musclesForWorkoutType(workoutType)
   const queryClient = useQueryClient()
 

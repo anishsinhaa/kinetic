@@ -129,6 +129,7 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
 
 type RawWorkoutExerciseRow = {
   exercise_id: string
+  order_index?: number | null
   exercises: { id: string; name: string; muscle_group: string } | { id: string; name: string; muscle_group: string }[] | null
   sets: Array<{
     weight: number | null
@@ -147,18 +148,21 @@ async function fetchExerciseHistoryRows(userId: string): Promise<RawWorkoutExerc
   const attempts = [
     `
       exercise_id,
+      order_index,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index, completed_at ),
       workouts!inner ( id, date, user_id, ended_at, feel, note )
     `,
     `
       exercise_id,
+      order_index,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index ),
       workouts!inner ( id, date, user_id, ended_at, feel, note )
     `,
     `
       exercise_id,
+      order_index,
       exercises ( id, name, muscle_group ),
       sets ( weight, reps, set_index ),
       workouts!inner ( id, date, user_id, ended_at )
@@ -225,6 +229,7 @@ export function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHis
     const note = (workout?.note ?? '').trim() || null
 
     // One entry per workout session — two Bench sessions on the same day stay separate
+    const orderIndex = row.order_index ?? 0
     if (!entry.sessions.has(workoutId)) {
       entry.sessions.set(workoutId, {
         workoutId,
@@ -233,12 +238,14 @@ export function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHis
         sets: sets.map((s) => ({ weight: s.weight, reps: s.reps })),
         feel,
         note,
+        orderIndex,
       })
     } else {
       // Same exercise logged twice in one workout — merge sets into that session
       const existing = entry.sessions.get(workoutId)!
       existing.sets.push(...sets.map((s) => ({ weight: s.weight, reps: s.reps })))
       existing.totalVolume += totalVolume
+      existing.orderIndex = Math.min(existing.orderIndex ?? 0, orderIndex)
       if (feel != null) existing.feel = feel
       if (note) existing.note = note
     }

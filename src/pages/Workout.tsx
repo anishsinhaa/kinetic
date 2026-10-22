@@ -33,7 +33,6 @@ import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { suggestNextType } from '../features/workout/lib/suggestNextType'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
-import { totalVolumeKg } from '../features/workout/lib/volume'
 import { bestPersonalRecord, detectFirstLogs, detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
 import {
@@ -43,6 +42,7 @@ import {
   formatVolume,
   roundWeightForDisplay,
   toStoredKg,
+  volumeKgMatchingDisplay,
 } from '../features/settings/lib/units'
 import {
   buildPrefillDraftSets,
@@ -356,11 +356,19 @@ export default function Workout() {
       try {
         await createWorkout(userId, today, normalizedType, workoutId)
         setDbReady(true)
+        // Release waiters before copying exercises. Each add awaits this promise;
+        // resolving it only after the loop deadlocks on the first exercise.
+        markReady()
 
         if (repeat && latestWorkoutQuery.data?.exercises?.length) {
           const displayUnits = useWorkoutStore.getState().units
-          for (const ex of latestWorkoutQuery.data.exercises) {
+          const ordered = [...latestWorkoutQuery.data.exercises].sort(
+            (a, b) => a.orderIndex - b.orderIndex,
+          )
+          for (const ex of ordered) {
+            if (useWorkoutStore.getState().currentWorkoutId !== workoutId) break
             try {
+              const sets = [...ex.sets].sort((a, b) => a.setIndex - b.setIndex)
               await addExerciseFromLibrary(
                 {
                   id: ex.exerciseId,
@@ -369,8 +377,8 @@ export default function Workout() {
                 } as Exercise,
                 {
                   initialSets:
-                    ex.sets.length > 0
-                      ? ex.sets.map((s) => ({
+                    sets.length > 0
+                      ? sets.map((s) => ({
                           weight: displayWeightStringStepped(
                             s.weight,
                             displayUnits,
@@ -382,7 +390,7 @@ export default function Workout() {
                 },
               )
             } catch {
-              // skip
+              // skip this exercise and keep copying the rest
             }
           }
         }
@@ -474,35 +482,31 @@ export default function Workout() {
         reps: number | null
         displayWeight: number | null
       }
-      let prefillRows: PrefillRow[] = []
-      let pr: Awaited<ReturnType<typeof getExercisePersonalRecord>> = null
-
-      if (options?.initialSets != null) {
-        // Repeat-last: strings are already in display units
-        prefillRows = options.initialSets.map((s) => ({
-          weight:
-            s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
-          reps: s.reps === '' ? null : parseInt(s.reps, 10),
-          displayWeight: s.weight === '' ? null : parseFloat(s.weight),
-        }))
-      } else {
-        const ctx = await queryClient.fetchQuery({
-          queryKey: ['exercise-prefill', userId, exercise.id],
-          queryFn: () => getExercisePrefillContext(userId, exercise.id, workoutId),
-          staleTime: 1000 * 60 * 5,
-        })
-        pr = ctx.pr
-        prefillRows = ctx.lastSets.map((s) => ({
-          weight: s.weight,
-          reps: s.reps,
-          displayWeight:
-            s.weight != null ? roundWeightForDisplay(s.weight, displayUnits, step) : null,
-        }))
-      }
+      // Same Last/PR lookup a normal add uses, including when sets were copied.
+      const ctx = await queryClient.fetchQuery({
+        queryKey: ['exercise-prefill', userId, exercise.id],
+        queryFn: () => getExercisePrefillContext(userId, exercise.id, workoutId),
+        staleTime: 1000 * 60 * 5,
+      })
+      const pr = ctx.pr
+      const prefillRows: PrefillRow[] =
+        options?.initialSets != null
+          ? options.initialSets.map((s) => ({
+              weight:
+                s.weight === '' ? null : toStoredKg(parseFloat(s.weight), displayUnits),
+              reps: s.reps === '' ? null : parseInt(s.reps, 10),
+              displayWeight: s.weight === '' ? null : parseFloat(s.weight),
+            }))
+          : ctx.lastSets.map((s) => ({
+              weight: s.weight,
+              reps: s.reps,
+              displayWeight:
+                s.weight != null ? roundWeightForDisplay(s.weight, displayUnits, step) : null,
+            }))
 
       const lastPerformance =
-        prefillRows.length > 0
-          ? `Last: ${prefillRows
+        ctx.lastSets.length > 0
+          ? `Last: ${ctx.lastSets
               .map((s) => formatSetLine(s.weight, s.reps, displayUnits, step))
               .join(' · ')}`
           : 'No previous performance'
@@ -612,12 +616,19 @@ export default function Workout() {
 
   /** Targeted, fire-and-forget cache refresh — never blocks navigation. */
   const invalidateAfterWorkout = () => {
-    void queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] })
-    void queryClient.invalidateQueries({ queryKey: ['workout', 'latest-completed', userId] })
+    // Refetch even while Home is unmounted so week stats are current on arrival.
+    void queryClient.invalidateQueries({
+      queryKey: ['dashboard', 'stats', userId],
+      refetchType: 'all',
+    })
+    void queryClient.invalidateQueries({
+      queryKey: ['workout', 'latest-completed', userId],
+      refetchType: 'all',
+    })
     void queryClient.invalidateQueries({ queryKey: ['workout', 'recent-types', userId] })
     void queryClient.invalidateQueries({ queryKey: ['exercises', 'recent-ids', userId] })
-    void queryClient.invalidateQueries({ queryKey: ['history'] })
-    void queryClient.invalidateQueries({ queryKey: ['progress'] })
+    void queryClient.invalidateQueries({ queryKey: ['history'], refetchType: 'all' })
+    void queryClient.invalidateQueries({ queryKey: ['progress'], refetchType: 'all' })
   }
 
   const handleDeleteSet = (exerciseLocalId: string, setLocalId: string) => {
@@ -677,6 +688,39 @@ export default function Workout() {
       // still has the previous value.
       const active = document.activeElement
       if (active instanceof HTMLElement) active.blur()
+
+      const discarding = !useWorkoutStore
+        .getState()
+        .exercises.some((ex) => ex.sets.some((s) => s.completed))
+      if (discarding) {
+        persistQueueRef.current.cancel()
+        const workoutId = currentWorkoutId
+        let timer = 0
+        try {
+          await new Promise<void>((resolve, reject) => {
+            timer = window.setTimeout(() => reject(new Error('Discard timed out')), 8000)
+            void (async () => {
+              try {
+                await workoutReadyRef.current
+                await deleteWorkout(workoutId)
+                resolve()
+              } catch (err) {
+                reject(err instanceof Error ? err : new Error('Could not discard workout'))
+              }
+            })()
+          })
+          useWorkoutStore.getState().finishWorkout()
+          setConfirmFinish(false)
+          invalidateAfterWorkout()
+          navigate('/')
+        } catch (err) {
+          toast.show(`Couldn't discard workout: ${(err as Error).message}`, { kind: 'error' })
+        } finally {
+          window.clearTimeout(timer)
+        }
+        return
+      }
+
       await workoutReadyRef.current
       await persistQueueRef.current.flushAll()
 
@@ -778,8 +822,8 @@ export default function Workout() {
             completed: true as const,
           })),
       )
-      const savedVolume = Math.round(totalVolumeKg(savedSets) * 10) / 10
       const step = saved.weightStep
+      const savedVolume = volumeKgMatchingDisplay(savedSets, savedUnits, step)
       // A PR needs a previous best; first-ever sets are reported as "First log"
       const hits = detectPrHits(savedSets, prevPrs)
       const firstLogs = detectFirstLogs(savedSets, prevPrs)
@@ -1052,7 +1096,7 @@ export default function Workout() {
     <div
       className={cn(
         restEndsAt && !confirmFinish
-          ? 'pb-[calc(10rem+4rem+env(safe-area-inset-bottom,0px))]'
+          ? 'pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'
           : 'pb-32',
       )}
     >
@@ -1251,6 +1295,7 @@ export default function Workout() {
           <Plus size={16} />
           <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
         </button>
+        {restEndsAt && !confirmFinish && <div aria-hidden className="h-44" />}
       </div>
 
       {/* Hidden while the finish confirmation is open so it can't cover the actions */}

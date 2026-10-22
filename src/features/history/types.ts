@@ -47,6 +47,8 @@ export interface ExerciseHistorySession {
   sets: SetRecord[]
   feel: number | null
   note: string | null
+  /** workout_exercises.order_index — session order inside that workout */
+  orderIndex?: number
 }
 
 export interface ExerciseHistory {

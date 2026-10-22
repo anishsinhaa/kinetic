@@ -40,6 +40,7 @@ import {
   unsubscribeUserPush,
 } from '../features/settings/lib/pushNotifications'
 import { detectBrowserTimezone } from '../features/settings/lib/reminderTimezone'
+import { convertWeightStep } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
 import {
   exportJson,
@@ -815,7 +816,13 @@ function PreferencesSection({ userId }: { userId: string }) {
                   key={u}
                   type="button"
                   disabled={saveMutation.isPending}
-                  onClick={() => persist({ units: u })}
+                  onClick={() => {
+                    if (u === local.units) return
+                    persist({
+                      units: u,
+                      weightStep: convertWeightStep(local.weightStep, local.units, u),
+                    })
+                  }}
                   className={cn(
                     'px-3 py-1.5 text-xs font-semibold uppercase',
                     local.units === u

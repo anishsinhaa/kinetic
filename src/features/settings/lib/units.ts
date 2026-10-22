@@ -73,14 +73,57 @@ export function snapToStep(value: number, step: number): number {
   return Number((Math.round(value / step) * step).toFixed(4))
 }
 
+/** Plate increment for the active unit: 2.5 kg or 5 lb. */
+export function defaultWeightStep(units: WeightUnits): number {
+  return units === 'lb' ? 5 : 2.5
+}
+
+/**
+ * Step is stored in the active display unit. Switching units converts it.
+ * The usual plate pair stays exact (2.5 kg ↔ 5 lb); any other step is scaled
+ * by the kg/lb factor and snapped to 0.25.
+ */
+export function convertWeightStep(step: number, from: WeightUnits, to: WeightUnits): number {
+  if (from === to) return step
+  if (!Number.isFinite(step) || step <= 0) return defaultWeightStep(to)
+  if (from === 'kg' && to === 'lb' && Math.abs(step - 2.5) < 0.001) return 5
+  if (from === 'lb' && to === 'kg' && Math.abs(step - 5) < 0.001) return 2.5
+  const converted = from === 'kg' ? step * LB_PER_KG : step / LB_PER_KG
+  return snapToStep(converted, 0.25)
+}
+
+/** Body weight stays at 0.1 in the display unit. It does not use the lifting step. */
+export function roundBodyWeight(kg: number, units: WeightUnits): number {
+  const display = kgToDisplay(kg, units)
+  return Math.round(display * 10) / 10
+}
+
+/**
+ * Volume in kg from the same rounded display weights the set lines show,
+ * so the summary total matches those lines.
+ */
+export function volumeKgMatchingDisplay(
+  sets: Array<{ weight: number | null; reps: number | null }>,
+  units: WeightUnits,
+  step?: number | null,
+): number {
+  let display = 0
+  for (const set of sets) {
+    if (set.weight == null || set.reps == null) continue
+    if (!Number.isFinite(set.weight) || !Number.isFinite(set.reps)) continue
+    display += roundWeightForDisplay(set.weight, units, step) * set.reps
+  }
+  if (display <= 0) return 0
+  return units === 'kg' ? display : displayToKg(display, 'lb')
+}
+
 /**
  * Weight shown in the UI for a stored kg value.
  *
- * kg values are shown as stored (2 decimals max). lb values are converted and
- * snapped to the user's weight step so conversion noise (187.39, 220.46) never
- * leaks into the UI. `step` is in display units (see Settings → Weight step).
- * A value within 0.05 of a whole number is treated as that whole number, so a
- * weight typed in lb (226) round-trips through kg storage unchanged.
+ * `step` is in the active display unit (2.5 kg or 5 lb by default). Both kg
+ * and lb snap to that step. A lb value within 0.05 of a whole number is
+ * treated as that whole number, so a weight typed in lb (226) round-trips
+ * through kg storage unchanged.
  */
 export function roundWeightForDisplay(
   kg: number,

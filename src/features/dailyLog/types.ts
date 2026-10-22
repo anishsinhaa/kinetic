@@ -4,7 +4,7 @@
  */
 
 import type { WeightUnits } from '../../lib/supabase/database.types'
-import { roundWeightForDisplay, toStoredKg } from '../settings/lib/units'
+import { roundBodyWeight, toStoredKg } from '../settings/lib/units'
 
 export interface DailyLog {
   id: string
@@ -62,18 +62,17 @@ export const formStateToPayload = (form: DailyLogFormState): DailyLogPayload => 
   notes: form.notes,
 })
 
-/** Form state for a stored log; body weight is shown in the user's units. */
+/** Form state for a stored log. Body weight is 0.1 precision, not the lifting step. */
 export const logToDisplayForm = (
   log: DailyLog | null | undefined,
   units: WeightUnits,
-  step?: number | null,
 ): DailyLogFormState => {
   if (!log) return emptyFormState()
   const base = logToFormState(log)
   if (log.weight == null) return base
   return {
     ...base,
-    weight: String(roundWeightForDisplay(log.weight, units, step)),
+    weight: String(roundBodyWeight(log.weight, units)),
   }
 }
 

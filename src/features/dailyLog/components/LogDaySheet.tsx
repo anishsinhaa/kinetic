@@ -15,7 +15,7 @@ type LogDaySheetProps = {
 
 /** The one "Log day" sheet — used by Home and by the Daily logs page. */
 export function LogDaySheet({ open, onClose, userId, date, title }: LogDaySheetProps) {
-  const { units, step, ready } = useWeightDisplay()
+  const { units, ready } = useWeightDisplay()
   const { log, isLoading, save } = useDailyLog(userId, date)
   // Wait until the saved log AND the display units are known, then mount the form
   // once. Mounting earlier (units defaulting to kg, or an empty log) and then
@@ -29,7 +29,6 @@ export function LogDaySheet({ open, onClose, userId, date, title }: LogDaySheetP
           key={date ?? 'today'}
           initialLog={log}
           units={units}
-          weightStep={step}
           onSave={save}
           onSaved={() => window.setTimeout(onClose, 600)}
         />

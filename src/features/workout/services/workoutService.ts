@@ -623,7 +623,7 @@ export type LatestWorkoutExercise = {
   name: string
   muscleGroup: string
   orderIndex: number
-  sets: Array<{ weight: number | null; reps: number | null }>
+  sets: Array<{ weight: number | null; reps: number | null; setIndex: number }>
 }
 
 export type LatestCompletedWorkout = {
@@ -651,6 +651,7 @@ type LatestWorkoutRow = {
     sets: Array<{
       weight: number | null
       reps: number | null
+      set_index?: number | null
       completed_at: string | null
     }> | null
   }> | null
@@ -668,7 +669,7 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
         exercise_id,
         order_index,
         exercises ( name, muscle_group ),
-        sets ( weight, reps, completed_at )
+        sets ( weight, reps, set_index, completed_at )
       )
     `
   const legacySelect = `
@@ -681,7 +682,7 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
         exercise_id,
         order_index,
         exercises ( name, muscle_group ),
-        sets ( weight, reps )
+        sets ( weight, reps, set_index )
       )
     `
 
@@ -731,7 +732,8 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
         if (!ex) return null
         const sets = (we.sets ?? [])
           .filter((s) => isCompletedSet(s))
-          .map((s) => ({ weight: s.weight, reps: s.reps }))
+          .sort((a, b) => (a.set_index ?? 0) - (b.set_index ?? 0))
+          .map((s) => ({ weight: s.weight, reps: s.reps, setIndex: s.set_index ?? 0 }))
         return {
           exerciseId: we.exercise_id,
           name: ex.name,

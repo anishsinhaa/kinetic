@@ -13,13 +13,14 @@ import {
 } from 'recharts'
 import { TrendingUp, Dumbbell, Loader2, ChevronDown, Flame, Search, Activity } from 'lucide-react'
 import { useProgressData } from '../features/progress/hooks/useProgress'
-import { dailyMetricSeries, formatChartTick, niceTicks } from '../features/progress/lib/progressAggregators'
+import { chartTickFormatter, dailyMetricSeries, niceTicks } from '../features/progress/lib/progressAggregators'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { todayDateString } from '../features/dailyLog/services/dailyLogService'
 import {
   formatWeight,
   kgToDisplay,
+  roundBodyWeight,
   roundWeightForDisplay,
 } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
@@ -138,6 +139,7 @@ function MetricChart({
   animate: boolean
 }) {
   const { domain, ticks } = useMemo(() => niceTicks(data.map((d) => d.value)), [data])
+  const formatTick = useMemo(() => chartTickFormatter(ticks), [ticks])
   if (data.length === 0) return <EmptyState msg={emptyMsg} />
   return (
     <ChartCard>
@@ -169,7 +171,7 @@ function MetricChart({
             domain={domain}
             ticks={ticks}
             interval={0}
-            tickFormatter={(v: number) => formatChartTick(v)}
+            tickFormatter={formatTick}
           />
           <Tooltip
             content={
@@ -341,9 +343,9 @@ export default function Progress() {
     () =>
       dailyMetricSeries(dailyLogs, 'weight', range, today).map((p) => ({
         date: p.date,
-        value: roundWeightForDisplay(p.value, units, step),
+        value: roundBodyWeight(p.value, units),
       })),
-    [dailyLogs, range, today, units, step],
+    [dailyLogs, range, today, units],
   )
   const caloriesData = useMemo(
     () => dailyMetricSeries(dailyLogs, 'calories', range, today),
@@ -372,10 +374,25 @@ export default function Progress() {
     [recentSeries],
   )
   const sessionVolumeTicks = useMemo(
-    () => niceTicks(recentSeries.map((p) => p.volume)),
+    () => niceTicks(recentSeries.map((p) => p.volume), 4, { fromZero: true }),
     [recentSeries],
   )
-  const weeklyTicks = useMemo(() => niceTicks(recentWeekly.map((p) => p.volume)), [recentWeekly])
+  const weeklyTicks = useMemo(
+    () => niceTicks(recentWeekly.map((p) => p.volume), 4, { fromZero: true }),
+    [recentWeekly],
+  )
+  const weightTickFormat = useMemo(
+    () => chartTickFormatter(weightTicks.ticks),
+    [weightTicks.ticks],
+  )
+  const sessionVolumeTickFormat = useMemo(
+    () => chartTickFormatter(sessionVolumeTicks.ticks),
+    [sessionVolumeTicks.ticks],
+  )
+  const weeklyTickFormat = useMemo(
+    () => chartTickFormatter(weeklyTicks.ticks),
+    [weeklyTicks.ticks],
+  )
 
   const sessions = selectedHistory?.sessions ?? []
   const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 8)
@@ -446,7 +463,7 @@ export default function Progress() {
                               domain={weightTicks.domain}
                               ticks={weightTicks.ticks}
                               interval={0}
-                              tickFormatter={(v: number) => formatChartTick(v)}
+                              tickFormatter={weightTickFormat}
                             />
                             <Tooltip content={<KineticTooltip valueFormatter={(v) => `${v} ${units}`} />} />
                             <Area
@@ -478,7 +495,7 @@ export default function Progress() {
                               domain={sessionVolumeTicks.domain}
                               ticks={sessionVolumeTicks.ticks}
                               interval={0}
-                              tickFormatter={(v: number) => formatChartTick(v)}
+                              tickFormatter={sessionVolumeTickFormat}
                             />
                             <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                             <Bar
@@ -556,7 +573,7 @@ export default function Progress() {
                         domain={weeklyTicks.domain}
                         ticks={weeklyTicks.ticks}
                         interval={0}
-                        tickFormatter={(v: number) => formatChartTick(v)}
+                        tickFormatter={weeklyTickFormat}
                       />
                       <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
                       <Bar

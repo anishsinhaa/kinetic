@@ -14,6 +14,8 @@ export type SetPersistQueue = {
   flush: (setId: string) => Promise<void>
   /** Flush every pending / in-flight set save. */
   flushAll: () => Promise<void>
+  /** Drop queued writes without saving. In-flight upserts are ignored when they finish. */
+  cancel: () => void
   /** True if anything is waiting or saving. */
   hasPending: () => boolean
 }
@@ -30,13 +32,16 @@ export function createSetPersistQueue(
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const latest = new Map<string, SetPersistPayload>()
   const chains = new Map<string, Promise<void>>()
+  let epoch = 0
 
   const runUpsert = async (setId: string) => {
+    const gen = epoch
     const payload = latest.get(setId)
-    if (!payload) return
+    if (!payload || gen !== epoch) return
     // Clear before await so a concurrent schedule can stage a newer payload
     latest.delete(setId)
     await upsert(payload)
+    if (gen !== epoch) return
     // If something newer arrived while we were saving, run again
     if (latest.has(setId)) {
       await runUpsert(setId)
@@ -92,8 +97,16 @@ export function createSetPersistQueue(
     await Promise.allSettled([...ids].map((id) => enqueue(id)))
   }
 
+  const cancel = () => {
+    epoch += 1
+    for (const timer of timers.values()) clearTimeout(timer)
+    timers.clear()
+    latest.clear()
+    chains.clear()
+  }
+
   const hasPending = () =>
     timers.size > 0 || latest.size > 0 || [...chains.values()].length > 0
 
-  return { schedule, flush, flushAll, hasPending }
+  return { schedule, flush, flushAll, hasPending, cancel }
 }

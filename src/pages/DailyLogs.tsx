@@ -57,7 +57,7 @@ const iconBtn =
 export default function DailyLogs() {
   const { user } = useCurrentUser()
   const userId = user!.id
-  const { units, step } = useWeightDisplay()
+  const { units } = useWeightDisplay()
   const queryClient = useQueryClient()
   const logsQuery = useDailyLogs()
   const feedbackQuery = useFeedbackHistory()
@@ -216,7 +216,7 @@ export default function DailyLogs() {
         {entries.slice(0, visible).map((entry) => {
           const { row, feedback } = entry
           const metrics: Array<[string, string]> = []
-          if (row?.weight != null) metrics.push(['Weight', formatWeight(row.weight, units, { step })])
+          if (row?.weight != null) metrics.push(['Weight', formatWeight(row.weight, units, { decimals: 1 })])
           if (row?.calories != null) metrics.push(['Calories', `${row.calories.toLocaleString()} kcal`])
           if (row?.protein != null) metrics.push(['Protein', `${row.protein} g`])
           if (row?.sleep != null) metrics.push(['Sleep', fmtSleep(row.sleep)])
