@@ -815,6 +815,7 @@ function PreferencesSection({ userId }: { userId: string }) {
                 <button
                   key={u}
                   type="button"
+                  aria-pressed={local.units === u}
                   disabled={saveMutation.isPending}
                   onClick={() => {
                     if (u === local.units) return

@@ -146,7 +146,10 @@ export default function Workout() {
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [isFinishing, setIsFinishing] = useState(false)
   const [setStatusMap, setSetStatusMap] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
+  /** Exercise names shown while Repeat last is still copying the previous session. */
+  const [repeatPlaceholders, setRepeatPlaceholders] = useState<string[]>([])
   const startingRef = useRef(false)
+  const unitsRef = useRef(units)
   /** Resolves when the in-flight createWorkout finishes (already resolved when idle). */
   const workoutReadyRef = useRef<Promise<void>>(Promise.resolve())
 
@@ -274,6 +277,59 @@ export default function Workout() {
     })
   }, [settings])
 
+  // Last/PR/target lines are preformatted strings. After a unit switch, rebuild
+  // them from the cached prefill (kg) instead of leaving "230 lb" on a kg session.
+  useEffect(() => {
+    if (unitsRef.current === units) return
+    unitsRef.current = units
+    if (!currentWorkoutId) return
+    const workoutId = currentWorkoutId
+    const sessionExercises = useWorkoutStore.getState().exercises
+    if (sessionExercises.length === 0) return
+    let cancelled = false
+    void Promise.all(
+      sessionExercises.map(async (ex) => {
+        try {
+          const ctx = await queryClient.fetchQuery({
+            queryKey: ['exercise-prefill', userId, ex.exerciseId],
+            queryFn: () => getExercisePrefillContext(userId, ex.exerciseId, workoutId),
+            staleTime: 1000 * 60 * 5,
+          })
+          if (cancelled) return
+          const liveState = useWorkoutStore.getState()
+          if (liveState.currentWorkoutId !== workoutId || liveState.units !== units) return
+          const step = liveState.weightStep
+          const live = liveState.exercises.find((e) => e.id === ex.id)
+          if (!live) return
+          const lastPerformance =
+            ctx.lastSets.length > 0
+              ? `Last: ${ctx.lastSets
+                  .map((s) => formatSetLine(s.weight, s.reps, units, step))
+                  .join(' · ')}`
+              : 'No previous performance'
+          const personalRecord = ctx.pr ? formatPrLine(ctx.pr, units, step) : 'No PR yet'
+          const first = live.sets[0]
+          const w = first && first.weight !== '' ? Number.parseFloat(first.weight) : null
+          const r = first && first.reps !== '' ? Number.parseInt(first.reps, 10) : null
+          const targetLabel =
+            w != null && Number.isFinite(w) && r != null && Number.isFinite(r)
+              ? `Target: ${targetPreview(w, r, live.target, step)}`
+              : live.targetLabel
+          liveState.updateExerciseMeta(ex.id, {
+            lastPerformance,
+            personalRecord,
+            targetLabel,
+          })
+        } catch {
+          // Sets were already converted. Leave the previous labels if prefill is unavailable.
+        }
+      }),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [units, currentWorkoutId, queryClient, userId])
+
   useEffect(() => {
     if (settingsQuery.isError) {
       useWorkoutStore.getState().setWorkoutTypes(resolveWorkoutTypes(null))
@@ -348,6 +404,15 @@ export default function Workout() {
 
     const workoutId = newClientId()
     const startedAt = new Date().toISOString()
+    if (repeat && latestWorkoutQuery.data?.exercises?.length) {
+      setRepeatPlaceholders(
+        [...latestWorkoutQuery.data.exercises]
+          .sort((a, b) => a.orderIndex - b.orderIndex)
+          .map((ex) => ex.name),
+      )
+    } else {
+      setRepeatPlaceholders([])
+    }
     api.startWorkout(workoutId, today, startedAt, normalizedType, typeExplicit)
     setSearchParams({}, { replace: true })
 
@@ -422,6 +487,7 @@ export default function Workout() {
         setSaveError((err as Error).message)
       } finally {
         startingRef.current = false
+        setRepeatPlaceholders([])
         markReady()
       }
     })()
@@ -1274,6 +1340,20 @@ export default function Workout() {
             )}
           </div>
         )}
+
+        {exercises.length === 0 &&
+          repeatPlaceholders.map((name, i) => (
+            <div
+              key={`${name}-${i}`}
+              className="rounded-xl border border-border bg-surface px-4 py-3"
+            >
+              <h3 className="font-semibold text-text-primary">{name}</h3>
+              <p className="mt-1 flex items-center gap-2 text-xs text-text-secondary">
+                <Loader2 size={14} className="animate-spin text-primary" />
+                Loading last workout…
+              </p>
+            </div>
+          ))}
 
         {exercises.map((ex) => (
           <div key={ex.id} className="rounded-xl border border-border bg-surface overflow-hidden">

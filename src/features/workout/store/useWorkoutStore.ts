@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { localDateString } from '../../../lib/localDate'
+import { kgToDisplay, snapToStep, toStoredKg } from '../../settings/lib/units'
 import type { WorkoutExerciseDraft, WorkoutPhase, WorkoutSetDraft } from '../types'
 import { resolveWorkoutTypes } from '../lib/workoutTypes'
 import type { WeightUnits, WorkoutExerciseTarget } from '../../../lib/supabase/database.types'
@@ -229,11 +230,35 @@ export const useWorkoutStore = create<WorkoutStore>()(
         }),
 
       setPrefs: (prefs) =>
-        set((state) => ({
-          weightStep: prefs.weightStep ?? state.weightStep,
-          restDefaultSeconds: prefs.restDefaultSeconds ?? state.restDefaultSeconds,
-          units: prefs.units ?? state.units,
-        })),
+        set((state) => {
+          const units = prefs.units ?? state.units
+          const weightStep = prefs.weightStep ?? state.weightStep
+          const unitsChanged = prefs.units != null && prefs.units !== state.units
+          return {
+            weightStep,
+            restDefaultSeconds: prefs.restDefaultSeconds ?? state.restDefaultSeconds,
+            units,
+            // Set weights are display strings. Convert them in this same update so
+            // "230 lb" doesn't stay "230" after the unit label flips to kg.
+            ...(unitsChanged
+              ? {
+                  exercises: state.exercises.map((ex) => ({
+                    ...ex,
+                    sets: ex.sets.map((s) => {
+                      if (s.weight === '') return s
+                      const n = Number.parseFloat(s.weight)
+                      if (!Number.isFinite(n)) return s
+                      const next = snapToStep(
+                        kgToDisplay(toStoredKg(n, state.units), units),
+                        weightStep,
+                      )
+                      return { ...s, weight: String(next) }
+                    }),
+                  })),
+                }
+              : {}),
+          }
+        }),
 
       startRest: (seconds) => {
         const total = seconds ?? get().restDefaultSeconds
