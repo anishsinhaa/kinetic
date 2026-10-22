@@ -57,7 +57,7 @@ import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
 import { PrCelebration } from '../features/workout/components/PrCelebration'
 import type { Exercise } from '../features/exercises/types'
-import type { WorkoutExerciseTarget } from '../lib/supabase/database.types'
+import type { WeightUnits, WorkoutExerciseTarget } from '../lib/supabase/database.types'
 
 function newClientId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -94,11 +94,14 @@ function targetPreview(
   reps: number | null,
   target: WorkoutExerciseTarget | null | undefined,
   step: number,
+  units: WeightUnits,
 ): string {
   if (weight == null || reps == null) return '—'
-  if (!target || target === 'maintain') return `${weight}x${reps}`
-  if (target === 'increase_weight') return `${+(weight + step).toFixed(2)}x${reps}`
-  return `${weight}x${reps + 1}`
+  let nextWeight = weight
+  let nextReps = reps
+  if (target === 'increase_weight') nextWeight = +(weight + step).toFixed(2)
+  else if (target === 'increase_reps') nextReps = reps + 1
+  return formatSetLine(toStoredKg(nextWeight, units), nextReps, units, step)
 }
 
 export default function Workout() {
@@ -133,6 +136,7 @@ export default function Workout() {
   const restTotalSeconds = useWorkoutStore((s) => s.restTotalSeconds)
   const weightStep = useWorkoutStore((s) => s.weightStep)
   const units = useWorkoutStore((s) => s.units)
+  const exerciseMetaStale = useWorkoutStore((s) => s.exerciseMetaStale)
   const feel = useWorkoutStore((s) => s.feel)
   const note = useWorkoutStore((s) => s.note)
   const summarySnapshot = useWorkoutStore((s) => s.summarySnapshot)
@@ -149,7 +153,6 @@ export default function Workout() {
   /** Exercise names shown while Repeat last is still copying the previous session. */
   const [repeatPlaceholders, setRepeatPlaceholders] = useState<string[]>([])
   const startingRef = useRef(false)
-  const unitsRef = useRef(units)
   /** Resolves when the in-flight createWorkout finishes (already resolved when idle). */
   const workoutReadyRef = useRef<Promise<void>>(Promise.resolve())
 
@@ -277,58 +280,67 @@ export default function Workout() {
     })
   }, [settings])
 
-  // Last/PR/target lines are preformatted strings. After a unit switch, rebuild
-  // them from the cached prefill (kg) instead of leaving "230 lb" on a kg session.
+  // Last / PR / target strings are preformatted. Settings can flip units while this
+  // page is unmounted, so a persisted flag — not a units ref — decides the rebuild.
   useEffect(() => {
-    if (unitsRef.current === units) return
-    unitsRef.current = units
-    if (!currentWorkoutId) return
+    if (!exerciseMetaStale) return
+    if (!currentWorkoutId) {
+      useWorkoutStore.getState().clearExerciseMetaStale()
+      return
+    }
     const workoutId = currentWorkoutId
     const sessionExercises = useWorkoutStore.getState().exercises
-    if (sessionExercises.length === 0) return
+    if (sessionExercises.length === 0) {
+      useWorkoutStore.getState().clearExerciseMetaStale()
+      return
+    }
     let cancelled = false
-    void Promise.all(
-      sessionExercises.map(async (ex) => {
-        try {
-          const ctx = await queryClient.fetchQuery({
-            queryKey: ['exercise-prefill', userId, ex.exerciseId],
-            queryFn: () => getExercisePrefillContext(userId, ex.exerciseId, workoutId),
-            staleTime: 1000 * 60 * 5,
-          })
-          if (cancelled) return
-          const liveState = useWorkoutStore.getState()
-          if (liveState.currentWorkoutId !== workoutId || liveState.units !== units) return
-          const step = liveState.weightStep
-          const live = liveState.exercises.find((e) => e.id === ex.id)
-          if (!live) return
-          const lastPerformance =
-            ctx.lastSets.length > 0
-              ? `Last: ${ctx.lastSets
-                  .map((s) => formatSetLine(s.weight, s.reps, units, step))
-                  .join(' · ')}`
-              : 'No previous performance'
-          const personalRecord = ctx.pr ? formatPrLine(ctx.pr, units, step) : 'No PR yet'
-          const first = live.sets[0]
-          const w = first && first.weight !== '' ? Number.parseFloat(first.weight) : null
-          const r = first && first.reps !== '' ? Number.parseInt(first.reps, 10) : null
-          const targetLabel =
-            w != null && Number.isFinite(w) && r != null && Number.isFinite(r)
-              ? `Target: ${targetPreview(w, r, live.target, step)}`
-              : live.targetLabel
-          liveState.updateExerciseMeta(ex.id, {
-            lastPerformance,
-            personalRecord,
-            targetLabel,
-          })
-        } catch {
-          // Sets were already converted. Leave the previous labels if prefill is unavailable.
-        }
-      }),
-    )
+    void (async () => {
+      await Promise.all(
+        sessionExercises.map(async (ex) => {
+          try {
+            const ctx = await queryClient.fetchQuery({
+              queryKey: ['exercise-prefill', userId, ex.exerciseId],
+              queryFn: () => getExercisePrefillContext(userId, ex.exerciseId, workoutId),
+              staleTime: 1000 * 60 * 5,
+            })
+            if (cancelled) return
+            const liveState = useWorkoutStore.getState()
+            if (liveState.currentWorkoutId !== workoutId) return
+            const step = liveState.weightStep
+            const liveUnits = liveState.units
+            const live = liveState.exercises.find((e) => e.id === ex.id)
+            if (!live) return
+            const lastPerformance =
+              ctx.lastSets.length > 0
+                ? `Last: ${ctx.lastSets
+                    .map((s) => formatSetLine(s.weight, s.reps, liveUnits, step))
+                    .join(' · ')}`
+                : 'No previous performance'
+            const personalRecord = ctx.pr ? formatPrLine(ctx.pr, liveUnits, step) : 'No PR yet'
+            const first = live.sets[0]
+            const w = first && first.weight !== '' ? Number.parseFloat(first.weight) : null
+            const r = first && first.reps !== '' ? Number.parseInt(first.reps, 10) : null
+            const targetLabel =
+              w != null && Number.isFinite(w) && r != null && Number.isFinite(r)
+                ? `Target: ${targetPreview(w, r, live.target, step, liveUnits)}`
+                : live.targetLabel
+            liveState.updateExerciseMeta(ex.id, {
+              lastPerformance,
+              personalRecord,
+              targetLabel,
+            })
+          } catch {
+            // Sets were already converted. Leave the previous labels if prefill is unavailable.
+          }
+        }),
+      )
+      if (!cancelled) useWorkoutStore.getState().clearExerciseMetaStale()
+    })()
     return () => {
       cancelled = true
     }
-  }, [units, currentWorkoutId, queryClient, userId])
+  }, [exerciseMetaStale, currentWorkoutId, queryClient, userId])
 
   useEffect(() => {
     if (settingsQuery.isError) {
@@ -629,7 +641,7 @@ export default function Workout() {
       const personalRecord = pr ? formatPrLine(pr, displayUnits, step) : 'No PR yet'
       const last = prefillRows[0]
       const targetLabel = last
-        ? `Target: ${targetPreview(last.displayWeight, last.reps, 'maintain', weightStep)}`
+        ? `Target: ${targetPreview(last.displayWeight, last.reps, 'maintain', weightStep, displayUnits)}`
         : undefined
 
       // Re-read card: only replace sets if still untouched (never overwrite typed values)
@@ -1385,7 +1397,7 @@ export default function Workout() {
                       const w = last?.weight ? parseFloat(last.weight) : null
                       const r = last?.reps ? parseInt(last.reps, 10) : null
                       useWorkoutStore.getState().updateExerciseMeta(ex.id, {
-                        targetLabel: `Target: ${targetPreview(w, r, value, weightStep)}`,
+                        targetLabel: `Target: ${targetPreview(w, r, value, weightStep, units)}`,
                       })
                     }}
                     className={cn(

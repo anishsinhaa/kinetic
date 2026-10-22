@@ -58,6 +58,8 @@ interface WorkoutStore {
   restDefaultSeconds: number
   weightStep: number
   units: WeightUnits
+  /** Last / PR / target strings were formatted in a previous unit and need a rebuild. */
+  exerciseMetaStale: boolean
   feel: number | null
   note: string
   summarySnapshot: WorkoutSummarySnapshot | null
@@ -84,6 +86,7 @@ interface WorkoutStore {
     restDefaultSeconds?: number
     units?: WeightUnits
   }) => void
+  clearExerciseMetaStale: () => void
   startRest: (seconds?: number) => void
   adjustRest: (deltaSec: number) => void
   clearRest: () => void
@@ -163,6 +166,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
       restDefaultSeconds: 90,
       weightStep: 2.5,
       units: 'kg',
+      exerciseMetaStale: false,
 
       startWorkout: (workoutId, date, startedAt, label = '', typeExplicit = false) =>
         set({
@@ -242,6 +246,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
             // "230 lb" doesn't stay "230" after the unit label flips to kg.
             ...(unitsChanged
               ? {
+                  exerciseMetaStale: true,
                   exercises: state.exercises.map((ex) => ({
                     ...ex,
                     sets: ex.sets.map((s) => {
@@ -259,6 +264,9 @@ export const useWorkoutStore = create<WorkoutStore>()(
               : {}),
           }
         }),
+
+      clearExerciseMetaStale: () =>
+        set((state) => (state.exerciseMetaStale ? { exerciseMetaStale: false } : state)),
 
       startRest: (seconds) => {
         const total = seconds ?? get().restDefaultSeconds
@@ -465,6 +473,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         restDefaultSeconds: state.restDefaultSeconds,
         weightStep: state.weightStep,
         units: state.units,
+        exerciseMetaStale: state.exerciseMetaStale,
         feel: state.feel,
         note: state.note,
         summarySnapshot: state.summarySnapshot,
@@ -490,6 +499,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           // Older builds persisted 'type' / 'warmup' phases that no longer exist
           phase: coercePhase(p.phase as string | undefined, Boolean(p.currentWorkoutId)),
           workoutTypes: resolveWorkoutTypes(p.workoutTypes ?? current.workoutTypes),
+          exerciseMetaStale: p.exerciseMetaStale ?? false,
         }
       },
     },
