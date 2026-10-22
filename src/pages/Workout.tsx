@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { ChevronDown, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
+import { localDateString } from '../lib/localDate'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
@@ -103,7 +104,7 @@ function targetPreview(
 export default function Workout() {
   const { user } = useCurrentUser()
   const userId = user!.id
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDateString()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()

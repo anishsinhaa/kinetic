@@ -3,6 +3,7 @@
  * Exercises Log sheets → exercises + best-set history entries.
  */
 
+import { localDateString } from '../../../lib/localDate'
 import { upsertDailyLog } from '../../dailyLog/services/dailyLogService'
 import { readCsvText, readWorkbookSheets } from './excelHelpers'
 import { findOrCreateExerciseByName } from '../../workout/services/exerciseService'
@@ -455,16 +456,21 @@ export function mapMuscleGroup(group: string): string {
 export function parseDateCol(val: unknown): string | null {
   if (val == null || val === '') return null
   if (val instanceof Date && !isNaN(val.getTime())) {
-    return val.toISOString().slice(0, 10)
+    return localDateString(val)
   }
   const s = String(val).trim()
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
 
-  // Excel serial (1900 date system; day 0 = 1899-12-30)
+  // Excel serial (1900 date system; day 0 = 1899-12-30).
+  // The serial is a UTC day count, so the calendar date is the UTC date.
   const n = Number(val)
   if (!isNaN(n) && n > 10000 && n < 100000) {
     const ms = Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000
-    return new Date(ms).toISOString().slice(0, 10)
+    const utc = new Date(ms)
+    const yyyy = utc.getUTCFullYear()
+    const mm = String(utc.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(utc.getUTCDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
   }
 
   const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
@@ -475,7 +481,7 @@ export function parseDateCol(val: unknown): string | null {
 
   const parsed = Date.parse(s)
   if (!isNaN(parsed)) {
-    return new Date(parsed).toISOString().slice(0, 10)
+    return localDateString(new Date(parsed))
   }
   return null
 }
@@ -498,5 +504,5 @@ function parseStr(val: unknown): string | null {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10)
+  return localDateString()
 }

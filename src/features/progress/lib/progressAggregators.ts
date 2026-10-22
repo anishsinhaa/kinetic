@@ -3,6 +3,7 @@
  * All functions are stateless and tested independently.
  */
 
+import { localDateString } from '../../../lib/localDate'
 import { bestPersonalRecord, isPersonalRecord } from '../../workout/lib/prDetection'
 import type { ExerciseHistory, ExerciseHistorySession } from '../../history/types'
 import type { DailyLogEntry } from '../../history/types'
@@ -197,9 +198,8 @@ export interface MetricPoint {
 }
 
 function shiftDate(dateStr: string, deltaDays: number): string {
-  const d = new Date(`${dateStr}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + deltaDays)
-  return d.toISOString().slice(0, 10)
+  const [y, m, day] = dateStr.split('-').map(Number)
+  return localDateString(new Date(y, (m ?? 1) - 1, (day ?? 1) + deltaDays))
 }
 
 /**

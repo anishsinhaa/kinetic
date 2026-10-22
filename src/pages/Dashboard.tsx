@@ -6,6 +6,7 @@ import { BottomSheet } from '../components/ui/BottomSheet'
 import { Card } from '../components/ui/Card'
 import { useDailyLog } from '../features/dailyLog/hooks/useDailyLog'
 import { todayDateString } from '../features/dailyLog/services/dailyLogService'
+import { localDateString } from '../lib/localDate'
 import { useDailyLogs } from '../features/history/hooks/useHistory'
 import { LogDaySheet } from '../features/dailyLog/components/LogDaySheet'
 import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
@@ -133,7 +134,7 @@ export default function Dashboard() {
     const today = todayDateString()
     const start = new Date()
     start.setDate(start.getDate() - 6)
-    const startKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+    const startKey = localDateString(start)
     const weights = (logsQuery.data ?? []).filter(
       (row) => row.weight != null && row.date >= startKey && row.date <= today,
     )

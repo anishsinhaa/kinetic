@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { localDateString } from '../../../lib/localDate'
 import type { WorkoutExerciseDraft, WorkoutPhase, WorkoutSetDraft } from '../types'
 import { resolveWorkoutTypes } from '../lib/workoutTypes'
 import type { WeightUnits, WorkoutExerciseTarget } from '../../../lib/supabase/database.types'
@@ -136,7 +137,7 @@ interface WorkoutStore {
 const initialSession = {
   phase: 'idle' as WorkoutPhase,
   currentWorkoutId: null as string | null,
-  workoutDate: new Date().toISOString().slice(0, 10),
+  workoutDate: localDateString(),
   workoutStartedAt: null as string | null,
   workoutLabel: '',
   workoutTypeExplicit: false,

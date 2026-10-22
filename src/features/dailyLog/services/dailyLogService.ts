@@ -6,6 +6,7 @@
  * they call these functions only.
  */
 
+import { localDateString } from '../../../lib/localDate'
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
 import type { DailyLogRow } from '../../../lib/supabase/database.types'
@@ -36,11 +37,7 @@ function rowToDomain(row: DailyLogRow): DailyLog {
 
 /** Returns today's date as "YYYY-MM-DD" in the local timezone. */
 export function todayDateString(): string {
-  const d = new Date()
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
+  return localDateString()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

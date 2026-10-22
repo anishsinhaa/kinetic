@@ -3,6 +3,7 @@
  * Weights are converted to the user's display unit and labeled accordingly.
  */
 
+import { localDateString } from '../../../lib/localDate'
 import type { ExerciseHistory, DailyLogEntry } from '../../history/types'
 import type { WeightUnits } from '../../../lib/supabase/database.types'
 import { kgToDisplay, roundDisplayWeight } from './units'
@@ -156,7 +157,7 @@ export async function exportExcel(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function today() {
-  return new Date().toISOString().slice(0, 10)
+  return localDateString()
 }
 
 function triggerDownload(blob: Blob, filename: string) {
