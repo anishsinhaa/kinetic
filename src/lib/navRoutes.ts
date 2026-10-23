@@ -4,7 +4,6 @@ export type SubTab = { label: string; to: string; end?: boolean }
 export const WORKOUT_TABS: SubTab[] = [
   { label: 'Session', to: '/workout', end: true },
   { label: 'Recovery', to: '/workout/recovery' },
-  { label: 'Library', to: '/workout/library' },
 ]
 
 /** Sub-tabs of the Progress section (/progress/*). */
@@ -16,7 +15,8 @@ export const PROGRESS_TABS: SubTab[] = [
 
 /** Old top-level routes → their new home (kept so bookmarks / installed PWAs don't 404). */
 export const LEGACY_REDIRECTS: Array<{ from: string; to: string }> = [
-  { from: '/exercises', to: '/workout/library' },
+  { from: '/exercises', to: '/settings/exercises' },
+  { from: '/workout/library', to: '/settings/exercises' },
   { from: '/feedback', to: '/workout/recovery' },
   { from: '/history', to: '/progress/history' },
 ]

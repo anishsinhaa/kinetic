@@ -11,6 +11,7 @@ import {
   Plus,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   Eye,
   EyeOff,
   Bell,
@@ -258,6 +259,7 @@ function WorkoutTypesEditor({
 }
 
 function PreferencesSection({ userId }: { userId: string }) {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const setWorkoutTypes = useWorkoutStore((s) => s.setWorkoutTypes)
   const setPrefs = useWorkoutStore((s) => s.setPrefs)
@@ -490,6 +492,20 @@ function PreferencesSection({ userId }: { userId: string }) {
           disabled={saveMutation.isPending}
           onChange={(workoutTypes) => persist({ workoutTypes })}
         />
+      </Section>
+
+      <Section title="Exercises">
+        <button
+          type="button"
+          onClick={() => navigate('/settings/exercises')}
+          className="w-full flex items-center justify-between gap-3 px-4 md:px-5 py-3 md:py-4 text-left min-h-12"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-text-primary">Exercise library</span>
+            <span className="block text-xs text-text-muted mt-0.5">Browse all exercises and add your own</span>
+          </span>
+          <ChevronRight size={16} className="text-text-muted shrink-0" />
+        </button>
       </Section>
 
       <Accordion title="Reminders">

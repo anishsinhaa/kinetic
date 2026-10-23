@@ -72,7 +72,6 @@ function AppShell() {
           <Route path="/workout" element={<SectionLayout tabs={WORKOUT_TABS} label="Workout" />}>
             <Route index element={<Workout />} />
             <Route path="recovery" element={<Feedback />} />
-            <Route path="library" element={<Exercises />} />
           </Route>
           <Route path="/progress" element={<SectionLayout tabs={PROGRESS_TABS} label="Progress" />}>
             <Route index element={<Progress />} />
@@ -80,6 +79,7 @@ function AppShell() {
             <Route path="logs" element={<DailyLogs />} />
           </Route>
           <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/exercises" element={<Exercises />} />
           {LEGACY_REDIRECTS.map(({ from, to }) => (
             <Route key={from} path={from} element={<Navigate to={to} replace />} />
           ))}

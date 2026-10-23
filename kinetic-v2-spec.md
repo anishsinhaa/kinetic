@@ -8,9 +8,9 @@ Goal: replace the owner's Excel gym log. Simple, fast, mobile-first (Android at 
 
 ## 0. Navigation (four tabs)
 - Home (`/`), Workout (`/workout`), Progress (`/progress`), Settings (`/settings`). Bottom bar on mobile (safe-area aware, 44px+ targets, labels 11px+), sidebar on desktop.
-- Workout sub-tabs: Session (`/workout`), Recovery (`/workout/recovery`), Library (`/workout/library`).
+- Workout sub-tabs: Session (`/workout`), Recovery (`/workout/recovery`).
 - Progress sub-tabs: Overview (`/progress`), History (`/progress/history`), Daily logs (`/progress/logs`).
-- Redirects: `/exercises` -> `/workout/library`, `/feedback` -> `/workout/recovery`, `/history` -> `/progress/history`. Deep links `?start=1`, `?type=`, `?repeat=1` keep working.
+- Redirects: `/exercises` -> `/settings/exercises`, `/workout/library` -> `/settings/exercises`, `/feedback` -> `/workout/recovery`, `/history` -> `/progress/history`. Deep links `?start=1`, `?type=`, `?repeat=1` keep working.
 - Route transitions are keyed by top-level section so switching sub-tabs never remounts (an active session keeps its state).
 
 ## 1. Home (opens by default)

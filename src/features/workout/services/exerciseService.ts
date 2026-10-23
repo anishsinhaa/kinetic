@@ -44,48 +44,6 @@ export async function getExerciseCatalog(): Promise<Exercise[]> {
   return (data as ExerciseRow[]).map(mapExercise)
 }
 
-/**
- * Search exercises stored in Supabase (the local library).
- * Zero API calls — all data is local after import.
- */
-export async function searchExercisesFromDb(params: {
-  name?: string
-  muscleGroup?: string
-  limit?: number
-}): Promise<Exercise[]> {
-  const run = async (matchSearchTerms: boolean) => {
-    let query = supabase.from('exercises').select('*').eq('is_hidden', false)
-
-    const q = escapeFilterValue(params.name ?? '')
-    if (q) {
-      query = matchSearchTerms
-        ? query.or(`name.ilike.%${q}%,search_terms.ilike.%${q}%`)
-        : query.ilike('name', `%${q}%`)
-    }
-    if (params.muscleGroup) {
-      query = query.ilike('muscle_group', params.muscleGroup)
-    }
-
-    return query.order('name', { ascending: true }).limit(params.limit ?? 40)
-  }
-
-  let { data, error } = await run(true)
-  // search_terms is added by a migration — fall back to name-only until it exists
-  if (error && /search_terms|column|schema cache/i.test(error.message ?? '')) {
-    ;({ data, error } = await run(false))
-  }
-  if (error) throw toServiceError(error)
-  return (data as ExerciseRow[]).map(mapExercise)
-}
-
-/**
- * Make free text safe inside a PostgREST `or()` filter: commas and parentheses
- * are filter syntax, `%` / `\` are LIKE metacharacters.
- */
-export function escapeFilterValue(raw: string): string {
-  return raw.replace(/[,()%\\]/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
 /** Fetch specific exercises (e.g. the user's recents) preserving the given id order. */
 export async function getExercisesByIds(ids: string[]): Promise<Exercise[]> {
   if (ids.length === 0) return []
@@ -98,17 +56,38 @@ export async function getExercisesByIds(ids: string[]): Promise<Exercise[]> {
   })
 }
 
-/** Returns only the current user's custom exercises. */
-export async function getUserCustomExercises(userId: string): Promise<Exercise[]> {
+export async function updateCustomExercise(
+  id: string,
+  input: { name: string; muscleGroup: string; category: string },
+): Promise<Exercise> {
   const { data, error } = await supabase
     .from('exercises')
+    .update({
+      name: input.name.trim(),
+      muscle_group: input.muscleGroup,
+      category: input.category,
+    })
+    .eq('id', id)
     .select('*')
-    .eq('is_custom', true)
-    .eq('created_by', userId)
-    .order('name', { ascending: true })
+    .single()
 
   if (error) throw toServiceError(error)
-  return (data as ExerciseRow[]).map(mapExercise)
+  return mapExercise(data as ExerciseRow)
+}
+
+/** Delete a custom exercise. If a logged workout still references it, hide it instead. */
+export async function deleteCustomExercise(id: string): Promise<'deleted' | 'hidden'> {
+  const { error } = await supabase.from('exercises').delete().eq('id', id)
+  if (!error) return 'deleted'
+  if (error.code === '23503') {
+    const { error: hideError } = await supabase
+      .from('exercises')
+      .update({ is_hidden: true })
+      .eq('id', id)
+    if (hideError) throw toServiceError(hideError)
+    return 'hidden'
+  }
+  throw toServiceError(error)
 }
 
 export type CreateExerciseInput = {
