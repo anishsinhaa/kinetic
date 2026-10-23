@@ -129,6 +129,7 @@ export default function Workout() {
   const workoutLabel = useWorkoutStore((s) => s.workoutLabel)
   const workoutTypes = useWorkoutStore((s) => s.workoutTypes)
   const exercises = useWorkoutStore((s) => s.exercises)
+  const activeExerciseId = useWorkoutStore((s) => s.activeExerciseId)
   const warmupStartedAt = useWorkoutStore((s) => s.warmupStartedAt)
   const warmupEndedAt = useWorkoutStore((s) => s.warmupEndedAt)
   const warmupNote = useWorkoutStore((s) => s.warmupNote)
@@ -151,7 +152,19 @@ export default function Workout() {
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [exerciseMenuId, setExerciseMenuId] = useState<string | null>(null)
   const [removeConfirm, setRemoveConfirm] = useState(false)
-  const swapIndexRef = useRef<number | null>(null)
+  const pendingSwapRef = useRef<{ localId: string; index: number } | null>(null)
+
+  useEffect(() => {
+    if (!activeExerciseId) return
+    const id = activeExerciseId
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`ex-${id}`)?.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        block: 'start',
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeExerciseId, reduceMotion])
   const [isFinishing, setIsFinishing] = useState(false)
   const [setStatusMap, setSetStatusMap] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
   /** Exercise names shown while Repeat last is still copying the previous session. */
@@ -733,18 +746,23 @@ export default function Workout() {
   }
 
   const handlePickExercise = (exercise: Exercise) => {
+    const pending = pendingSwapRef.current
     setPickerOpen(false)
-    const swapAt = swapIndexRef.current
     void (async () => {
+      if (pending) {
+        handleRemoveExercise(pending.localId)
+        await addExerciseFromLibrary(exercise)
+        const created = useWorkoutStore
+          .getState()
+          .exercises.find((e) => e.exerciseId === exercise.id)
+        if (created) {
+          useWorkoutStore.getState().moveExercise(created.id, pending.index)
+          persistOrder()
+        }
+        pendingSwapRef.current = null
+        return
+      }
       await addExerciseFromLibrary(exercise)
-      if (swapAt == null) return
-      swapIndexRef.current = null
-      const created = useWorkoutStore
-        .getState()
-        .exercises.find((e) => e.exerciseId === exercise.id)
-      if (!created) return
-      useWorkoutStore.getState().moveExercise(created.id, swapAt)
-      persistOrder()
     })()
   }
 
@@ -788,11 +806,12 @@ export default function Workout() {
     !s.completed && s.weight !== '' && s.reps !== ''
 
   const handleDoneWithExercise = async (exLocalId: string) => {
-    const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exLocalId)
-    if (!ex) return
-    const lastIndex = ex.sets.length - 1
-    const last = lastIndex >= 0 ? ex.sets[lastIndex] : undefined
-    if (last && isFilledDraft(last)) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exLocalId)
+      if (!ex) return
+      const lastIndex = ex.sets.length - 1
+      const last = lastIndex >= 0 ? ex.sets[lastIndex] : undefined
+      if (!last || !isFilledDraft(last)) break
       await handleCompleteSet(exLocalId, last.id, lastIndex)
     }
     const fresh = useWorkoutStore.getState().exercises.find((e) => e.id === exLocalId)
@@ -1470,8 +1489,45 @@ export default function Workout() {
             </div>
           ))}
 
-        {exercises.map((ex) => (
-          <div key={ex.id} className="rounded-xl border border-border bg-surface overflow-hidden">
+        {exercises.map((ex) => {
+          if (ex.id !== activeExerciseId) {
+            const completedCount = ex.sets.filter((s) => s.completed).length
+            return (
+              <div
+                key={ex.id}
+                id={`ex-${ex.id}`}
+                className="scroll-mt-28 flex items-center min-h-14 rounded-xl border border-border bg-surface px-4"
+              >
+                <button
+                  type="button"
+                  onClick={() => useWorkoutStore.getState().setActiveExercise(ex.id)}
+                  className="flex min-h-14 flex-1 items-center justify-between gap-3 text-left min-w-0"
+                >
+                  <span className="truncate font-semibold text-text-primary">{ex.name}</span>
+                  <span className="shrink-0 text-xs text-text-secondary">
+                    {completedCount}/{ex.sets.length} sets{ex.done ? ' ✓' : ''}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Exercise options for ${ex.name}`}
+                  onClick={() => {
+                    setRemoveConfirm(false)
+                    setExerciseMenuId(ex.id)
+                  }}
+                  className="min-h-11 min-w-11 flex items-center justify-center text-text-secondary shrink-0"
+                >
+                  <EllipsisVertical size={18} />
+                </button>
+              </div>
+            )
+          }
+          return (
+          <div
+            key={ex.id}
+            id={`ex-${ex.id}`}
+            className="scroll-mt-28 rounded-xl border border-border bg-surface overflow-hidden"
+          >
             <div className="px-4 py-3 border-b border-border">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="font-semibold text-text-primary min-w-0 flex items-center gap-2">
@@ -1596,20 +1652,47 @@ export default function Workout() {
               </>
             )}
           </div>
-        ))}
+          )
+        })}
 
-        <button
-          type="button"
-          disabled={!canEdit}
-          onClick={() => {
-            swapIndexRef.current = null
+        {(() => {
+          const activeCard = exercises.find((e) => e.id === activeExerciseId)
+          const compactAdd = Boolean(activeCard && !activeCard.done)
+          const openAdd = () => {
+            pendingSwapRef.current = null
             setPickerOpen(true)
-          }}
-          className="w-full py-8 border border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-primary hover:border-primary disabled:opacity-40"
-        >
-          <Plus size={16} />
-          <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
-        </button>
+          }
+          if (compactAdd) {
+            return (
+              <button
+                type="button"
+                disabled={!canEdit}
+                onClick={openAdd}
+                className="w-full min-h-12 py-3 rounded-xl border border-border bg-surface text-sm font-semibold text-text-secondary hover:text-primary disabled:opacity-40"
+              >
+                + Add another exercise
+              </button>
+            )
+          }
+          return (
+            <div className="space-y-2">
+              {!activeCard && exercises.some((e) => e.done) && (
+                <p className="text-xs uppercase tracking-widest font-medium text-text-secondary">
+                  Next exercise
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={!canEdit}
+                onClick={openAdd}
+                className="w-full py-8 border border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-primary hover:border-primary disabled:opacity-40"
+              >
+                <Plus size={16} />
+                <span className="text-xs uppercase tracking-widest font-medium">Add Exercise</span>
+              </button>
+            </div>
+          )
+        })()}
         {restEndsAt && !confirmFinish && <div aria-hidden className="h-44" />}
       </div>
 
@@ -1788,8 +1871,9 @@ export default function Workout() {
                 <button
                   type="button"
                   onClick={() => {
-                    swapIndexRef.current = menuIndex
-                    handleRemoveExercise(menuExercise.id)
+                    pendingSwapRef.current = { localId: menuExercise.id, index: menuIndex }
+                    setExerciseMenuId(null)
+                    setRemoveConfirm(false)
                     setPickerOpen(true)
                   }}
                   className="w-full min-h-12 rounded-xl border border-border px-4 text-sm font-semibold text-text-primary"
@@ -1818,7 +1902,7 @@ export default function Workout() {
       <ExercisePickerSheet
         open={pickerOpen}
         onClose={() => {
-          swapIndexRef.current = null
+          pendingSwapRef.current = null
           setPickerOpen(false)
         }}
         userId={userId}

@@ -48,6 +48,8 @@ interface WorkoutStore {
   workoutTypes: string[]
   suggestedType: string | null
   exercises: WorkoutExerciseDraft[]
+  /** Local card id of the exercise expanded in the session. */
+  activeExerciseId: string | null
   warmupStartedAt: string | null
   warmupEndedAt: string | null
   warmupNote: string
@@ -137,6 +139,7 @@ interface WorkoutStore {
   removeExercise: (exerciseLocalId: string) => void
   moveExercise: (exerciseLocalId: string, toIndex: number) => void
   setExerciseDone: (exerciseLocalId: string, done: boolean) => void
+  setActiveExercise: (id: string | null) => void
   finishWorkout: () => void
   resetToIdle: () => void
 }
@@ -149,6 +152,7 @@ const initialSession = {
   workoutLabel: '',
   workoutTypeExplicit: false,
   exercises: [] as WorkoutExerciseDraft[],
+  activeExerciseId: null as string | null,
   warmupStartedAt: null as string | null,
   warmupEndedAt: null as string | null,
   warmupNote: '',
@@ -298,6 +302,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         set((state) => {
           const exists = state.exercises.some((e) => e.exerciseId === exercise.exerciseId)
           if (exists) return state
+          const id = newId()
           const initialSets = (exercise.initialSets ?? [{ weight: '', reps: '' }]).map((s) => {
             const id = newId()
             return {
@@ -312,10 +317,11 @@ export const useWorkoutStore = create<WorkoutStore>()(
           })
 
           return {
+            activeExerciseId: id,
             exercises: [
               ...state.exercises,
               {
-                id: newId(),
+                id,
                 exerciseId: exercise.exerciseId,
                 dbWorkoutExerciseId: exercise.dbWorkoutExerciseId,
                 name: exercise.name,
@@ -434,9 +440,14 @@ export const useWorkoutStore = create<WorkoutStore>()(
       },
 
       removeExercise: (exerciseLocalId) =>
-        set((state) => ({
-          exercises: state.exercises.filter((e) => e.id !== exerciseLocalId),
-        })),
+        set((state) => {
+          const exercises = state.exercises.filter((e) => e.id !== exerciseLocalId)
+          const activeExerciseId =
+            state.activeExerciseId === exerciseLocalId
+              ? (exercises.find((e) => !e.done)?.id ?? null)
+              : state.activeExerciseId
+          return { exercises, activeExerciseId }
+        }),
 
       moveExercise: (exerciseLocalId, toIndex) =>
         set((state) => {
@@ -452,11 +463,19 @@ export const useWorkoutStore = create<WorkoutStore>()(
         }),
 
       setExerciseDone: (exerciseLocalId, done) =>
-        set((state) => ({
-          exercises: state.exercises.map((e) =>
+        set((state) => {
+          const exercises = state.exercises.map((e) =>
             e.id === exerciseLocalId ? { ...e, done } : e,
-          ),
-        })),
+          )
+          if (!done) return { exercises, activeExerciseId: exerciseLocalId }
+          if (state.activeExerciseId !== exerciseLocalId) return { exercises }
+          const index = exercises.findIndex((e) => e.id === exerciseLocalId)
+          const after = exercises.slice(index + 1).find((e) => !e.done)
+          const activeExerciseId = after?.id ?? exercises.find((e) => !e.done)?.id ?? null
+          return { exercises, activeExerciseId }
+        }),
+
+      setActiveExercise: (id) => set({ activeExerciseId: id }),
 
       finishWorkout: () =>
         set({
@@ -492,6 +511,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         workoutTypes: state.workoutTypes,
         suggestedType: state.suggestedType,
         exercises: state.exercises,
+        activeExerciseId: state.activeExerciseId,
         warmupStartedAt: state.warmupStartedAt,
         warmupEndedAt: state.warmupEndedAt,
         warmupNote: state.warmupNote,
@@ -520,10 +540,16 @@ export const useWorkoutStore = create<WorkoutStore>()(
             }
           }),
         }))
+        const storedActive = p.activeExerciseId
+        const activeExerciseId =
+          storedActive && exercises.some((e) => e.id === storedActive)
+            ? storedActive
+            : (exercises.find((e) => !e.done)?.id ?? null)
         return {
           ...current,
           ...p,
           exercises,
+          activeExerciseId,
           // Older builds persisted 'type' / 'warmup' phases that no longer exist
           phase: coercePhase(p.phase as string | undefined, Boolean(p.currentWorkoutId)),
           workoutTypes: resolveWorkoutTypes(p.workoutTypes ?? current.workoutTypes),
