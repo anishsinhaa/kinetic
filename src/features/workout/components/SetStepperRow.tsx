@@ -175,9 +175,6 @@ export function SetStepperRow({
         >
           Set {n}
           {set.completed && <span className="ml-2 text-[11px] font-medium">Done</span>}
-          {status === 'saving' && (
-            <span className="ml-2 text-[11px] font-normal text-text-muted">Saving…</span>
-          )}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -186,14 +183,21 @@ export function SetStepperRow({
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => (set.completed ? onUncomplete() : onComplete())}
             className={cn(
-              'min-h-11 min-w-11 rounded-xl flex items-center justify-center border transition-colors',
+              'min-h-11 rounded-xl flex items-center justify-center border transition-colors',
               set.completed
-                ? 'bg-primary text-black border-primary'
-                : 'bg-surface-2 border-border text-text-secondary hover:border-primary hover:text-primary disabled:opacity-40',
+                ? 'min-w-11 bg-primary text-black border-primary'
+                : 'px-3 gap-1 border-primary text-primary disabled:opacity-40',
             )}
             aria-label={set.completed ? `Mark set ${n} not done` : `Complete set ${n}`}
           >
-            <Check size={18} strokeWidth={3} />
+            {set.completed ? (
+              <Check size={18} strokeWidth={3} />
+            ) : (
+              <>
+                <Check size={16} strokeWidth={3} />
+                Log
+              </>
+            )}
           </button>
           <button
             type="button"

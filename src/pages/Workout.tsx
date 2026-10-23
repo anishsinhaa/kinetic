@@ -247,7 +247,7 @@ export default function Workout() {
         setSetStatusMap((prev) => ({ ...prev, [payload.setId]: 'error' }))
         // Don't rethrow — keeps queue alive and clears "Saving…" via error status
       }
-    }, 300),
+    }, 800),
   )
 
   const latestWorkoutQuery = useQuery({
@@ -680,17 +680,6 @@ export default function Workout() {
           prefillStatus: 'ready',
         })
       }
-
-      // Persist only non-empty drafts after prefill — empty exercises stay local until a set is logged
-      const fresh = useWorkoutStore.getState().exercises.find((e) => e.id === added.id)
-      if (fresh?.dbWorkoutExerciseId) {
-        for (let i = 0; i < fresh.sets.length; i++) {
-          const set = fresh.sets[i]
-          if (!set.completed && set.weight === '' && set.reps === '') continue
-          queuePersist(fresh.id, set.id, fresh.dbWorkoutExerciseId, i)
-        }
-        await persistQueueRef.current.flushAll()
-      }
     } catch (err) {
       useWorkoutStore.getState().updateExerciseMeta(added.id, { prefillStatus: 'ready' })
       setSaveError((err as Error).message)
@@ -738,6 +727,9 @@ export default function Workout() {
   const isEmptySetRow = (s: { weight: string; reps: string }) =>
     s.weight === '' && s.reps === ''
 
+  const isFilledDraft = (s: { completed: boolean; weight: string; reps: string }) =>
+    !s.completed && s.weight !== '' && s.reps !== ''
+
   const incompleteSetCount = useMemo(
     () =>
       exercises.reduce(
@@ -749,6 +741,11 @@ export default function Workout() {
 
   const completedSetCount = useMemo(
     () => exercises.reduce((n, e) => n + e.sets.filter((s) => s.completed).length, 0),
+    [exercises],
+  )
+
+  const filledDraftCount = useMemo(
+    () => exercises.reduce((n, e) => n + e.sets.filter(isFilledDraft).length, 0),
     [exercises],
   )
 
@@ -800,14 +797,42 @@ export default function Workout() {
         label: 'Undo',
         onAction: () => {
           useWorkoutStore.getState().restoreSet(exerciseLocalId, removed, index)
-          queuePersist(exerciseLocalId, setLocalId, ex.dbWorkoutExerciseId, index)
+          if (removed.completed) {
+            queuePersist(exerciseLocalId, setLocalId, ex.dbWorkoutExerciseId, index)
+          }
         },
       },
     })
   }
 
-  const handleAddSet = (exerciseLocalId: string) => {
+  const handleAddSet = async (exerciseLocalId: string) => {
+    const exercise = useWorkoutStore.getState().exercises.find((e) => e.id === exerciseLocalId)
+    const lastIndex = (exercise?.sets.length ?? 0) - 1
+    const last = lastIndex >= 0 ? exercise?.sets[lastIndex] : undefined
+    if (last && isFilledDraft(last)) {
+      await handleCompleteSet(exerciseLocalId, last.id, lastIndex)
+    }
     useWorkoutStore.getState().addSet(exerciseLocalId)
+  }
+
+  const completeFilledDrafts = () => {
+    const { exercises: list } = useWorkoutStore.getState()
+    for (const ex of list) {
+      ex.sets.forEach((s, index) => {
+        if (!isFilledDraft(s)) return
+        if (s.weight !== '') {
+          const n = parseFloat(s.weight)
+          if (Number.isFinite(n)) {
+            useWorkoutStore.getState().updateSet(ex.id, s.id, {
+              weight: String(snapToStep(n, useWorkoutStore.getState().weightStep)),
+            })
+          }
+        }
+        useWorkoutStore.getState().completeSet(ex.id, s.id, settings?.restTimerSeconds)
+        queuePersist(ex.id, s.id, ex.dbWorkoutExerciseId, index)
+      })
+    }
+    useWorkoutStore.getState().clearRest()
   }
 
   const handleSelectType = (type: string) => {
@@ -1432,7 +1457,7 @@ export default function Workout() {
                   if (ex.prefillStatus === 'pending') return
                   // Completed sets stay completed — edited in place, rest timer untouched
                   useWorkoutStore.getState().updateSet(ex.id, set.id, patch)
-                  queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
+                  if (set.completed) queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
                 }}
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
                 onUncomplete={() => void handleUncompleteSet(ex.id, set.id, idx)}
@@ -1444,7 +1469,7 @@ export default function Workout() {
             <button
               type="button"
               disabled={!canEdit || ex.prefillStatus === 'pending'}
-              onClick={() => handleAddSet(ex.id)}
+              onClick={() => void handleAddSet(ex.id)}
               className="w-full min-h-12 text-sm text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
             >
               <Plus size={14} /> Add set
@@ -1480,48 +1505,102 @@ export default function Workout() {
         onClose={() => {
           if (!isFinishing) setConfirmFinish(false)
         }}
-        title={completedSetCount === 0 ? 'Discard workout?' : 'Finish workout?'}
+        title={
+          filledDraftCount > 0
+            ? 'Finish workout?'
+            : completedSetCount === 0
+              ? 'Discard workout?'
+              : 'Finish workout?'
+        }
       >
         <div className="p-4 space-y-4">
-          {completedSetCount === 0 ? (
-            <p className="text-sm text-text-secondary">
-              No sets were completed, so this workout will be discarded.
-            </p>
+          {filledDraftCount > 0 ? (
+            <>
+              <p className="text-sm text-text-secondary">
+                {filledDraftCount} set{filledDraftCount === 1 ? '' : 's'} have weight and reps but
+                aren&apos;t logged yet.
+              </p>
+              <button
+                type="button"
+                disabled={isFinishing}
+                onClick={() => setConfirmFinish(false)}
+                className="text-sm text-text-secondary hover:text-text-primary disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  className="flex-1 min-h-12"
+                  disabled={isFinishing}
+                  onClick={() => void handleFinishConfirm()}
+                >
+                  {completedSetCount > 0 ? 'Finish without them' : 'Discard workout'}
+                </Button>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="flex-1 min-h-12"
+                  disabled={isFinishing}
+                  onClick={() => {
+                    completeFilledDrafts()
+                    void handleFinishConfirm()
+                  }}
+                >
+                  {isFinishing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin mr-2" /> Saving…
+                    </>
+                  ) : (
+                    `Log ${filledDraftCount} set${filledDraftCount === 1 ? '' : 's'} & finish`
+                  )}
+                </Button>
+              </div>
+            </>
           ) : (
-            <p className="text-sm text-text-secondary">
-              {completedSetCount} completed set{completedSetCount === 1 ? '' : 's'} will be saved.
-              {incompleteSetCount > 0 &&
-                ` ${incompleteSetCount} incomplete set${incompleteSetCount === 1 ? '' : 's'} will be discarded.`}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="lg"
-              className="flex-1 min-h-12"
-              disabled={isFinishing}
-              onClick={() => setConfirmFinish(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="lg"
-              className="flex-1 min-h-12"
-              disabled={isFinishing}
-              onClick={() => void handleFinishConfirm()}
-            >
-              {isFinishing ? (
-                <>
-                  <Loader2 size={16} className="animate-spin mr-2" /> Saving…
-                </>
-              ) : completedSetCount === 0 ? (
-                'Discard'
+            <>
+              {completedSetCount === 0 ? (
+                <p className="text-sm text-text-secondary">
+                  No sets were completed, so this workout will be discarded.
+                </p>
               ) : (
-                'Finish workout'
+                <p className="text-sm text-text-secondary">
+                  {completedSetCount} completed set{completedSetCount === 1 ? '' : 's'} will be saved.
+                  {incompleteSetCount > 0 &&
+                    ` ${incompleteSetCount} incomplete set${incompleteSetCount === 1 ? '' : 's'} will be discarded.`}
+                </p>
               )}
-            </Button>
-          </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  className="flex-1 min-h-12"
+                  disabled={isFinishing}
+                  onClick={() => setConfirmFinish(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="flex-1 min-h-12"
+                  disabled={isFinishing}
+                  onClick={() => void handleFinishConfirm()}
+                >
+                  {isFinishing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin mr-2" /> Saving…
+                    </>
+                  ) : completedSetCount === 0 ? (
+                    'Discard'
+                  ) : (
+                    'Finish workout'
+                  )}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </BottomSheet>
 
