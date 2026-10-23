@@ -53,6 +53,10 @@ export interface ExerciseRow {
   instructions: string | null
   /** Comma-separated aliases ("back squat, barbell squat") searched alongside `name`. */
   search_terms: string | null
+  slug: string | null
+  category: string | null
+  source: 'curated' | 'legacy' | 'custom' | null
+  is_hidden: boolean
   is_custom: boolean
   created_by: string | null
   created_at: string

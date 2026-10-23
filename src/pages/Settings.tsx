@@ -4,10 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '../components/ui/Button'
 import {
   Loader2,
-  RefreshCw,
   CheckCircle2,
   AlertCircle,
-  KeyRound,
   LogOut,
   Plus,
   ChevronUp,
@@ -18,11 +16,7 @@ import {
   Download,
   Upload,
 } from 'lucide-react'
-import { countLibraryExercises, getLibraryStats } from '../features/workout/services/exerciseService'
-import { importExerciseLibrary, type ImportProgress } from '../features/exercises/services/exerciseImportService'
-import { hasApiKey } from '../features/exercises/services/exercisesApiService'
 import { logout } from '../features/auth/authService'
-import { isAdminEmail } from '../features/auth/adminEmails'
 import { useCurrentUser } from '../features/auth/useAuth'
 import {
   getUserSettings,
@@ -55,16 +49,6 @@ import {
   type ImportPreview,
   type ImportSummary,
 } from '../features/settings/lib/dataImport'
-
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -126,142 +110,6 @@ function Toggle({
         )}
       />
     </button>
-  )
-}
-
-type ImportState =
-  | { status: 'idle' }
-  | { status: 'running'; progress: ImportProgress }
-  | { status: 'done'; count: number }
-  | { status: 'error'; message: string }
-
-function LibrarySection({ userId }: { userId: string }) {
-  const queryClient = useQueryClient()
-  const apiKeyConfigured = hasApiKey()
-  const [importState, setImportState] = useState<ImportState>({ status: 'idle' })
-
-  const { data: libraryCount, refetch: refetchCount } = useQuery({
-    queryKey: ['exercises', 'library-count'],
-    queryFn: countLibraryExercises,
-    staleTime: 30 * 1000,
-  })
-
-  const stats = getLibraryStats()
-  const isRunning = importState.status === 'running'
-
-  const handleImport = async () => {
-    if (!apiKeyConfigured) return
-    setImportState({
-      status: 'running',
-      progress: { stage: 'running', currentLabel: '', completedSteps: 0, totalSteps: 112, importedSoFar: 0 },
-    })
-    try {
-      const total = await importExerciseLibrary(userId, (progress) => {
-        setImportState({ status: 'running', progress })
-      })
-      setImportState({ status: 'done', count: total })
-      await refetchCount()
-      await queryClient.invalidateQueries({ queryKey: ['exercises', 'library'] })
-    } catch (err) {
-      setImportState({ status: 'error', message: (err as Error).message })
-    }
-  }
-
-  const progressPercent =
-    importState.status === 'running'
-      ? Math.round((importState.progress.completedSteps / importState.progress.totalSteps) * 100)
-      : 0
-
-  return (
-    <Section title="Exercise Library">
-      <Row
-        label="Library size"
-        value={
-          libraryCount != null
-            ? `${libraryCount.toLocaleString()} standard exercises in database`
-            : 'Loading…'
-        }
-        action={
-          stats.lastImported ? (
-            <span className="text-[10px] text-text-muted uppercase tracking-widest">
-              Last refreshed {fmtDate(stats.lastImported)}
-            </span>
-          ) : undefined
-        }
-      />
-      <Row
-        label="API Ninjas key"
-        value={
-          apiKeyConfigured
-            ? 'Key is configured — VITE_EXERCISES_API_KEY is set'
-            : 'Key not configured — add VITE_EXERCISES_API_KEY to .env and restart'
-        }
-        action={
-          apiKeyConfigured ? (
-            <span className="flex items-center gap-1 text-xs text-green-400 font-semibold">
-              <CheckCircle2 size={13} />
-              Configured
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 text-xs text-yellow-400 font-semibold">
-              <KeyRound size={13} />
-              Missing
-            </span>
-          )
-        }
-      />
-      <div className="px-5 py-4">
-        {!isRunning && importState.status !== 'done' && (
-          <div className="flex items-start gap-4">
-            <div className="flex-1">
-              <p className="text-sm text-text-secondary leading-relaxed">
-                Imports all exercises from API Ninjas into your local database.
-              </p>
-            </div>
-            <Button
-              variant={libraryCount === 0 ? 'primary' : 'secondary'}
-              size="sm"
-              disabled={!apiKeyConfigured || isRunning}
-              onClick={() => void handleImport()}
-            >
-              <RefreshCw size={13} className="mr-1.5" />
-              {(libraryCount ?? 0) > 0 ? 'Refresh Library' : 'Import Library'}
-            </Button>
-          </div>
-        )}
-        {isRunning && importState.status === 'running' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-text-primary font-medium flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin text-primary" />
-                Importing exercises…
-              </p>
-              <span className="text-xs text-text-muted">
-                {importState.progress.completedSteps} / {importState.progress.totalSteps}
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-surface-3 rounded-full">
-              <div
-                className="h-1.5 bg-primary rounded-full transition-all duration-300"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-        )}
-        {importState.status === 'done' && (
-          <p className="text-sm text-green-400 flex items-center gap-2">
-            <CheckCircle2 size={15} />
-            Import complete — {importState.count.toLocaleString()} new exercises
-          </p>
-        )}
-        {importState.status === 'error' && (
-          <div className="flex items-start gap-2 text-sm text-red-400">
-            <AlertCircle size={14} className="mt-0.5 shrink-0" />
-            <p>{importState.message}</p>
-          </div>
-        )}
-      </div>
-    </Section>
   )
 }
 
@@ -1090,8 +938,6 @@ export default function Settings() {
       <PreferencesSection userId={userId} />
 
       <DataSection userId={userId} />
-
-      {isAdminEmail(user?.email) && <LibrarySection userId={userId} />}
 
       <Section title="About">
         <Row

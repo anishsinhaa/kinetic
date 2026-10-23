@@ -12,6 +12,9 @@ function mapExercise(row: ExerciseRow): Exercise {
     difficulty: row.difficulty,
     exerciseType: row.exercise_type,
     instructions: row.instructions,
+    category: row.category ?? null,
+    searchTerms: row.search_terms ?? null,
+    isHidden: Boolean(row.is_hidden),
     isCustom: row.is_custom,
     createdBy: row.created_by,
     createdAt: row.created_at,
@@ -22,7 +25,20 @@ export async function getAllExercises(): Promise<Exercise[]> {
   const { data, error } = await supabase
     .from('exercises')
     .select('*')
+    .eq('is_hidden', false)
     .order('name', { ascending: true })
+
+  if (error) throw toServiceError(error)
+  return (data as ExerciseRow[]).map(mapExercise)
+}
+
+/** Shared catalogue plus the current user's custom rows (RLS), excluding hidden legacy rows. */
+export async function getExerciseCatalog(): Promise<Exercise[]> {
+  const { data, error } = await supabase
+    .from('exercises')
+    .select('*')
+    .eq('is_hidden', false)
+    .order('name')
 
   if (error) throw toServiceError(error)
   return (data as ExerciseRow[]).map(mapExercise)
@@ -38,7 +54,7 @@ export async function searchExercisesFromDb(params: {
   limit?: number
 }): Promise<Exercise[]> {
   const run = async (matchSearchTerms: boolean) => {
-    let query = supabase.from('exercises').select('*')
+    let query = supabase.from('exercises').select('*').eq('is_hidden', false)
 
     const q = escapeFilterValue(params.name ?? '')
     if (q) {
@@ -82,39 +98,6 @@ export async function getExercisesByIds(ids: string[]): Promise<Exercise[]> {
   })
 }
 
-/**
- * Count of non-custom (imported library) exercises, plus the timestamp of the
- * last import stored in localStorage.
- */
-export function getLibraryStats(): { count: number | null; lastImported: string | null } {
-  if (typeof window === 'undefined') return { count: null, lastImported: null }
-  const raw = localStorage.getItem('kinetic-library-stats')
-  if (!raw) return { count: null, lastImported: null }
-  try {
-    return JSON.parse(raw) as { count: number; lastImported: string }
-  } catch {
-    return { count: null, lastImported: null }
-  }
-}
-
-export function saveLibraryStats(count: number): void {
-  localStorage.setItem(
-    'kinetic-library-stats',
-    JSON.stringify({ count, lastImported: new Date().toISOString() }),
-  )
-}
-
-/** Count all standard (non-custom) exercises in the DB. */
-export async function countLibraryExercises(): Promise<number> {
-  const { count, error } = await supabase
-    .from('exercises')
-    .select('*', { count: 'exact', head: true })
-    .eq('is_custom', false)
-
-  if (error) throw toServiceError(error)
-  return count ?? 0
-}
-
 /** Returns only the current user's custom exercises. */
 export async function getUserCustomExercises(userId: string): Promise<Exercise[]> {
   const { data, error } = await supabase
@@ -134,6 +117,7 @@ export type CreateExerciseInput = {
   userId: string
   /** Primary equipment (matches library `equipment` column) */
   equipment?: string | null
+  category?: string | null
   /** API-style: beginner | intermediate | expert */
   difficulty?: string | null
   /** API-style: strength, cardio, etc. */
@@ -151,6 +135,8 @@ export async function createExercise(input: CreateExerciseInput): Promise<Exerci
       name: trimmedName,
       muscle_group: input.muscleGroup.trim() || 'Other',
       is_custom: true,
+      category: input.category ?? null,
+      source: 'custom',
       equipment: input.equipment?.trim() || null,
       difficulty: input.difficulty?.trim() || null,
       exercise_type: input.exerciseType?.trim() || null,
@@ -160,13 +146,27 @@ export async function createExercise(input: CreateExerciseInput): Promise<Exerci
     .select('*')
     .single()
 
+  if (error?.code === '23505') {
+    const { data: existing, error: lookupError } = await supabase
+      .from('exercises')
+      .select('*')
+      .eq('is_custom', true)
+      .eq('created_by', input.userId)
+      .ilike('name', trimmedName)
+      .limit(1)
+      .maybeSingle()
+
+    if (lookupError) throw toServiceError(lookupError)
+    if (existing) return mapExercise(existing as ExerciseRow)
+  }
+
   if (error) throw toServiceError(error)
   return mapExercise(data as ExerciseRow)
 }
 
 /**
- * Finds an existing exercise by name (case-insensitive) or creates a new
- * standard record. Used when adding an API / imported exercise to a workout.
+ * Finds a visible exercise by name (case-insensitive) or creates a private
+ * custom row. Used by the Excel data import.
  */
 export async function findOrCreateExerciseByName(
   name: string,
@@ -180,23 +180,11 @@ export async function findOrCreateExerciseByName(
     .from('exercises')
     .select('*')
     .ilike('name', trimmed)
+    .eq('is_hidden', false)
     .limit(1)
     .maybeSingle()
 
   if (existing) return mapExercise(existing as ExerciseRow)
 
-  const { data, error } = await supabase
-    .from('exercises')
-    .insert({
-      name: trimmed,
-      muscle_group: muscleGroup,
-      equipment: equipment ?? null,
-      is_custom: false,
-      created_by: userId,
-    })
-    .select('*')
-    .single()
-
-  if (error) throw toServiceError(error)
-  return mapExercise(data as ExerciseRow)
+  return createExercise({ name: trimmed, muscleGroup, userId, equipment })
 }

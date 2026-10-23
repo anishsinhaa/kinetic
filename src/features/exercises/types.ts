@@ -6,6 +6,9 @@ export interface Exercise {
   difficulty: string | null
   exerciseType: string | null
   instructions: string | null
+  category: string | null
+  searchTerms: string | null
+  isHidden: boolean
   isCustom: boolean
   createdBy: string | null
   createdAt: string

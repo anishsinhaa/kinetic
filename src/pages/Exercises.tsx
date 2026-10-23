@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '../components/ui/Button'
 import {
@@ -11,11 +11,9 @@ import {
   AlertCircle,
   Loader2,
   Dumbbell,
-  Settings,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import {
-  countLibraryExercises,
   createExercise,
   findOrCreateExerciseByName,
   getUserCustomExercises,
@@ -181,29 +179,6 @@ function ExerciseCard({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Empty library prompt
-// ─────────────────────────────────────────────────────────────────────────────
-
-function EmptyLibraryPrompt() {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-      <Dumbbell size={36} className="text-text-muted mb-4 opacity-30" />
-      <p className="text-text-primary font-semibold mb-1">Exercise library is empty</p>
-      <p className="text-text-muted text-sm max-w-xs mb-5">
-        Import 3,000+ exercises from API Ninjas once — browsing and searching will be instant
-        afterward with zero API calls.
-      </p>
-      <Link to="/settings">
-        <Button variant="primary" size="md">
-          <Settings size={14} className="mr-2" />
-          Go to Settings → Import Library
-        </Button>
-      </Link>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main page
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -252,14 +227,6 @@ export default function Exercises() {
     return () => clearTimeout(t)
   }, [searchInput])
 
-  // ── Library count (to detect empty library) ──────────────────────────────
-  const libraryCountQuery = useQuery({
-    queryKey: ['exercises', 'library-count'],
-    queryFn: countLibraryExercises,
-    staleTime: 30 * 1000,
-  })
-  const libraryIsEmpty = (libraryCountQuery.data ?? 0) < 5
-
   // Recent exercises first (avoids obscure alphabetical-first library ordering)
   const recentIdsQuery = useQuery({
     queryKey: ['exercises', 'recent-ids', userId],
@@ -277,7 +244,6 @@ export default function Exercises() {
         muscleGroup: activeMuscle ?? undefined,
         limit: 60,
       }),
-    enabled: !libraryIsEmpty,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -442,11 +408,6 @@ export default function Exercises() {
         {/* ── Library Tab ────────────────────────────────────────────────── */}
         {activeTab === 'library' && (
           <div>
-            {/* Empty library → prompt to import */}
-            {!libraryCountQuery.isLoading && libraryIsEmpty && <EmptyLibraryPrompt />}
-
-            {!libraryIsEmpty && (
-              <>
                 {/* Search */}
                 <div className="relative mb-4">
                   <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -544,8 +505,6 @@ export default function Exercises() {
                     )}
                   </>
                 )}
-              </>
-            )}
           </div>
         )}
 
