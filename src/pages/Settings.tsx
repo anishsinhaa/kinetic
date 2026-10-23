@@ -165,7 +165,8 @@ function WorkoutTypesEditor({
   return (
     <div className="px-4 md:px-5 py-4 space-y-3">
       <p className="text-xs text-text-muted">
-        Add, rename, hide, or reorder types shown on Start Workout.
+        Types you can pick when starting a workout. Your split above decides which one is
+        suggested.
       </p>
       <ul className="space-y-2">
         {types.map((label, i) => (
@@ -402,8 +403,86 @@ function PreferencesSection({ userId }: { userId: string }) {
 
   const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+  const moveSplit = (index: number, dir: -1 | 1) => {
+    const next = [...local.split]
+    const j = index + dir
+    if (j < 0 || j >= next.length) return
+    ;[next[index], next[j]] = [next[j]!, next[index]!]
+    persist({ split: next })
+  }
+
   return (
     <>
+      <Section title="My split">
+        <div className="px-4 md:px-5 py-4 space-y-3">
+          <p className="text-xs text-text-muted">
+            The order you train in. Kinetic suggests the next day from this list. Example: Push →
+            Pull → Legs, then back to Push.
+          </p>
+          {local.split.length === 0 ? (
+            <p className="text-sm text-text-secondary">
+              No split set — Kinetic rotates Push → Pull → Legs.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {local.split.map((type, i) => (
+                <li
+                  key={`${type}-${i}`}
+                  className="flex items-center gap-2 bg-surface-2 border border-border rounded-xl px-3 py-2"
+                >
+                  <span className="flex-1 min-w-0 text-sm text-text-primary">
+                    Day {i + 1} · {type}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={saveMutation.isPending || i === 0}
+                    onClick={() => moveSplit(i, -1)}
+                    className="p-1.5 text-text-muted hover:text-primary disabled:opacity-30"
+                    aria-label="Move up"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saveMutation.isPending || i === local.split.length - 1}
+                    onClick={() => moveSplit(i, 1)}
+                    className="p-1.5 text-text-muted hover:text-primary disabled:opacity-30"
+                    aria-label="Move down"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saveMutation.isPending}
+                    onClick={() => persist({ split: local.split.filter((_, n) => n !== i) })}
+                    className="p-1.5 text-text-muted hover:text-red-400"
+                    aria-label="Remove"
+                  >
+                    <EyeOff size={16} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="space-y-2">
+            <p className="text-xs text-text-secondary">Add day:</p>
+            <div className="flex flex-wrap gap-2">
+              {local.workoutTypes.map((type, i) => (
+                <button
+                  key={`${type}-${i}`}
+                  type="button"
+                  disabled={saveMutation.isPending}
+                  onClick={() => persist({ split: [...local.split, type] })}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-border text-text-secondary hover:border-primary hover:text-primary disabled:opacity-40"
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Section>
+
       <Section title="Workout Types">
         <WorkoutTypesEditor
           types={local.workoutTypes}

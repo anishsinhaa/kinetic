@@ -121,6 +121,8 @@ export interface UserSettingsRow {
   units: WeightUnits
   /** IANA timezone; reminder times are wall-clock in this zone */
   timezone: string
+  /** Ordered training days. NULL means no split is set. */
+  split: string[] | null
   created_at: string
   updated_at: string
 }

@@ -39,6 +39,7 @@ function toRowPatch(update: UserSettingsUpdate): Partial<UserSettingsRow> {
   if (update.weightStep !== undefined) patch.weight_step = update.weightStep
   if (update.units !== undefined) patch.units = update.units
   if (update.timezone !== undefined) patch.timezone = update.timezone
+  if (update.split !== undefined) patch.split = update.split
   return patch
 }
 

@@ -8,6 +8,7 @@ export type { WeightUnits }
 export interface UserSettings {
   userId: string
   workoutTypes: string[]
+  split: string[]
   reminderMorningWeightEnabled: boolean
   reminderMorningWeightTime: string | null
   reminderNightRecoveryEnabled: boolean
@@ -39,6 +40,7 @@ export function defaultUserSettings(userId: string): UserSettings {
   return {
     userId,
     workoutTypes: [...DEFAULT_WORKOUT_TYPES],
+    split: [],
     reminderMorningWeightEnabled: false,
     reminderMorningWeightTime: null,
     reminderNightRecoveryEnabled: false,
@@ -63,6 +65,9 @@ export function mapUserSettingsRow(row: UserSettingsRow): UserSettings {
   return {
     userId: row.user_id,
     workoutTypes: resolveWorkoutTypes(rawTypes),
+    split: Array.isArray(row.split)
+      ? row.split.filter((t): t is string => typeof t === 'string' && t.trim() !== '')
+      : [],
     reminderMorningWeightEnabled: row.reminder_morning_weight_enabled,
     reminderMorningWeightTime: row.reminder_morning_weight_time,
     reminderNightRecoveryEnabled: row.reminder_night_recovery_enabled,

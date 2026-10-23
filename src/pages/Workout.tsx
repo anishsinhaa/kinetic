@@ -388,8 +388,11 @@ export default function Workout() {
 
   // Derive suggestion — never write it into the store during render/effects
   const suggestedType = useMemo(
-    () => suggestNextType(recentTypesQuery.data ?? [], typeChips) ?? typeChips[0] ?? '',
-    [recentTypesQuery.data, typeChips],
+    () =>
+      suggestNextType(recentTypesQuery.data ?? [], typeChips, settings?.split) ??
+      typeChips[0] ??
+      '',
+    [recentTypesQuery.data, typeChips, settings?.split],
   )
   const idleType = pickedType ?? suggestedType
   const suggestionsReady =
