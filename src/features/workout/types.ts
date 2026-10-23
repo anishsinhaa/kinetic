@@ -29,6 +29,8 @@ export interface WorkoutExerciseDraft {
   note?: string | null
   /** Blocks set edits until last-session prefill resolves (or is skipped). */
   prefillStatus?: ExercisePrefillStatus
+  /** User marked the exercise finished for this session. Sets stay visible. */
+  done?: boolean
   sets: WorkoutSetDraft[]
 }
 

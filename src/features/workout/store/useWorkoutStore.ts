@@ -134,6 +134,9 @@ interface WorkoutStore {
   restoreSet: (exerciseLocalId: string, set: WorkoutSetDraft, index: number) => void
   uncompleteSet: (exerciseLocalId: string, setLocalId: string) => void
   removeSet: (exerciseLocalId: string, setLocalId: string) => void
+  removeExercise: (exerciseLocalId: string) => void
+  moveExercise: (exerciseLocalId: string, toIndex: number) => void
+  setExerciseDone: (exerciseLocalId: string, done: boolean) => void
   finishWorkout: () => void
   resetToIdle: () => void
 }
@@ -429,6 +432,31 @@ export const useWorkoutStore = create<WorkoutStore>()(
           ),
         }))
       },
+
+      removeExercise: (exerciseLocalId) =>
+        set((state) => ({
+          exercises: state.exercises.filter((e) => e.id !== exerciseLocalId),
+        })),
+
+      moveExercise: (exerciseLocalId, toIndex) =>
+        set((state) => {
+          const from = state.exercises.findIndex((e) => e.id === exerciseLocalId)
+          if (from < 0) return state
+          const to = Math.min(Math.max(0, toIndex), state.exercises.length - 1)
+          if (from === to) return state
+          const next = [...state.exercises]
+          const [item] = next.splice(from, 1)
+          if (!item) return state
+          next.splice(to, 0, item)
+          return { exercises: next }
+        }),
+
+      setExerciseDone: (exerciseLocalId, done) =>
+        set((state) => ({
+          exercises: state.exercises.map((e) =>
+            e.id === exerciseLocalId ? { ...e, done } : e,
+          ),
+        })),
 
       finishWorkout: () =>
         set({

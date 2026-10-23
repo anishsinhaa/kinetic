@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
-import { ChevronDown, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
+import { ChevronDown, EllipsisVertical, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
 import { localDateString } from '../lib/localDate'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
@@ -14,6 +14,7 @@ import {
   deleteSet,
   deleteSets,
   deleteWorkout,
+  deleteWorkoutExercise,
   deleteWorkoutExercises,
   finishWorkout as finishWorkoutDb,
   getLatestCompletedWorkout,
@@ -148,6 +149,9 @@ export default function Workout() {
   const [typeSheetOpen, setTypeSheetOpen] = useState(false)
   const [pickedType, setPickedType] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
+  const [exerciseMenuId, setExerciseMenuId] = useState<string | null>(null)
+  const [removeConfirm, setRemoveConfirm] = useState(false)
+  const swapIndexRef = useRef<number | null>(null)
   const [isFinishing, setIsFinishing] = useState(false)
   const [setStatusMap, setSetStatusMap] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
   /** Exercise names shown while Repeat last is still copying the previous session. */
@@ -597,6 +601,10 @@ export default function Workout() {
       if (!liveWorkoutId) return
       const orderIndex = useWorkoutStore.getState().exercises.findIndex((e) => e.id === added.id)
       const dbWeId = await addExerciseToWorkout(liveWorkoutId, exercise.id, Math.max(0, orderIndex))
+      if (!useWorkoutStore.getState().exercises.some((e) => e.id === added.id)) {
+        await deleteWorkoutExercise(dbWeId).catch(() => {})
+        return
+      }
       useWorkoutStore.getState().updateExerciseMeta(added.id, { dbWorkoutExerciseId: dbWeId })
 
       const displayUnits = useWorkoutStore.getState().units
@@ -686,9 +694,58 @@ export default function Workout() {
     }
   }
 
+  const persistOrder = () => {
+    let toasted = false
+    useWorkoutStore.getState().exercises.forEach((ex, index) => {
+      if (!ex.dbWorkoutExerciseId) return
+      void updateWorkoutExercise(ex.dbWorkoutExerciseId, { order_index: index }).catch(() => {
+        if (toasted) return
+        toasted = true
+        toast.show("Couldn't save the new order", { kind: 'error' })
+      })
+    })
+  }
+
+  const handleRemoveExercise = (exLocalId: string) => {
+    const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exLocalId)
+    if (!ex) return
+    useWorkoutStore.getState().removeExercise(ex.id)
+    setSetStatusMap((prev) => {
+      const next = { ...prev }
+      for (const s of ex.sets) delete next[s.id]
+      return next
+    })
+    if (ex.dbWorkoutExerciseId) {
+      void deleteWorkoutExercise(ex.dbWorkoutExerciseId).catch(() => {
+        toast.show("Couldn't remove the exercise", { kind: 'error' })
+      })
+    }
+    persistOrder()
+    setExerciseMenuId(null)
+    setRemoveConfirm(false)
+  }
+
+  const handleMoveExercise = (exLocalId: string, dir: -1 | 1) => {
+    const index = useWorkoutStore.getState().exercises.findIndex((e) => e.id === exLocalId)
+    if (index < 0) return
+    useWorkoutStore.getState().moveExercise(exLocalId, index + dir)
+    persistOrder()
+  }
+
   const handlePickExercise = (exercise: Exercise) => {
     setPickerOpen(false)
-    void addExerciseFromLibrary(exercise)
+    const swapAt = swapIndexRef.current
+    void (async () => {
+      await addExerciseFromLibrary(exercise)
+      if (swapAt == null) return
+      swapIndexRef.current = null
+      const created = useWorkoutStore
+        .getState()
+        .exercises.find((e) => e.exerciseId === exercise.id)
+      if (!created) return
+      useWorkoutStore.getState().moveExercise(created.id, swapAt)
+      persistOrder()
+    })()
   }
 
   const handleCompleteSet = async (exerciseLocalId: string, setLocalId: string, index: number) => {
@@ -730,6 +787,24 @@ export default function Workout() {
   const isFilledDraft = (s: { completed: boolean; weight: string; reps: string }) =>
     !s.completed && s.weight !== '' && s.reps !== ''
 
+  const handleDoneWithExercise = async (exLocalId: string) => {
+    const ex = useWorkoutStore.getState().exercises.find((e) => e.id === exLocalId)
+    if (!ex) return
+    const lastIndex = ex.sets.length - 1
+    const last = lastIndex >= 0 ? ex.sets[lastIndex] : undefined
+    if (last && isFilledDraft(last)) {
+      await handleCompleteSet(exLocalId, last.id, lastIndex)
+    }
+    const fresh = useWorkoutStore.getState().exercises.find((e) => e.id === exLocalId)
+    if (!fresh) return
+    for (let i = fresh.sets.length - 1; i >= 0; i--) {
+      const s = fresh.sets[i]
+      if (!s || s.completed || s.weight !== '' || s.reps !== '') break
+      useWorkoutStore.getState().removeSet(exLocalId, s.id)
+    }
+    useWorkoutStore.getState().setExerciseDone(exLocalId, true)
+  }
+
   const incompleteSetCount = useMemo(
     () =>
       exercises.reduce(
@@ -748,6 +823,9 @@ export default function Workout() {
     () => exercises.reduce((n, e) => n + e.sets.filter(isFilledDraft).length, 0),
     [exercises],
   )
+
+  const menuExercise = exercises.find((e) => e.id === exerciseMenuId) ?? null
+  const menuIndex = menuExercise ? exercises.findIndex((e) => e.id === menuExercise.id) : -1
 
   /** Targeted, fire-and-forget cache refresh — never blocks navigation. */
   const invalidateAfterWorkout = () => {
@@ -1395,12 +1473,42 @@ export default function Workout() {
         {exercises.map((ex) => (
           <div key={ex.id} className="rounded-xl border border-border bg-surface overflow-hidden">
             <div className="px-4 py-3 border-b border-border">
-              <h3 className="font-semibold text-text-primary">{ex.name}</h3>
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="font-semibold text-text-primary min-w-0 flex items-center gap-2">
+                  <span className="truncate">{ex.name}</span>
+                  {ex.done && (
+                    <span className="shrink-0 text-[11px] font-medium text-primary">✓ Done</span>
+                  )}
+                </h3>
+                <div className="flex items-center shrink-0 -mr-2">
+                  {ex.done && (
+                    <button
+                      type="button"
+                      onClick={() => useWorkoutStore.getState().setExerciseDone(ex.id, false)}
+                      className="text-sm text-primary px-2 min-h-11"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Exercise options for ${ex.name}`}
+                    onClick={() => {
+                      setRemoveConfirm(false)
+                      setExerciseMenuId(ex.id)
+                    }}
+                    className="min-h-11 min-w-11 flex items-center justify-center text-text-secondary"
+                  >
+                    <EllipsisVertical size={18} />
+                  </button>
+                </div>
+              </div>
               <p className="text-xs text-text-secondary mt-0.5">
                 {ex.lastPerformance ?? 'No previous'}
                 {ex.targetLabel ? ` · ${ex.targetLabel}` : ''}
               </p>
               <p className="text-[11px] text-primary mt-0.5">{ex.personalRecord ?? 'No PR yet'}</p>
+              {!ex.done && (
               <div className="flex flex-wrap gap-2 mt-2">
                 {(
                   [
@@ -1436,6 +1544,7 @@ export default function Workout() {
                   </button>
                 ))}
               </div>
+              )}
             </div>
 
             {ex.prefillStatus === 'pending' && (
@@ -1451,7 +1560,7 @@ export default function Workout() {
                 set={set}
                 weightStep={weightStep}
                 units={units}
-                disabled={!canEdit || ex.prefillStatus === 'pending'}
+                disabled={!canEdit || ex.prefillStatus === 'pending' || Boolean(ex.done)}
                 status={setStatusMap[set.id]}
                 onChange={(patch) => {
                   if (ex.prefillStatus === 'pending') return
@@ -1466,21 +1575,36 @@ export default function Workout() {
               />
             ))}
 
-            <button
-              type="button"
-              disabled={!canEdit || ex.prefillStatus === 'pending'}
-              onClick={() => void handleAddSet(ex.id)}
-              className="w-full min-h-12 text-sm text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
-            >
-              <Plus size={14} /> Add set
-            </button>
+            {!ex.done && (
+              <>
+                <button
+                  type="button"
+                  disabled={!canEdit || ex.prefillStatus === 'pending'}
+                  onClick={() => void handleAddSet(ex.id)}
+                  className="w-full min-h-12 text-sm text-text-secondary hover:text-primary flex items-center justify-center gap-1 border-t border-border disabled:opacity-40"
+                >
+                  <Plus size={14} /> Add set
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEdit || ex.prefillStatus === 'pending'}
+                  onClick={() => void handleDoneWithExercise(ex.id)}
+                  className="w-full min-h-12 text-sm text-primary border-t border-border disabled:opacity-40"
+                >
+                  Done with {ex.name}
+                </button>
+              </>
+            )}
           </div>
         ))}
 
         <button
           type="button"
           disabled={!canEdit}
-          onClick={() => setPickerOpen(true)}
+          onClick={() => {
+            swapIndexRef.current = null
+            setPickerOpen(true)
+          }}
           className="w-full py-8 border border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-primary hover:border-primary disabled:opacity-40"
         >
           <Plus size={16} />
@@ -1606,9 +1730,97 @@ export default function Workout() {
 
       {typeSheet}
 
+      <BottomSheet
+        open={menuExercise != null}
+        onClose={() => {
+          setExerciseMenuId(null)
+          setRemoveConfirm(false)
+        }}
+        title={menuExercise?.name ?? 'Exercise'}
+      >
+        {menuExercise && removeConfirm ? (
+          <div className="p-4 space-y-4">
+            <p className="text-sm text-text-secondary">
+              Remove {menuExercise.name}?{' '}
+              {menuExercise.sets.filter((s) => s.completed).length} logged set
+              {menuExercise.sets.filter((s) => s.completed).length === 1 ? '' : 's'} will be
+              deleted.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="lg"
+                className="flex-1 min-h-12"
+                onClick={() => setRemoveConfirm(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="lg"
+                className="flex-1 min-h-12"
+                onClick={() => handleRemoveExercise(menuExercise.id)}
+              >
+                Remove
+              </Button>
+            </div>
+          </div>
+        ) : (
+          menuExercise && (
+            <div className="p-4 flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={menuIndex <= 0}
+                onClick={() => handleMoveExercise(menuExercise.id, -1)}
+                className="w-full min-h-12 rounded-xl border border-border px-4 text-sm font-semibold text-text-primary disabled:opacity-40"
+              >
+                Move up
+              </button>
+              <button
+                type="button"
+                disabled={menuIndex < 0 || menuIndex >= exercises.length - 1}
+                onClick={() => handleMoveExercise(menuExercise.id, 1)}
+                className="w-full min-h-12 rounded-xl border border-border px-4 text-sm font-semibold text-text-primary disabled:opacity-40"
+              >
+                Move down
+              </button>
+              {!menuExercise.sets.some((s) => s.completed) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    swapIndexRef.current = menuIndex
+                    handleRemoveExercise(menuExercise.id)
+                    setPickerOpen(true)
+                  }}
+                  className="w-full min-h-12 rounded-xl border border-border px-4 text-sm font-semibold text-text-primary"
+                >
+                  Swap exercise
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (menuExercise.sets.some((s) => s.completed)) {
+                    setRemoveConfirm(true)
+                    return
+                  }
+                  handleRemoveExercise(menuExercise.id)
+                }}
+                className="w-full min-h-12 rounded-xl border border-border px-4 text-sm font-semibold text-red-400"
+              >
+                Remove exercise
+              </button>
+            </div>
+          )
+        )}
+      </BottomSheet>
+
       <ExercisePickerSheet
         open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
+        onClose={() => {
+          swapIndexRef.current = null
+          setPickerOpen(false)
+        }}
         userId={userId}
         workoutType={workoutLabel}
         excludeExerciseIds={exercises.map((e) => e.exerciseId)}
