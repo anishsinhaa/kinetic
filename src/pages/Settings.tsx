@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Accordion } from '../components/ui/Accordion'
 import { Button } from '../components/ui/Button'
 import {
   Loader2,
@@ -491,7 +492,8 @@ function PreferencesSection({ userId }: { userId: string }) {
         />
       </Section>
 
-      <Section title="Reminders">
+      <Accordion title="Reminders">
+        <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <Row
           label="Timezone"
           value="Local timezone · may arrive up to 5 minutes after the set time"
@@ -682,9 +684,11 @@ function PreferencesSection({ userId }: { userId: string }) {
             </p>
           )}
         </div>
-      </Section>
+        </div>
+      </Accordion>
 
-      <Section title="Workout defaults">
+      <Accordion title="Workout defaults">
+        <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <Row
           label="Rest timer"
           value="Default countdown between sets"
@@ -769,7 +773,8 @@ function PreferencesSection({ userId }: { userId: string }) {
             {saveMutation.isPending ? 'Saving…' : saveMsg}
           </p>
         )}
-      </Section>
+        </div>
+      </Accordion>
     </>
   )
 }
@@ -844,7 +849,8 @@ function DataSection({ userId }: { userId: string }) {
   }
 
   return (
-    <Section title="Data">
+    <Accordion title="Data">
+      <div className="bg-surface rounded-xl border border-border overflow-hidden">
       {/* Export row */}
       <div className="flex items-start sm:items-center justify-between gap-3 px-4 md:px-5 py-3 md:py-4 border-b border-border">
         <div className="min-w-0 flex-1">
@@ -959,7 +965,8 @@ function DataSection({ userId }: { userId: string }) {
           </p>
         )}
       </div>
-    </Section>
+      </div>
+    </Accordion>
   )
 }
 

@@ -55,6 +55,7 @@ export interface ExerciseHistory {
   exerciseId: string
   exerciseName: string
   muscleGroup: string
+  category: string | null
   /** Highest weight (kg) among completed sets — same PR rules as finish summary */
   allTimeBest: number | null
   allTimeBestReps: number | null

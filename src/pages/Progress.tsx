@@ -11,13 +11,17 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { TrendingUp, Dumbbell, Loader2, ChevronDown, Flame, Search, Activity } from 'lucide-react'
+import { TrendingUp, Loader2, ChevronDown, Search } from 'lucide-react'
+import { Accordion } from '../components/ui/Accordion'
+import { CATEGORY_LABELS } from '../features/exercises/lib/muscles'
 import { useProgressData } from '../features/progress/hooks/useProgress'
-import { chartTickFormatter, dailyMetricSeries, niceTicks } from '../features/progress/lib/progressAggregators'
+import { chartTickFormatter, dailyMetricSeries, niceTicks, weekSummary } from '../features/progress/lib/progressAggregators'
+import { startOfLocalWeekMonday } from '../features/workout/services/workoutService'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { todayDateString } from '../features/dailyLog/services/dailyLogService'
 import {
+  formatVolume,
   formatWeight,
   kgToDisplay,
   roundBodyWeight,
@@ -43,32 +47,6 @@ function fmtShortDate(iso: string): string {
   } catch {
     return iso
   }
-}
-
-function Section({
-  title,
-  icon: Icon,
-  children,
-  action,
-}: {
-  title: string
-  icon?: React.ElementType
-  children: React.ReactNode
-  action?: React.ReactNode
-}) {
-  return (
-    <section className="mb-8">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <h2 className="text-[11px] text-text-secondary uppercase tracking-widest font-semibold flex items-center gap-2">
-          <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
-          {Icon && <Icon size={12} className="text-primary" />}
-          {title}
-        </h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  )
 }
 
 function EmptyState({ msg }: { msg: string }) {
@@ -230,7 +208,7 @@ function ExercisePicker({
         className="w-full flex items-center justify-between gap-3 bg-surface-2 border border-border text-text-primary text-sm rounded-xl px-4 min-h-12 font-medium hover:border-primary text-left"
       >
         <span className="truncate">
-          {selected ? selected.exerciseName : 'Pick an exercise…'}
+          {selected ? selected.exerciseName : 'Choose an exercise…'}
           {selected && (
             <span className="text-text-secondary font-normal"> · {selected.muscleGroup}</span>
           )}
@@ -307,6 +285,23 @@ function RangeSelector({ value, onChange }: { value: Range; onChange: (r: Range)
       ))}
     </div>
   )
+}
+
+function countDelta(current: number, previous: number): string {
+  const diff = current - previous
+  if (diff === 0) return 'same'
+  return diff > 0 ? `+${diff}` : `\u2212${Math.abs(diff)}`
+}
+
+function volumeDelta(currentKg: number, previousKg: number, units: 'kg' | 'lb'): string {
+  const diff = currentKg - previousKg
+  if (diff === 0) return 'same'
+  const display = kgToDisplay(Math.abs(diff), units)
+  const rounded = display >= 1000 ? Number((display / 1000).toFixed(1)) : Math.round(display)
+  if (rounded === 0) return 'same'
+  const body =
+    display >= 1000 ? `${(display / 1000).toFixed(1)}k ${units}` : `${Math.round(display)} ${units}`
+  return `${diff > 0 ? '+' : '\u2212'}${body}`
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -394,6 +389,26 @@ export default function Progress() {
     [weeklyTicks.ticks],
   )
 
+  const thisWeekStart = startOfLocalWeekMonday()
+  const lastWeekBounds = useMemo(() => {
+    const [year, month, day] = thisWeekStart.split('-').map(Number)
+    const monday = new Date(year, (month ?? 1) - 1, day ?? 1)
+    const start = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 7)
+    const end = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 1)
+    const ymd = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    return { start: ymd(start), end: ymd(end) }
+  }, [thisWeekStart])
+  const thisWeek = useMemo(
+    () => weekSummary(histories, thisWeekStart, today),
+    [histories, thisWeekStart, today],
+  )
+  const lastWeek = useMemo(
+    () => weekSummary(histories, lastWeekBounds.start, lastWeekBounds.end),
+    [histories, lastWeekBounds],
+  )
+  const muscleMax = Math.max(1, ...thisWeek.setsByCategory.map((row) => row.sets))
+
   const sessions = selectedHistory?.sessions ?? []
   const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 8)
 
@@ -420,10 +435,173 @@ export default function Progress() {
 
       {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* ── Left column ── */}
-          <div className="space-y-6">
+          <div className="rounded-xl border border-border bg-surface p-4 md:col-span-2">
+            <h2 className="text-[11px] text-text-secondary uppercase tracking-widest font-semibold flex items-center gap-2 mb-3">
+              <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
+              This week
+            </h2>
+            {thisWeek.workouts === 0 ? (
+              <p className="text-sm text-text-muted">No workouts logged this week yet.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-[11px] text-text-secondary uppercase tracking-widest">Workouts</p>
+                    <p className="text-2xl font-black text-text-primary tabular-nums">{thisWeek.workouts}</p>
+                    <p className="text-xs text-text-secondary">{countDelta(thisWeek.workouts, lastWeek.workouts)} vs last week</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-text-secondary uppercase tracking-widest">Sets</p>
+                    <p className="text-2xl font-black text-text-primary tabular-nums">{thisWeek.sets}</p>
+                    <p className="text-xs text-text-secondary">{countDelta(thisWeek.sets, lastWeek.sets)} vs last week</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-text-secondary uppercase tracking-widest">Volume</p>
+                    <p className="text-2xl font-black text-text-primary tabular-nums">{formatVolume(thisWeek.volumeKg, units)}</p>
+                    <p className="text-xs text-text-secondary">{volumeDelta(thisWeek.volumeKg, lastWeek.volumeKg, units)} vs last week</p>
+                  </div>
+                </div>
+                {thisWeek.setsByCategory.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    <p className="text-[11px] text-text-secondary uppercase tracking-widest">Sets per muscle</p>
+                    {thisWeek.setsByCategory.map((row) => (
+                      <div key={row.category}>
+                        <div className="flex items-baseline justify-between gap-3 text-sm">
+                          <span className="text-text-primary">{CATEGORY_LABELS[row.category]}</span>
+                          <span className="text-text-secondary tabular-nums">{row.sets} sets</span>
+                        </div>
+                        <div className="mt-1 h-1 rounded-full bg-surface-3">
+                          <div
+                            className="h-1 rounded-full bg-primary"
+                            style={{ width: `${(row.sets / muscleMax) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+            {/* Weekly volume */}
+            <Accordion title="Weekly volume" defaultOpen>
+              {recentWeekly.length === 0 ? (
+                <EmptyState msg="Complete workouts to see weekly volume." />
+              ) : (
+                <ChartCard>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={recentWeekly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: '#64748b' }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={48}
+                        domain={weeklyTicks.domain}
+                        ticks={weeklyTicks.ticks}
+                        interval={0}
+                        tickFormatter={weeklyTickFormat}
+                      />
+                      <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
+                      <Bar
+                        dataKey="volume"
+                        name="Volume"
+                        fill="#a78bfa"
+                        opacity={0.8}
+                        radius={[3, 3, 0, 0]}
+                        isAnimationActive={!reduceMotion}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              )}
+            </Accordion>
+            {/* Body & nutrition — one shared range */}
+            <Accordion
+              title="Body & nutrition"
+              defaultOpen
+              action={<RangeSelector value={range} onChange={setRange} />}
+            >
+              <div className="space-y-4">
+                <MetricChart
+                  title={`Body weight (${units})`}
+                  data={weightData}
+                  color="#34d399"
+                  gradientId="bwGrad"
+                  unit={units}
+                  decimals={1}
+                  emptyMsg={`No weight logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+                <MetricChart
+                  title="Calories (kcal)"
+                  data={caloriesData}
+                  color="#fb923c"
+                  gradientId="calGrad"
+                  unit="kcal"
+                  emptyMsg={`No calories logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+                <MetricChart
+                  title="Protein (g)"
+                  data={proteinData}
+                  color="#22d3ee"
+                  gradientId="proGrad"
+                  unit="g"
+                  emptyMsg={`No protein logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+                <MetricChart
+                  title="Sleep (hours)"
+                  data={sleepData}
+                  color="#a78bfa"
+                  gradientId="slpGrad"
+                  unit="h"
+                  decimals={1}
+                  emptyMsg={`No sleep logged in the last ${range} days.`}
+                  animate={!reduceMotion}
+                />
+              </div>
+            </Accordion>
+
+            {/* PR list */}
+            <Accordion title="All-time PRs">
+              {prList.length === 0 ? (
+                <EmptyState msg="Complete exercises to see your personal records here." />
+              ) : (
+                <div className="rounded-xl border border-border bg-surface overflow-hidden">
+                  {prList.slice(0, 20).map((pr, i) => (
+                    <div
+                      key={pr.exerciseId}
+                      className={cn(
+                        'flex items-center justify-between px-4 py-3 gap-3',
+                        i > 0 && 'border-t border-border',
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">{pr.exerciseName}</p>
+                        {pr.achievedDate && (
+                          <p className="text-xs text-text-muted mt-0.5">{fmtShortDate(pr.achievedDate)}</p>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-primary tabular-nums">
+                          {formatWeight(pr.weight, units, { step })} × {pr.reps}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {prList.length > 20 && (
+                    <p className="text-xs text-text-muted px-4 py-2 border-t border-border">
+                      + {prList.length - 20} more
+                    </p>
+                  )}
+                </div>
+              )}
+            </Accordion>
             {/* Per-exercise charts + session list */}
-            <Section title="Exercise Progress" icon={Dumbbell}>
+            <Accordion title="Exercise progress">
               {histories.length === 0 ? (
                 <EmptyState msg="Log some workouts to see per-exercise progress." />
               ) : (
@@ -553,130 +731,8 @@ export default function Progress() {
                   )}
                 </div>
               )}
-            </Section>
+            </Accordion>
 
-            {/* Weekly volume */}
-            <Section title="Weekly Volume">
-              {recentWeekly.length === 0 ? (
-                <EmptyState msg="Complete workouts to see weekly volume." />
-              ) : (
-                <ChartCard>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={recentWeekly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                      <YAxis
-                        tick={{ fontSize: 11, fill: '#64748b' }}
-                        tickLine={false}
-                        axisLine={false}
-                        width={48}
-                        domain={weeklyTicks.domain}
-                        ticks={weeklyTicks.ticks}
-                        interval={0}
-                        tickFormatter={weeklyTickFormat}
-                      />
-                      <Tooltip content={<KineticTooltip valueFormatter={(v) => `${Math.round(v)} ${units}`} />} />
-                      <Bar
-                        dataKey="volume"
-                        name="Volume"
-                        fill="#a78bfa"
-                        opacity={0.8}
-                        radius={[3, 3, 0, 0]}
-                        isAnimationActive={!reduceMotion}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartCard>
-              )}
-            </Section>
-          </div>
-
-          {/* ── Right column ── */}
-          <div className="space-y-6">
-            {/* Body & nutrition — one shared range */}
-            <Section
-              title="Body & Nutrition"
-              icon={Activity}
-              action={<RangeSelector value={range} onChange={setRange} />}
-            >
-              <div className="space-y-4">
-                <MetricChart
-                  title={`Body weight (${units})`}
-                  data={weightData}
-                  color="#34d399"
-                  gradientId="bwGrad"
-                  unit={units}
-                  decimals={1}
-                  emptyMsg={`No weight logged in the last ${range} days.`}
-                  animate={!reduceMotion}
-                />
-                <MetricChart
-                  title="Calories (kcal)"
-                  data={caloriesData}
-                  color="#fb923c"
-                  gradientId="calGrad"
-                  unit="kcal"
-                  emptyMsg={`No calories logged in the last ${range} days.`}
-                  animate={!reduceMotion}
-                />
-                <MetricChart
-                  title="Protein (g)"
-                  data={proteinData}
-                  color="#22d3ee"
-                  gradientId="proGrad"
-                  unit="g"
-                  emptyMsg={`No protein logged in the last ${range} days.`}
-                  animate={!reduceMotion}
-                />
-                <MetricChart
-                  title="Sleep (hours)"
-                  data={sleepData}
-                  color="#a78bfa"
-                  gradientId="slpGrad"
-                  unit="h"
-                  decimals={1}
-                  emptyMsg={`No sleep logged in the last ${range} days.`}
-                  animate={!reduceMotion}
-                />
-              </div>
-            </Section>
-
-            {/* PR list */}
-            <Section title="All-Time PRs" icon={Flame}>
-              {prList.length === 0 ? (
-                <EmptyState msg="Complete exercises to see your personal records here." />
-              ) : (
-                <div className="rounded-xl border border-border bg-surface overflow-hidden">
-                  {prList.slice(0, 20).map((pr, i) => (
-                    <div
-                      key={pr.exerciseId}
-                      className={cn(
-                        'flex items-center justify-between px-4 py-3 gap-3',
-                        i > 0 && 'border-t border-border',
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate">{pr.exerciseName}</p>
-                        {pr.achievedDate && (
-                          <p className="text-xs text-text-muted mt-0.5">{fmtShortDate(pr.achievedDate)}</p>
-                        )}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-bold text-primary tabular-nums">
-                          {formatWeight(pr.weight, units, { step })} × {pr.reps}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  {prList.length > 20 && (
-                    <p className="text-xs text-text-muted px-4 py-2 border-t border-border">
-                      + {prList.length - 20} more
-                    </p>
-                  )}
-                </div>
-              )}
-            </Section>
-          </div>
         </div>
       )}
     </motion.div>

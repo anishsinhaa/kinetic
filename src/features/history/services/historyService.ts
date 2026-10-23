@@ -130,7 +130,10 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
 type RawWorkoutExerciseRow = {
   exercise_id: string
   order_index?: number | null
-  exercises: { id: string; name: string; muscle_group: string } | { id: string; name: string; muscle_group: string }[] | null
+  exercises:
+    | { id: string; name: string; muscle_group: string; category?: string | null }
+    | { id: string; name: string; muscle_group: string; category?: string | null }[]
+    | null
   sets: Array<{
     weight: number | null
     reps: number | null
@@ -149,21 +152,21 @@ async function fetchExerciseHistoryRows(userId: string): Promise<RawWorkoutExerc
     `
       exercise_id,
       order_index,
-      exercises ( id, name, muscle_group ),
+      exercises ( id, name, muscle_group, category ),
       sets ( weight, reps, set_index, completed_at ),
       workouts!inner ( id, date, user_id, ended_at, feel, note )
     `,
     `
       exercise_id,
       order_index,
-      exercises ( id, name, muscle_group ),
+      exercises ( id, name, muscle_group, category ),
       sets ( weight, reps, set_index ),
       workouts!inner ( id, date, user_id, ended_at, feel, note )
     `,
     `
       exercise_id,
       order_index,
-      exercises ( id, name, muscle_group ),
+      exercises ( id, name, muscle_group, category ),
       sets ( weight, reps, set_index ),
       workouts!inner ( id, date, user_id, ended_at )
     `,
@@ -194,7 +197,7 @@ export async function getExerciseHistory(userId: string): Promise<ExerciseHistor
 export function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHistory[] {
   const exerciseMap = new Map<
     string,
-    { name: string; muscleGroup: string; sessions: Map<string, ExerciseHistorySession> }
+    { name: string; muscleGroup: string; category: string | null; sessions: Map<string, ExerciseHistorySession> }
   >()
 
   for (const row of rows) {
@@ -212,6 +215,7 @@ export function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHis
       exerciseMap.set(row.exercise_id, {
         name: exercise.name,
         muscleGroup: exercise.muscle_group,
+        category: exercise.category ?? null,
         sessions: new Map(),
       })
     }
@@ -265,6 +269,7 @@ export function buildExerciseHistory(rows: RawWorkoutExerciseRow[]): ExerciseHis
       exerciseId,
       exerciseName: entry.name,
       muscleGroup: entry.muscleGroup,
+      category: entry.category,
       allTimeBest: best?.weight ?? null,
       allTimeBestReps: best?.reps ?? null,
       sessions,

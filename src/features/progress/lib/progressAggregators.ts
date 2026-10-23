@@ -4,6 +4,7 @@
  */
 
 import { localDateString } from '../../../lib/localDate'
+import { exerciseCategory, type MuscleCategory } from '../../exercises/lib/muscles'
 import { bestPersonalRecord, isPersonalRecord } from '../../workout/lib/prDetection'
 import type { ExerciseHistory, ExerciseHistorySession } from '../../history/types'
 import type { DailyLogEntry } from '../../history/types'
@@ -141,6 +142,46 @@ export function weeklyVolumeSeries(histories: ExerciseHistory[]): WeeklyVolumePo
   return Array.from(byWeek.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([week, volume]) => ({ week, label: isoWeekLabel(week), volume: Math.round(volume) }))
+}
+
+export interface WeekSummary {
+  workouts: number
+  sets: number
+  volumeKg: number
+  setsByCategory: Array<{ category: MuscleCategory; sets: number }>
+}
+
+/** Completed work between two inclusive YYYY-MM-DD bounds. */
+export function weekSummary(
+  histories: ExerciseHistory[],
+  weekStart: string,
+  weekEnd: string,
+): WeekSummary {
+  const workoutIds = new Set<string>()
+  let sets = 0
+  let volumeKg = 0
+  const byCategory = new Map<MuscleCategory, number>()
+
+  for (const history of histories) {
+    const category = exerciseCategory({
+      category: history.category,
+      muscleGroup: history.muscleGroup,
+    })
+    for (const session of history.sessions) {
+      if (session.date < weekStart || session.date > weekEnd) continue
+      workoutIds.add(session.workoutId)
+      sets += session.sets.length
+      volumeKg += session.totalVolume
+      byCategory.set(category, (byCategory.get(category) ?? 0) + session.sets.length)
+    }
+  }
+
+  const setsByCategory = Array.from(byCategory.entries())
+    .filter(([, count]) => count > 0)
+    .map(([category, count]) => ({ category, sets: count }))
+    .sort((a, b) => b.sets - a.sets)
+
+  return { workouts: workoutIds.size, sets, volumeKg, setsByCategory }
 }
 
 // ─── Global PR list ──────────────────────────────────────────────────────────

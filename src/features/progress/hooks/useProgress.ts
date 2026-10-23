@@ -9,7 +9,7 @@ import {
 } from '../lib/progressAggregators'
 
 /**
- * @param selectedExerciseId — user pick, or null to default to the first exercise
+ * @param selectedExerciseId — user pick, or null when no exercise is chosen
  */
 export function useProgressData(selectedExerciseId: string | null) {
   const { data: histories = [], isLoading: histLoading } = useExerciseHistory()
@@ -19,7 +19,7 @@ export function useProgressData(selectedExerciseId: string | null) {
   const weeklyVolume = useMemo(() => weeklyVolumeSeries(histories), [histories])
   const prList = useMemo(() => allTimePrList(histories), [histories])
 
-  const resolvedId = selectedExerciseId ?? histories[0]?.exerciseId ?? null
+  const resolvedId = selectedExerciseId
 
   const selectedHistory = useMemo(
     () => histories.find((h) => h.exerciseId === resolvedId) ?? null,
