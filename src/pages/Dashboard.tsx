@@ -147,6 +147,7 @@ export default function Dashboard() {
   const score = todayFeedback ? recoveryScoreFromFeedback(todayFeedback) : null
   const soreCount = todayFeedback?.soreness.length ?? 0
   const last = lastWorkoutQuery.data
+  const doneToday = !activeSession && last?.date === localDateString()
 
   return (
     <div className="p-4 md:p-8 pb-28 md:pb-8 max-w-3xl mx-auto space-y-5">
@@ -155,27 +156,56 @@ export default function Dashboard() {
         <h1 className="text-4xl md:text-5xl font-black text-text-primary leading-none">Today</h1>
       </div>
 
-      {/* Primary: one big button */}
-      <button
-        type="button"
-        onClick={() => navigate(activeSession ? '/workout' : '/workout?start=1')}
-        className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-5 min-h-20 flex items-center justify-center gap-3 text-left"
-      >
-        <Dumbbell size={26} className="shrink-0" />
-        <span className="min-w-0">
-          <span className="block text-xl font-black leading-tight">
-            {activeSession ? 'Resume workout' : 'Start Workout'}
-          </span>
-          {activeSession && (
+      {/* Primary: resume, today's done card, or start (confirms on the workout page) */}
+      {activeSession ? (
+        <button
+          type="button"
+          onClick={() => navigate('/workout')}
+          className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-5 min-h-20 flex items-center justify-center gap-3 text-left"
+        >
+          <Dumbbell size={26} className="shrink-0" />
+          <span className="min-w-0">
+            <span className="block text-xl font-black leading-tight">Resume workout</span>
             <span className="block text-sm font-medium opacity-80 truncate">
               {activeSession.label || 'In progress'}
               {activeSession.startedAt
                 ? ` · ${formatElapsedShort(now - new Date(activeSession.startedAt).getTime())}`
                 : ''}
             </span>
-          )}
-        </span>
-      </button>
+          </span>
+        </button>
+      ) : doneToday && last ? (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => navigate('/progress/history')}
+            className="w-full rounded-2xl border border-primary/40 bg-surface px-6 py-5 min-h-20 text-left"
+          >
+            <span className="block text-xl font-black text-text-primary leading-tight">
+              ✓ Today's workout done
+            </span>
+            <span className="block text-sm text-text-secondary mt-1">
+              {last.label} · {last.exerciseCount} exercises · {last.setCount} sets
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/workout?confirm=1')}
+            className="text-sm text-primary min-h-11"
+          >
+            Start another workout
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => navigate('/workout?confirm=1')}
+          className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-5 min-h-20 flex items-center justify-center gap-3 text-left"
+        >
+          <Dumbbell size={26} className="shrink-0" />
+          <span className="block text-xl font-black leading-tight">Start Workout</span>
+        </button>
+      )}
 
       {/* Secondary: daily log + recovery, each with today's state */}
       <div className="grid grid-cols-2 gap-3">

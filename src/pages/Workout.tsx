@@ -148,6 +148,7 @@ export default function Workout() {
   const [tick, setTick] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [typeSheetOpen, setTypeSheetOpen] = useState(false)
+  const [startSheet, setStartSheet] = useState<null | 'new' | 'repeat'>(null)
   const [pickedType, setPickedType] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [exerciseMenuId, setExerciseMenuId] = useState<string | null>(null)
@@ -522,8 +523,8 @@ export default function Workout() {
     })()
   }
 
-  // Deep links: ?type=X starts X; a bare ?start=1 (Home's Start button) starts the
-  // suggested type. Empty abandoned sessions must not steal an explicitly chosen type.
+  // Deep links: ?type=X starts X; a bare ?start=1 starts the suggested type.
+  // Empty abandoned sessions must not steal an explicitly chosen type.
   useEffect(() => {
     if (!storeHydrated || startingRef.current) return
     const chosen = preselectedType?.trim()
@@ -559,6 +560,14 @@ export default function Workout() {
     beginWorkoutWithType(label, false, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeHydrated, isRepeatMode, latestWorkoutQuery.data?.label])
+
+  // Home's "Start another" lands here. Open the confirm sheet once, then drop the param.
+  useEffect(() => {
+    if (!storeHydrated) return
+    if (searchParams.get('confirm') !== '1') return
+    setStartSheet('new')
+    setSearchParams({}, { replace: true })
+  }, [storeHydrated, searchParams, setSearchParams])
 
   const addExerciseFromLibrary = async (
     exercise: Exercise,
@@ -1164,38 +1173,43 @@ export default function Workout() {
   if (!currentWorkoutId) {
     const starting = (autoStart || Boolean(preselectedType) || isRepeatMode) && !saveError
     const latest = latestWorkoutQuery.data
+    const doneToday = latest?.date === today
     return (
       <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
         <p className="text-[11px] text-primary uppercase tracking-widest mb-1">Workout</p>
-        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary mb-6">Ready</h1>
+        <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary mb-6">
+          {doneToday ? 'Done for today' : 'Ready'}
+        </h1>
         {saveError && <p className="text-xs text-red-400 mb-3">{saveError}</p>}
 
         {starting ? (
           <p className="flex items-center gap-2 text-sm text-text-secondary">
             <Loader2 size={16} className="animate-spin text-primary" /> Starting workout…
           </p>
-        ) : (
+        ) : doneToday && latest ? (
           <div className="space-y-4">
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <p className="text-sm font-semibold text-text-primary">
+                ✓ {latest.label} · {latest.durationText} · {latest.exerciseCount} exercises ·{' '}
+                {latest.setCount} sets
+              </p>
+            </div>
             <button
               type="button"
-              onClick={() => setTypeSheetOpen(true)}
-              aria-label={
-                typePending
-                  ? 'Workout type loading'
-                  : `Workout type: ${idleType || 'none'}. Change`
-              }
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 min-h-11 text-sm font-semibold uppercase tracking-wider text-text-primary hover:border-primary"
+              onClick={() => setStartSheet('new')}
+              className="text-sm text-primary min-h-11"
             >
-              {typePending ? '…' : idleType || 'Pick type'}
-              <ChevronDown size={14} className="text-text-secondary" />
+              Start another workout
             </button>
-
+          </div>
+        ) : (
+          <div className="space-y-4">
             <Button
               variant="primary"
               size="lg"
               className="w-full min-h-14 text-base"
               disabled={typePending || !idleType}
-              onClick={() => beginWorkoutWithType(idleType, pickedType != null)}
+              onClick={() => setStartSheet('new')}
             >
               <Dumbbell size={16} className="mr-2" />
               Start workout
@@ -1204,9 +1218,8 @@ export default function Workout() {
             {latest && (
               <button
                 type="button"
-                disabled={typePending}
-                onClick={() => beginWorkoutWithType(latest.label || idleType, false, true)}
-                className="block mx-auto min-h-11 px-3 text-sm text-primary underline underline-offset-4 disabled:opacity-40"
+                onClick={() => setStartSheet('repeat')}
+                className="block mx-auto min-h-11 px-3 text-sm text-primary underline underline-offset-4"
               >
                 Repeat last workout
               </button>
@@ -1229,7 +1242,79 @@ export default function Workout() {
             )}
           </div>
         )}
-        {typeSheet}
+        <BottomSheet
+          open={startSheet != null}
+          onClose={() => setStartSheet(null)}
+          title="Start workout"
+        >
+          <div className="p-4 space-y-4">
+            {startSheet === 'repeat' && latest ? (
+              <>
+                <p className="text-sm text-text-secondary">
+                  {latest.label} · {latest.exerciseCount} exercises · {latest.setCount} sets
+                </p>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="w-full min-h-12"
+                  onClick={() => {
+                    setStartSheet(null)
+                    beginWorkoutWithType(latest.label || idleType, false, true)
+                  }}
+                >
+                  Repeat {latest.label}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {typeChips.map((type) => {
+                    const active = idleType === type
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setPickedType(type)}
+                        className={cn(
+                          'px-4 rounded-xl text-sm font-semibold uppercase tracking-wider border min-h-11',
+                          active
+                            ? 'bg-primary text-black border-primary'
+                            : 'border-border text-text-secondary hover:border-primary',
+                        )}
+                      >
+                        {type}
+                      </button>
+                    )
+                  })}
+                </div>
+                {pickedType == null && suggestedType && (
+                  <p className="text-xs text-text-secondary">Suggested: {suggestedType}</p>
+                )}
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="w-full min-h-12"
+                  disabled={typePending || !idleType}
+                  onClick={() => {
+                    const explicit = pickedType != null
+                    setStartSheet(null)
+                    beginWorkoutWithType(idleType, explicit)
+                  }}
+                >
+                  Start {idleType}
+                </Button>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="lg"
+              className="w-full min-h-12"
+              onClick={() => setStartSheet(null)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </BottomSheet>
       </div>
     )
   }
@@ -1393,13 +1478,16 @@ export default function Workout() {
             {!dbReady && <Loader2 size={12} className="animate-spin text-text-muted ml-1" />}
           </p>
           <Button
-            variant="primary"
+            variant={exercises.length === 0 ? 'ghost' : 'primary'}
             size="md"
-            className="min-h-11"
+            className={cn(
+              'min-h-11',
+              exercises.length === 0 && 'text-red-400 hover:text-red-400',
+            )}
             disabled={!canEdit}
             onClick={() => setConfirmFinish(true)}
           >
-            Finish
+            {exercises.length === 0 ? 'Discard' : 'Finish'}
           </Button>
         </div>
         {saveError && <p className="text-xs text-red-400 mt-1">{saveError}</p>}
