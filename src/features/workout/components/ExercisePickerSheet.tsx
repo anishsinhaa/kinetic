@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search, Loader2, X } from 'lucide-react'
+import { Search, Loader2 } from 'lucide-react'
 import { BottomSheet } from '../../../components/ui/BottomSheet'
 import { cn } from '../../../lib/utils'
+import { CreateExerciseForm } from '../../exercises/components/CreateExerciseForm'
+import { searchExercises } from '../../exercises/lib/exerciseSearch'
 import {
-  getExercisesByIds,
-  getUserCustomExercises,
-  searchExercisesFromDb,
-} from '../services/exerciseService'
+  CATEGORY_CHIPS,
+  CATEGORY_LABELS,
+  MUSCLE_OPTIONS,
+  exerciseCategory,
+  type MuscleCategory,
+} from '../../exercises/lib/muscles'
+import { getExerciseCatalog, getExercisesByIds } from '../services/exerciseService'
 import { getExercisePrefillContext, getRecentExerciseIds } from '../services/workoutService'
-import { musclesForWorkoutType } from '../lib/typeMuscleMap'
+import { categoriesForWorkoutType, matchesWorkoutType } from '../lib/typeMuscleMap'
 import type { Exercise } from '../../exercises/types'
 
 type ExercisePickerSheetProps = {
@@ -20,6 +25,25 @@ type ExercisePickerSheetProps = {
   /** Exercises already in this session — shown with an "Added" badge, not hidden. */
   excludeExerciseIds: string[]
   onPick: (exercise: Exercise) => void
+}
+
+type PickerFilter = 'type' | 'all' | MuscleCategory
+
+function matchesFilter(ex: Exercise, filter: PickerFilter, workoutType: string): boolean {
+  if (filter === 'all') return true
+  if (filter === 'type') return matchesWorkoutType(ex, workoutType)
+  return exerciseCategory(ex) === filter
+}
+
+function defaultMuscle(filter: PickerFilter, workoutType: string): string {
+  const category =
+    filter !== 'type' && filter !== 'all'
+      ? filter
+      : filter === 'type'
+        ? (categoriesForWorkoutType(workoutType)?.[0] ?? null)
+        : null
+  if (!category) return 'Chest'
+  return MUSCLE_OPTIONS.find((option) => option.category === category)?.muscle ?? 'Chest'
 }
 
 function ExerciseRowButton({
@@ -69,17 +93,20 @@ export function ExercisePickerSheet({
 }: ExercisePickerSheetProps) {
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [typeFilterOn, setTypeFilterOn] = useState(false)
+  const [filter, setFilter] = useState<PickerFilter>('all')
+  const [creating, setCreating] = useState(false)
   const [seenOpen, setSeenOpen] = useState(open)
   if (open !== seenOpen) {
     setSeenOpen(open)
     if (open) {
       setSearch('')
       setDebounced('')
+      setCreating(false)
+      setFilter(categoriesForWorkoutType(workoutType) ? 'type' : 'all')
     }
   }
-  const muscles = musclesForWorkoutType(workoutType)
   const queryClient = useQueryClient()
+  const typeCategories = categoriesForWorkoutType(workoutType)
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(search), 200)
@@ -113,72 +140,52 @@ export function ExercisePickerSheet({
     }
   }, [open, recentIds, userId, queryClient])
 
-  const q = debounced.trim()
-  const libraryQuery = useQuery({
-    queryKey: ['exercises', 'library', q, null],
-    queryFn: () => searchExercisesFromDb({ name: q || undefined, limit: 80 }),
+  const catalogQuery = useQuery({
+    queryKey: ['exercises', 'catalog', userId],
+    queryFn: getExerciseCatalog,
     enabled: open,
-    staleTime: 5 * 60 * 1000,
-  })
-
-  const customQuery = useQuery({
-    queryKey: ['exercises', 'custom', userId],
-    queryFn: () => getUserCustomExercises(userId),
-    enabled: open,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 60 * 60 * 1000,
   })
 
   const added = useMemo(() => new Set(excludeExerciseIds), [excludeExerciseIds])
-  const searching = q.length > 0
-  const filterActive = Boolean(muscles) && typeFilterOn && !searching
+  const searching = debounced.trim().length > 0
+  const allRows = useMemo(() => catalogQuery.data ?? [], [catalogQuery.data])
 
-  const libraryData = libraryQuery.data
-  const customData = customQuery.data
-  const recentData = recentExercisesQuery.data
+  const filteredList = useMemo(
+    () => allRows.filter((ex) => matchesFilter(ex, filter, workoutType)),
+    [allRows, filter, workoutType],
+  )
 
-  const { recentRows, rows } = useMemo(() => {
-    const matchesFilter = (ex: Exercise) =>
-      !filterActive || !muscles || muscles.some((m) => m.toLowerCase() === ex.muscleGroup.toLowerCase())
+  const searched = useMemo(
+    () => searchExercises(filteredList, debounced),
+    [filteredList, debounced],
+  )
+  const allMatches = useMemo(
+    () => (searching ? searchExercises(allRows, debounced) : []),
+    [searching, allRows, debounced],
+  )
 
-    const customMatches = (customData ?? []).filter((ex) =>
-      searching ? ex.name.toLowerCase().includes(q.toLowerCase()) : true,
-    )
-    const seen = new Set<string>()
-    const all: Exercise[] = []
-    for (const ex of [...(libraryData ?? []), ...customMatches]) {
-      if (seen.has(ex.id)) continue
-      seen.add(ex.id)
-      all.push(ex)
-    }
+  const recentRows = useMemo(() => {
+    if (searching) return []
+    return (recentExercisesQuery.data ?? []).filter((ex) => matchesFilter(ex, filter, workoutType))
+  }, [searching, recentExercisesQuery.data, filter, workoutType])
 
-    const lc = q.toLowerCase()
-    const sorted = all.filter(matchesFilter).sort((a, b) => {
-      if (lc) {
-        const as = a.name.toLowerCase().startsWith(lc) ? 0 : 1
-        const bs = b.name.toLowerCase().startsWith(lc) ? 0 : 1
-        if (as !== bs) return as - bs
-      }
-      return a.name.localeCompare(b.name)
-    })
+  const rows = useMemo(() => {
+    if (searching) return searched
+    const shown = new Set(recentRows.map((ex) => ex.id))
+    return filteredList.filter((ex) => !shown.has(ex.id))
+  }, [searching, searched, recentRows, filteredList])
 
-    // Recents lead the browse list (never while a search is active)
-    const recents = searching ? [] : (recentData ?? []).filter(matchesFilter)
-    const shown = new Set(recents.map((r) => r.id))
-    return {
-      recentRows: recents,
-      rows: sorted.filter((ex) => !shown.has(ex.id)),
-    }
-  }, [
-    libraryData,
-    customData,
-    recentData,
-    muscles,
-    filterActive,
-    searching,
-    q,
-  ])
+  const loading = catalogQuery.isLoading && rows.length === 0 && recentRows.length === 0
+  const typedName = search.trim()
+  const noMatchesAnywhere = searching && allMatches.length === 0
+  const showAllMatches = searching && searched.length === 0 && allMatches.length > 0
 
-  const loading = libraryQuery.isLoading && rows.length === 0
+  const chips: Array<{ id: PickerFilter; label: string }> = [
+    ...(typeCategories ? [{ id: 'type' as const, label: workoutType }] : []),
+    { id: 'all', label: 'All' },
+    ...CATEGORY_CHIPS.map((id) => ({ id, label: CATEGORY_LABELS[id] })),
+  ]
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Add exercise" className="h-[min(80dvh,640px)]">
@@ -188,64 +195,110 @@ export function ExercisePickerSheet({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search all exercises…"
+            placeholder="Search exercises (e.g. t bar row)"
             aria-label="Search exercises"
+            type="search"
+            name="exercise-search"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            enterKeyHint="search"
+            data-1p-ignore=""
+            data-lpignore="true"
             className="w-full bg-surface-2 border border-border rounded-xl pl-10 pr-3 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-primary min-h-11"
           />
         </div>
-        {muscles && (
-          <div className="flex items-center gap-2 min-h-8">
-            {typeFilterOn ? (
+        <div className="flex gap-2 overflow-x-auto">
+          {chips.map((chip) => {
+            const selected = filter === chip.id
+            return (
               <button
+                key={chip.id}
                 type="button"
-                onClick={() => setTypeFilterOn(false)}
-                aria-label={`Remove ${workoutType} filter`}
-                className="inline-flex items-center gap-1.5 rounded-full border border-primary/60 bg-primary/10 text-primary px-3 min-h-8 text-xs font-semibold"
+                onClick={() => setFilter(chip.id)}
+                className={cn(
+                  'shrink-0 rounded-full border px-3 min-h-9 text-xs font-semibold whitespace-nowrap',
+                  selected
+                    ? 'bg-primary text-black border-primary'
+                    : 'border-border text-text-secondary',
+                )}
               >
-                {workoutType} exercises
-                <X size={12} />
+                {chip.label}
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setTypeFilterOn(true)}
-                className="inline-flex items-center rounded-full border border-border text-text-secondary px-3 min-h-8 text-xs font-semibold hover:border-primary"
-              >
-                Filter by {workoutType}
-              </button>
-            )}
-            {searching && typeFilterOn && (
-              <span className="text-[11px] text-text-secondary">Searching all exercises</span>
-            )}
-          </div>
-        )}
+            )
+          })}
+        </div>
       </div>
 
       <div className="p-4 space-y-2">
-        {loading && (
-          <div className="flex justify-center py-10">
-            <Loader2 className="animate-spin text-primary" size={20} />
-          </div>
-        )}
-
-        {recentRows.length > 0 && (
+        {creating ? (
+          <CreateExerciseForm
+            userId={userId}
+            initialName={typedName}
+            defaultMuscle={defaultMuscle(filter, workoutType)}
+            onCreated={(ex) => {
+              void queryClient.invalidateQueries({ queryKey: ['exercises', 'catalog', userId] })
+              setCreating(false)
+              onPick(ex)
+            }}
+            onCancel={() => setCreating(false)}
+          />
+        ) : (
           <>
-            <p className="text-[11px] text-text-secondary uppercase tracking-widest pt-1">Recent</p>
-            {recentRows.map((ex) => (
-              <ExerciseRowButton key={`r-${ex.id}`} ex={ex} added={added.has(ex.id)} onPick={onPick} />
+            {loading && (
+              <div className="flex justify-center py-10">
+                <Loader2 className="animate-spin text-primary" size={20} />
+              </div>
+            )}
+
+            {recentRows.length > 0 && (
+              <>
+                <p className="text-[11px] text-text-secondary uppercase tracking-widest pt-1">Recent</p>
+                {recentRows.map((ex) => (
+                  <ExerciseRowButton key={`r-${ex.id}`} ex={ex} added={added.has(ex.id)} onPick={onPick} />
+                ))}
+              </>
+            )}
+
+            {rows.map((ex) => (
+              <ExerciseRowButton key={ex.id} ex={ex} added={added.has(ex.id)} onPick={onPick} />
             ))}
-            {rows.length > 0 && (
-              <p className="text-[11px] text-text-secondary uppercase tracking-widest pt-2">All</p>
+
+            {showAllMatches && (
+              <button
+                type="button"
+                onClick={() => setFilter('all')}
+                className="w-full rounded-xl border border-border px-4 py-3 text-sm font-semibold text-primary min-h-11"
+              >
+                Show {allMatches.length} matches in all exercises
+              </button>
+            )}
+
+            {typedName && noMatchesAnywhere && (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="w-full rounded-xl border border-dashed border-primary px-4 py-8 text-sm font-semibold text-primary"
+              >
+                Can&apos;t find it? Create &quot;{typedName}&quot;
+              </button>
+            )}
+
+            {typedName && !noMatchesAnywhere && (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="w-full rounded-xl border border-dashed border-border px-4 py-3 text-sm font-medium text-text-secondary hover:border-primary hover:text-primary"
+              >
+                Can&apos;t find it? Create &quot;{typedName}&quot;
+              </button>
+            )}
+
+            {!loading && !typedName && rows.length === 0 && recentRows.length === 0 && (
+              <p className="text-sm text-text-muted text-center py-8">No exercises match.</p>
             )}
           </>
-        )}
-
-        {rows.map((ex) => (
-          <ExerciseRowButton key={ex.id} ex={ex} added={added.has(ex.id)} onPick={onPick} />
-        ))}
-
-        {!loading && rows.length === 0 && recentRows.length === 0 && (
-          <p className="text-sm text-text-muted text-center py-8">No exercises match.</p>
         )}
       </div>
     </BottomSheet>

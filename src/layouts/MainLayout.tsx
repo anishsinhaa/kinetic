@@ -7,7 +7,7 @@ import { cn } from '../lib/utils'
 import { Home, Dumbbell, Settings, LogOut, TrendingUp, Loader2 } from 'lucide-react'
 import { logout } from '../features/auth/authService'
 import { useCurrentUser } from '../features/auth/useAuth'
-import { searchExercisesFromDb } from '../features/workout/services/exerciseService'
+import { getExerciseCatalog } from '../features/workout/services/exerciseService'
 import { getRecentExerciseIds } from '../features/workout/services/workoutService'
 import { sectionKey } from '../lib/navRoutes'
 
@@ -34,11 +34,12 @@ export function MainLayout() {
   const { user } = useCurrentUser()
   const reduceMotion = useReducedMotion()
 
-  // Prefetch exercise library + recents so Add Exercise opens instantly
+  // Prefetch the exercise catalogue + recents so Add Exercise opens instantly
   useQuery({
-    queryKey: ['exercises', 'library', '', null],
-    queryFn: () => searchExercisesFromDb({ limit: 80 }),
-    staleTime: 5 * 60 * 1000,
+    queryKey: ['exercises', 'catalog', user?.id],
+    queryFn: getExerciseCatalog,
+    enabled: Boolean(user?.id),
+    staleTime: 60 * 60 * 1000,
   })
   useQuery({
     queryKey: ['exercises', 'recent-ids', user?.id],
