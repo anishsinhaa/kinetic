@@ -11,7 +11,7 @@ export default function Feedback() {
   const { data: existing } = useTodayFeedback()
 
   return (
-    <div className="p-4 md:p-8 pb-28 md:pb-8 max-w-2xl mx-auto">
+    <div className="p-4 md:p-8 pb-6 md:pb-8 max-w-2xl mx-auto">
       <div className="flex items-start justify-between mb-6">
         <div>
           <p className="text-[11px] text-primary uppercase tracking-widest mb-1">Recovery</p>

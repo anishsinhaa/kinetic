@@ -275,7 +275,7 @@ export function RecoveryForm({ existing, initialSleepHours, date, onSaved }: Rec
       <Card className="p-4">
         <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest flex items-center gap-2 mb-4">
           <Moon size={15} className="text-primary" />
-          Sleep
+          Sleep last night
         </h3>
         <label className="block mb-4">
           <span className="text-[11px] text-text-secondary uppercase tracking-widest">

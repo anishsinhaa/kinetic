@@ -1178,7 +1178,7 @@ export default function Workout() {
     const latest = latestWorkoutQuery.data
     const doneToday = latest?.date === today
     return (
-      <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
+      <div className="p-4 md:p-8 pb-6 max-w-lg mx-auto">
         <p className="text-[11px] text-primary uppercase tracking-widest mb-1">Workout</p>
         <h1 className="text-3xl md:text-5xl font-black uppercase text-text-primary mb-6">
           {doneToday ? 'Done for today' : 'Ready'}
@@ -1325,7 +1325,7 @@ export default function Workout() {
   // ── Summary ────────────────────────────────────────────────────────────────
   if (phase === 'summary' && summarySnapshot) {
     return (
-      <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto">
+      <div className="p-4 md:p-8 pb-6 max-w-lg mx-auto">
         <motion.div
           initial={reduceMotion ? false : { opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}

@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { CheckCircle2, ChevronRight, Dumbbell, Flame, HeartPulse, NotebookPen } from 'lucide-react'
+import { CheckCircle2, ChevronRight, Dumbbell, Flame, HeartPulse } from 'lucide-react'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { Card } from '../components/ui/Card'
-import { useDailyLog } from '../features/dailyLog/hooks/useDailyLog'
 import { todayDateString } from '../features/dailyLog/services/dailyLogService'
+import { TodayLogCard } from '../features/dailyLog/components/TodayLogCard'
 import { localDateString } from '../lib/localDate'
 import { useDailyLogs } from '../features/history/hooks/useHistory'
-import { LogDaySheet } from '../features/dailyLog/components/LogDaySheet'
 import { useTodayFeedback } from '../features/feedback/hooks/useFeedback'
 import { RecoveryPanel } from '../features/feedback/components/RecoveryPanel'
 import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/types'
@@ -21,7 +20,7 @@ import {
 } from '../features/workout/services/workoutService'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { pluralize } from '../lib/pluralize'
-import { formatVolume, roundBodyWeight } from '../features/settings/lib/units'
+import { roundBodyWeight } from '../features/settings/lib/units'
 import { cn } from '../lib/utils'
 
 function SkeletonBlock({ className }: { className?: string }) {
@@ -76,7 +75,7 @@ function LogButton({
     <button
       type="button"
       onClick={onClick}
-      className="rounded-xl border border-border bg-surface-2 hover:border-primary active:scale-[0.98] transition px-4 py-3 min-h-16 text-left flex flex-col gap-1"
+      className="w-full rounded-xl border border-border bg-surface-2 hover:border-primary active:scale-[0.98] transition px-4 py-3 min-h-16 text-left flex flex-col gap-1"
     >
       <span className="flex items-center gap-2 text-sm font-semibold text-text-primary">
         {icon}
@@ -104,7 +103,6 @@ export default function Dashboard() {
   // "Active" = store points at a workouts row that is still open (not a stale id)
   const { activeSession } = useActiveSession()
 
-  const [logSheetOpen, setLogSheetOpen] = useState(false)
   const [recoverySheetOpen, setRecoverySheetOpen] = useState(false)
 
   // Elapsed time for the resume button (minute precision)
@@ -115,7 +113,6 @@ export default function Dashboard() {
     return () => window.clearInterval(t)
   }, [activeSession])
 
-  const { log, isLoading: logLoading } = useDailyLog(userId)
   const logsQuery = useDailyLogs()
   const { data: todayFeedback, isLoading: feedbackLoading } = useTodayFeedback()
 
@@ -150,7 +147,7 @@ export default function Dashboard() {
   const doneToday = !activeSession && last?.date === localDateString()
 
   return (
-    <div className="p-4 md:p-8 pb-28 md:pb-8 max-w-3xl mx-auto space-y-5">
+    <div className="p-4 md:p-8 pb-6 md:pb-8 max-w-3xl mx-auto space-y-5">
       <div>
         <p className="text-xs text-text-secondary uppercase tracking-widest mb-1">Home</p>
         <h1 className="text-4xl md:text-5xl font-black text-text-primary leading-none">Today</h1>
@@ -207,23 +204,15 @@ export default function Dashboard() {
         </button>
       )}
 
-      {/* Secondary: daily log + recovery, each with today's state */}
-      <div className="grid grid-cols-2 gap-3">
-        <LogButton
-          icon={<NotebookPen size={16} className="text-primary" />}
-          title="Log day"
-          logged={Boolean(log)}
-          loading={logLoading}
-          onClick={() => setLogSheetOpen(true)}
-        />
-        <LogButton
-          icon={<HeartPulse size={16} className="text-primary" />}
-          title="Recovery update"
-          logged={Boolean(todayFeedback)}
-          loading={feedbackLoading}
-          onClick={() => setRecoverySheetOpen(true)}
-        />
-      </div>
+      <TodayLogCard userId={userId} />
+
+      <LogButton
+        icon={<HeartPulse size={16} className="text-primary" />}
+        title="Recovery update"
+        logged={Boolean(todayFeedback)}
+        loading={feedbackLoading}
+        onClick={() => setRecoverySheetOpen(true)}
+      />
 
       {/* Compact stat tiles */}
       <div className="grid grid-cols-2 gap-3">
@@ -280,7 +269,7 @@ export default function Dashboard() {
                   {last.label}
                 </p>
                 <p className="text-xs text-text-secondary mt-1 truncate">
-                  {formatRelativeDate(last.date)} · {formatVolume(last.totalVolumeKg, units)}
+                  {formatRelativeDate(last.date)} · {last.exerciseCount} exercises · {last.setCount} sets
                 </p>
               </>
             ) : (
@@ -305,7 +294,7 @@ export default function Dashboard() {
             </p>
             <p className="text-xs text-text-secondary mt-1">Based on fatigue and sleep quality</p>
             <p className="text-xs text-text-primary mt-2">
-              Fatigue {todayFeedback.fatigue ?? '—'}/10 · Sleep quality{' '}
+              Fatigue {todayFeedback.fatigue ?? '—'}/10 · Sleep quality (last night){' '}
               {todayFeedback.sleep_quality ?? '—'}/10
             </p>
             <p className="text-xs text-text-secondary mt-0.5">
@@ -320,12 +309,6 @@ export default function Dashboard() {
         )}
       </Card>
 
-      <LogDaySheet
-        open={logSheetOpen}
-        onClose={() => setLogSheetOpen(false)}
-        userId={userId}
-        title="Log day"
-      />
       <BottomSheet
         open={recoverySheetOpen}
         onClose={() => setRecoverySheetOpen(false)}

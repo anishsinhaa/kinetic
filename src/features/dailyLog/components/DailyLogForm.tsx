@@ -40,7 +40,7 @@ export function DailyLogForm({ initialLog, units, onSave, onSaved }: DailyLogFor
     { key: 'weight' as const, label: `Weight (${units})`, mode: 'decimal' as const },
     { key: 'calories' as const, label: 'Calories', mode: 'numeric' as const },
     { key: 'protein' as const, label: 'Protein (g)', mode: 'numeric' as const },
-    { key: 'sleep' as const, label: 'Sleep (hrs)', mode: 'decimal' as const },
+    { key: 'sleep' as const, label: 'Sleep last night (hrs)', mode: 'decimal' as const },
   ]
 
   const setField = (key: keyof DailyLogFormState, value: string) => {
