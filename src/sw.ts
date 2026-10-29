@@ -34,10 +34,14 @@ registerRoute(
 self.addEventListener('push', (event) => {
   let title = 'Kinetic'
   let body = 'You have a reminder'
+  let kind: string | undefined
   try {
-    const data = event.data?.json() as { title?: string; body?: string } | undefined
+    const data = event.data?.json() as
+      | { title?: string; body?: string; kind?: string }
+      | undefined
     if (data?.title) title = data.title
     if (data?.body) body = data.body
+    if (data?.kind) kind = data.kind
   } catch {
     const text = event.data?.text()
     if (text) body = text
@@ -48,6 +52,8 @@ self.addEventListener('push', (event) => {
       body,
       icon: '/just_logo.png',
       badge: '/just_logo.png',
+      tag: kind ? `reminder-${kind}` : 'reminder',
+      renotify: true,
       data: { url: '/' },
     }),
   )
@@ -72,15 +78,31 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('message', (event) => {
   const data = event.data as { type?: string; title?: string; body?: string } | undefined
   if (data?.type === 'REST_TIMER_DONE') {
-    void self.registration.showNotification(data.title ?? 'Rest done', {
-      body: data.body ?? 'Time for your next set.',
-      icon: '/just_logo.png',
-      badge: '/just_logo.png',
-      tag: 'rest-timer',
-      renotify: true,
-    })
+    event.waitUntil(
+      (async () => {
+        await self.registration.showNotification(data.title ?? 'Rest done', {
+          body: data.body ?? 'Time for your next set.',
+          icon: '/just_logo.png',
+          badge: '/just_logo.png',
+          tag: 'rest-timer',
+          renotify: true,
+          requireInteraction: false,
+          silent: false,
+        })
+        await new Promise((resolve) => setTimeout(resolve, 60_000))
+        const list = await self.registration.getNotifications({ tag: 'rest-timer' })
+        list.forEach((notification) => notification.close())
+      })(),
+    )
+  }
+  if (data?.type === 'CLEAR_REST_NOTIFICATIONS') {
+    event.waitUntil(
+      self.registration.getNotifications({ tag: 'rest-timer' }).then((list) => {
+        list.forEach((notification) => notification.close())
+      }),
+    )
   }
   if (data?.type === 'SKIP_WAITING') {
-    void self.skipWaiting()
+    event.waitUntil(self.skipWaiting())
   }
 })

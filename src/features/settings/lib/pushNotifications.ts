@@ -245,38 +245,81 @@ export async function sendTestPushNotification(userId: string): Promise<{ sent: 
   return sendTestReminderPush(userId)
 }
 
+const REST_DONE_TITLE = 'Rest done'
+const REST_DONE_BODY = 'Time for your next set.'
+const REST_DONE_ICON = '/just_logo.png'
+
+let fallbackRestNotification: Notification | null = null
+
+function restDoneOptions(): NotificationOptions & { renotify: boolean } {
+  return {
+    body: REST_DONE_BODY,
+    icon: REST_DONE_ICON,
+    badge: REST_DONE_ICON,
+    tag: 'rest-timer',
+    renotify: true,
+  }
+}
+
+/** Close any rest-done notification. Never throws. */
+export async function clearRestNotifications(): Promise<void> {
+  try {
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_REST_NOTIFICATIONS' })
+    }
+    if ('serviceWorker' in navigator) {
+      try {
+        const reg = await withTimeout(navigator.serviceWorker.ready, 1500)
+        const list = await reg.getNotifications({ tag: 'rest-timer' })
+        list.forEach((notification) => notification.close())
+      } catch {
+        // ready can hang or getNotifications can be unavailable
+      }
+    }
+    fallbackRestNotification?.close()
+    fallbackRestNotification = null
+  } catch {
+    // ignore
+  }
+}
+
 /** Local rest-timer notification via service worker (works when tab is backgrounded). */
 export async function showRestDoneNotification(): Promise<void> {
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') return
 
     // Prefer posting to an active controller — never blocks.
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({
         type: 'REST_TIMER_DONE',
-        title: 'Rest done',
-        body: 'Time for your next set.',
+        title: REST_DONE_TITLE,
+        body: REST_DONE_BODY,
       })
       return
     }
+
+    const options = restDoneOptions()
 
     // SW ready can hang in some embedded browsers — cap wait, then fall back.
     if ('serviceWorker' in navigator) {
       try {
         const reg = await withTimeout(navigator.serviceWorker.ready, 2000)
-        await reg.showNotification('Rest done', {
-          body: 'Time for your next set.',
-          icon: '/just_logo.png',
-          badge: '/just_logo.png',
-          tag: 'rest-timer',
-        })
+        await reg.showNotification(REST_DONE_TITLE, options)
+        window.setTimeout(() => void clearRestNotifications(), 60_000)
         return
       } catch {
         // fall through to Notification API
       }
     }
 
-    new Notification('Rest done', { body: 'Time for your next set.' })
+    const notification = new Notification(REST_DONE_TITLE, options)
+    fallbackRestNotification = notification
+    notification.onclick = () => {
+      notification.close()
+      if (fallbackRestNotification === notification) fallbackRestNotification = null
+    }
+    window.setTimeout(() => void clearRestNotifications(), 60_000)
   } catch {
     // ignore
   }

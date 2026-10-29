@@ -119,7 +119,7 @@ async function deliver(
       continue
     }
 
-    const payload = JSON.stringify({ title: item.title, body: item.body })
+    const payload = JSON.stringify({ title: item.title, body: item.body, kind: item.kind })
     for (const sub of userSubs) {
       const tail = endpointTail(sub.endpoint)
       try {

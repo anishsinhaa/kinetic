@@ -9,6 +9,7 @@ import { logout } from '../features/auth/authService'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { getExerciseCatalog } from '../features/workout/services/exerciseService'
 import { getRecentExerciseIds } from '../features/workout/services/workoutService'
+import { useRestNotificationCleanup } from '../features/workout/hooks/useRestNotificationCleanup'
 import { sectionKey } from '../lib/navRoutes'
 
 /** One list drives the sidebar, the desktop top bar and the mobile bottom bar. */
@@ -33,6 +34,7 @@ export function MainLayout() {
   const location = useLocation()
   const { user } = useCurrentUser()
   const reduceMotion = useReducedMotion()
+  useRestNotificationCleanup()
 
   // Prefetch the exercise catalogue + recents so Add Exercise opens instantly
   useQuery({
