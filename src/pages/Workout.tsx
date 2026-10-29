@@ -207,6 +207,9 @@ function ExercisesLink() {
   )
 }
 
+/** Session id a deep link started during this page load. Survives the double mount. */
+let deepLinkStartedId: string | null = null
+
 export default function Workout() {
   const { user } = useCurrentUser()
   const userId = user!.id
@@ -503,7 +506,7 @@ export default function Workout() {
   }
 
   const beginWorkoutWithType = (typeLabel: string, typeExplicit = false, repeat = false) => {
-    if (currentWorkoutId || startingRef.current) return
+    if (useWorkoutStore.getState().currentWorkoutId || startingRef.current) return
     const normalizedType = typeLabel.trim()
     if (!normalizedType) return
 
@@ -525,6 +528,7 @@ export default function Workout() {
       setRepeatPlaceholders([])
     }
     api.startWorkout(workoutId, today, startedAt, normalizedType, typeExplicit)
+    deepLinkStartedId = workoutId
     setSearchParams({}, { replace: true })
 
     let markReady = () => {}
@@ -614,8 +618,13 @@ export default function Workout() {
 
     const state = useWorkoutStore.getState()
     if (state.currentWorkoutId) {
+      if (state.currentWorkoutId === deepLinkStartedId) {
+        // This page load just started it; never abandon it.
+        setSearchParams({}, { replace: true })
+        return
+      }
       const hasCompleted = state.exercises.some((e) => e.sets.some((s) => s.completed))
-      if (hasCompleted || !chosen) {
+      if (hasCompleted || !chosen || state.exercises.length > 0) {
         // Real in-progress session — resume; drop deep-link params
         setSearchParams({}, { replace: true })
         return
