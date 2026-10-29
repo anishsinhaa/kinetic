@@ -281,6 +281,16 @@ function PreferencesSection({ userId }: { userId: string }) {
     if (settings) setLocal(settings)
   }, [settings])
 
+  useEffect(() => {
+    if (!settings) return
+    setPrefs({
+      weightStep: settings.weightStep,
+      restDefaultSeconds: settings.restTimerSeconds,
+      restTimerEnabled: settings.restTimerEnabled,
+      units: settings.units,
+    })
+  }, [settings, setPrefs])
+
   const saveMutation = useMutation({
     mutationFn: (patch: UserSettingsUpdate) => updateUserSettings(userId, patch),
     onSuccess: (next) => {
@@ -296,6 +306,12 @@ function PreferencesSection({ userId }: { userId: string }) {
       void queryClient.setQueryData(['user-settings', userId], next)
       setSaveMsg('Saved')
       window.setTimeout(() => setSaveMsg(''), 1500)
+    },
+    onError: (err) => {
+      console.warn('[Settings] save failed', err)
+      if (settings) setLocal(settings)
+      setSaveMsg('Could not save')
+      window.setTimeout(() => setSaveMsg(''), 2500)
     },
   })
 

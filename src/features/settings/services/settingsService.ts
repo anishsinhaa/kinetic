@@ -138,15 +138,13 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
   })
 }
 
-function isMissingColumnError(error: { message?: string; code?: string; details?: string } | null): boolean {
-  if (!error?.message && !error?.details) return false
+function isRestTimerEnabledColumnError(
+  error: { message?: string; code?: string; details?: string } | null,
+): boolean {
+  if (!error) return false
+  if (error.code === 'PGRST204') return true
   const blob = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
-  return (
-    blob.includes('schema cache') ||
-    blob.includes('column') ||
-    blob.includes('could not find') ||
-    error.code === 'PGRST204'
-  )
+  return blob.includes('rest_timer_enabled')
 }
 
 export async function updateUserSettings(
@@ -164,7 +162,12 @@ export async function updateUserSettings(
     .select('*')
     .single()
 
-  if (error && patch.rest_timer_enabled !== undefined && isMissingColumnError(error)) {
+  if (error && patch.rest_timer_enabled !== undefined && isRestTimerEnabledColumnError(error)) {
+    console.warn('[user_settings] could not save rest_timer_enabled; falling back without it', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+    })
     const withoutFlag = { ...patch }
     delete withoutFlag.rest_timer_enabled
     const retry =
@@ -177,10 +180,7 @@ export async function updateUserSettings(
             .select('*')
             .single()
     if (retry.error) throw toServiceError(retry.error)
-    return {
-      ...mapUserSettingsRow(retry.data as UserSettingsRow),
-      restTimerEnabled: update.restTimerEnabled !== false,
-    }
+    return mapUserSettingsRow(retry.data as UserSettingsRow)
   }
 
   if (error) throw toServiceError(error)

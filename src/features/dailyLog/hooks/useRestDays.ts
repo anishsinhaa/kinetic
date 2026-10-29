@@ -49,6 +49,7 @@ export function useRestDay(date: string) {
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: restDayKeys.all(userId) })
       void queryClient.invalidateQueries({ queryKey: ['dashboard', 'stats', userId] })
+      void queryClient.invalidateQueries({ queryKey: ['progress', 'calendar', userId] })
     },
   })
 

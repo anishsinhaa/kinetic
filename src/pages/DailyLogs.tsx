@@ -10,6 +10,7 @@ import { recoveryLabel, recoveryScoreFromFeedback } from '../features/feedback/t
 import type { BodyFeedback } from '../features/feedback/types'
 import type { DailyLogEntry } from '../features/history/types'
 import { LogDaySheet } from '../features/dailyLog/components/LogDaySheet'
+import { MonthCalendar } from '../features/dailyLog/components/MonthCalendar'
 import { dailyLogKeys } from '../features/dailyLog/hooks/useDailyLog'
 import { useRestDay, useRestDays } from '../features/dailyLog/hooks/useRestDays'
 import { RecoveryPanel } from '../features/feedback/components/RecoveryPanel'
@@ -227,6 +228,13 @@ export default function DailyLogs() {
           <p className="text-sm">Nothing logged yet. Tap “Log today” to add weight, calories, protein or sleep.</p>
         </div>
       )}
+
+      <MonthCalendar
+        userId={userId}
+        feedback={feedbackQuery.data ?? []}
+        onEditLog={(date) => setLogSheet({ date })}
+        onOpenRecovery={(date) => setRecoverySheetDate(date)}
+      />
 
       <div className="space-y-3">
         {entries.slice(0, visible).map((entry) => {
