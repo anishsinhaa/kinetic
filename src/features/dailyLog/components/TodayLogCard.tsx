@@ -42,14 +42,14 @@ export function TodayLogCard({ userId }: TodayLogCardProps) {
     {
       field: 'calories',
       label: 'Calories',
-      value: `${log?.calories ?? 0} kcal`,
+      value: caloriesLogged ? `${log?.calories} kcal` : 'Not logged',
       logged: caloriesLogged,
       action: '+ Add',
     },
     {
       field: 'protein',
       label: 'Protein',
-      value: `${log?.protein ?? 0} g`,
+      value: proteinLogged ? `${log?.protein} g` : 'Not logged',
       logged: proteinLogged,
       action: '+ Add',
     },

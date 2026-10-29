@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Check, Minus, Plus, Trash2 } from 'lucide-react'
+import { Check, Minus, Pencil, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { selectOnFocus } from '../../../lib/selectOnFocus'
 import { kgToDisplay, snapToStep } from '../../settings/lib/units'
@@ -22,10 +22,12 @@ type SetStepperRowProps = {
   units: WeightUnits
   disabled?: boolean
   status?: 'idle' | 'saving' | 'saved' | 'error'
-  /** Edits go through here — also for completed sets (no un-complete needed, no rest restart). */
+  /** Logged sets are read-only until you tap Edit; saving an edit does not restart the rest timer. */
   onChange: (patch: Partial<WorkoutSetDraft>) => void
   onComplete: () => void
   onUncomplete: () => void
+  /** Flush the pending save for this set; does not restart the rest timer. */
+  onSave?: () => void
   onDelete: () => void
   onRetry?: () => void
 }
@@ -147,14 +149,19 @@ export function SetStepperRow({
   onChange,
   onComplete,
   onUncomplete,
+  onSave,
   onDelete,
   onRetry,
 }: SetStepperRowProps) {
   const reduceMotion = useReducedMotion()
+  const [editing, setEditing] = useState(false)
   const weight = parseNum(set.weight)
   const reps = parseInt(set.reps || '0', 10) || 0
   const locked = Boolean(disabled)
+  const readOnly = set.completed && !editing
   const n = index + 1
+
+  if (!set.completed && editing) setEditing(false)
 
   return (
     <motion.div
@@ -176,29 +183,57 @@ export function SetStepperRow({
           Set {n}
           {set.completed && <span className="ml-2 text-[11px] font-medium">Done</span>}
         </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={locked || (!set.completed && (set.weight === '' || set.reps === ''))}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => (set.completed ? onUncomplete() : onComplete())}
-            className={cn(
-              'min-h-11 rounded-xl flex items-center justify-center border transition-colors',
-              set.completed
-                ? 'min-w-11 bg-primary text-black border-primary'
-                : 'px-3 gap-1 border-primary text-primary disabled:opacity-40',
-            )}
-            aria-label={set.completed ? `Mark set ${n} not done` : `Complete set ${n}`}
-          >
-            {set.completed ? (
-              <Check size={18} strokeWidth={3} />
-            ) : (
-              <>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {readOnly ? (
+            <button
+              type="button"
+              disabled={locked}
+              onClick={() => setEditing(true)}
+              className="min-h-11 min-w-11 rounded-xl flex items-center justify-center border border-border bg-surface-2 text-text-secondary hover:text-primary disabled:opacity-40"
+              aria-label={`Edit set ${n}`}
+            >
+              <Pencil size={16} />
+            </button>
+          ) : set.completed ? (
+            <>
+              <button
+                type="button"
+                disabled={locked}
+                onClick={() => {
+                  onSave?.()
+                  setEditing(false)
+                }}
+                className="min-h-11 px-3 rounded-xl flex items-center justify-center gap-1 border bg-primary text-black border-primary"
+              >
                 <Check size={16} strokeWidth={3} />
-                Log
-              </>
-            )}
-          </button>
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={locked}
+                onClick={() => {
+                  onUncomplete()
+                  setEditing(false)
+                }}
+                className="text-xs text-text-secondary min-h-11 px-2"
+                aria-label={`Mark set ${n} not done`}
+              >
+                Mark not done
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={locked || set.weight === '' || set.reps === ''}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onComplete}
+              className="min-h-11 rounded-xl flex items-center justify-center border transition-colors px-3 gap-1 border-primary text-primary disabled:opacity-40"
+              aria-label={`Complete set ${n}`}
+            >
+              <Check size={16} strokeWidth={3} />
+              Log
+            </button>
+          )}
           <button
             type="button"
             disabled={locked}
@@ -217,7 +252,7 @@ export function SetStepperRow({
           unit={units}
           value={set.weight}
           inputMode="decimal"
-          disabled={locked}
+          disabled={locked || (set.completed && !editing)}
           snapStep={weightStep}
           max={maxWeightInDisplay(units, weightStep)}
           onType={(v) => onChange({ weight: v })}
@@ -231,7 +266,7 @@ export function SetStepperRow({
           unit="reps"
           value={set.reps}
           inputMode="numeric"
-          disabled={locked}
+          disabled={locked || (set.completed && !editing)}
           max={MAX_REPS}
           onType={(v) => onChange({ reps: v })}
           onMinus={() => onChange({ reps: String(Math.max(0, reps - 1)) })}

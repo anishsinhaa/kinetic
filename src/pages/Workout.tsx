@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { ChevronDown, EllipsisVertical, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
 import { localDateString } from '../lib/localDate'
+import { pluralize } from '../lib/pluralize'
 import { cn } from '../lib/utils'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
@@ -1193,8 +1194,8 @@ export default function Workout() {
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-surface p-4">
               <p className="text-sm font-semibold text-text-primary">
-                ✓ {latest.label} · {latest.durationText} · {latest.exerciseCount} exercises ·{' '}
-                {latest.setCount} sets
+                ✓ {latest.label} · {latest.durationText} · {pluralize(latest.exerciseCount, 'exercise')} ·{' '}
+                {pluralize(latest.setCount, 'set')}
               </p>
             </div>
             <button
@@ -1237,8 +1238,7 @@ export default function Workout() {
                   {latest.label || 'Workout'} · {formatRelativeDate(latest.date)}
                 </p>
                 <p className="text-xs text-text-secondary mt-1">
-                  {latest.exerciseCount} exercise{latest.exerciseCount === 1 ? '' : 's'} ·{' '}
-                  {latest.setCount} set{latest.setCount === 1 ? '' : 's'} ·{' '}
+                  {pluralize(latest.exerciseCount, 'exercise')} · {pluralize(latest.setCount, 'set')} ·{' '}
                   {formatVolume(latest.totalVolumeKg, units)}
                 </p>
               </div>
@@ -1254,7 +1254,7 @@ export default function Workout() {
             {startSheet === 'repeat' && latest ? (
               <>
                 <p className="text-sm text-text-secondary">
-                  {latest.label} · {latest.exerciseCount} exercises · {latest.setCount} sets
+                  {latest.label} · {pluralize(latest.exerciseCount, 'exercise')} · {pluralize(latest.setCount, 'set')}
                 </p>
                 <Button
                   variant="primary"
@@ -1596,7 +1596,7 @@ export default function Workout() {
                 >
                   <span className="truncate font-semibold text-text-primary">{ex.name}</span>
                   <span className="shrink-0 text-xs text-text-secondary">
-                    {completedCount}/{ex.sets.length} sets{ex.done ? ' ✓' : ''}
+                    {completedCount}/{ex.sets.length} {ex.sets.length === 1 ? 'set' : 'sets'}{ex.done ? ' ✓' : ''}
                   </span>
                 </button>
                 <button
@@ -1715,6 +1715,7 @@ export default function Workout() {
                   useWorkoutStore.getState().updateSet(ex.id, set.id, patch)
                   if (set.completed) queuePersist(ex.id, set.id, ex.dbWorkoutExerciseId, idx)
                 }}
+                onSave={() => void persistQueueRef.current.flush(set.id)}
                 onComplete={() => void handleCompleteSet(ex.id, set.id, idx)}
                 onUncomplete={() => void handleUncompleteSet(ex.id, set.id, idx)}
                 onDelete={() => handleDeleteSet(ex.id, set.id)}
@@ -1815,8 +1816,8 @@ export default function Workout() {
           {filledDraftCount > 0 ? (
             <>
               <p className="text-sm text-text-secondary">
-                {filledDraftCount} set{filledDraftCount === 1 ? '' : 's'} have weight and reps but
-                aren&apos;t logged yet.
+                {pluralize(filledDraftCount, 'set')} {filledDraftCount === 1 ? 'has' : 'have'} weight
+                and reps but {filledDraftCount === 1 ? "isn't" : "aren't"} logged yet.
               </p>
               <button
                 type="button"
@@ -1851,7 +1852,7 @@ export default function Workout() {
                       <Loader2 size={16} className="animate-spin mr-2" /> Saving…
                     </>
                   ) : (
-                    `Log ${filledDraftCount} set${filledDraftCount === 1 ? '' : 's'} & finish`
+                    `Log ${pluralize(filledDraftCount, 'set')} & finish`
                   )}
                 </Button>
               </div>
@@ -1864,9 +1865,9 @@ export default function Workout() {
                 </p>
               ) : (
                 <p className="text-sm text-text-secondary">
-                  {completedSetCount} completed set{completedSetCount === 1 ? '' : 's'} will be saved.
+                  {pluralize(completedSetCount, 'completed set')} will be saved.
                   {incompleteSetCount > 0 &&
-                    ` ${incompleteSetCount} incomplete set${incompleteSetCount === 1 ? '' : 's'} will be discarded.`}
+                    ` ${pluralize(incompleteSetCount, 'incomplete set')} will be discarded.`}
                 </p>
               )}
               <div className="flex gap-2">
@@ -1916,9 +1917,11 @@ export default function Workout() {
           <div className="p-4 space-y-4">
             <p className="text-sm text-text-secondary">
               Remove {menuExercise.name}?{' '}
-              {menuExercise.sets.filter((s) => s.completed).length} logged set
-              {menuExercise.sets.filter((s) => s.completed).length === 1 ? '' : 's'} will be
-              deleted.
+              {pluralize(
+                menuExercise.sets.filter((s) => s.completed).length,
+                'logged set',
+              )}{' '}
+              will be deleted.
             </p>
             <div className="flex gap-2">
               <Button

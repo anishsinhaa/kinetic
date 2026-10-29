@@ -89,7 +89,7 @@ RLS is enabled on user data tables — each user only sees their own rows. Schem
 - Idle screen: type pill (opens a type sheet; defaults to the suggested next type), **Start workout**, "Repeat last workout", last-workout summary
 - Warmup is an optional, dismissible card inside the session — not a separate step
 - Compact header: type, timer, **Finish**; finish confirmation is a sheet with a saving state
-- Sets autosave; **prefill from last session**; completed sets can be edited in place (rest timer is not restarted)
+- Sets autosave; **prefill from last session**; logged sets are read-only until you tap Edit; saving an edit does not restart the rest timer
 - Deleting a set shows an **Undo** toast; 44px steppers; weights are rounded to your weight step (`100 kg × 5`, `PR 226 lb × 5 · 18 Oct`)
 - Exercise picker: fixed-height sheet, search across the whole library (name **or** aliases in `exercises.search_terms`), removable type filter, recents first
 - **PR rule:** heavier weight wins; same weight + more reps wins (**no estimated 1RM**). A first-ever log is reported as "First log", not a PR

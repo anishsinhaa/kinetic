@@ -182,7 +182,7 @@ export default function Dashboard() {
               ✓ Today's workout done
             </span>
             <span className="block text-sm text-text-secondary mt-1">
-              {last.label} · {last.exerciseCount} exercises · {last.setCount} sets
+              {last.label} · {pluralize(last.exerciseCount, 'exercise')} · {pluralize(last.setCount, 'set')}
             </span>
           </button>
           <button
@@ -269,7 +269,7 @@ export default function Dashboard() {
                   {last.label}
                 </p>
                 <p className="text-xs text-text-secondary mt-1 truncate">
-                  {formatRelativeDate(last.date)} · {last.exerciseCount} exercises · {last.setCount} sets
+                  {formatRelativeDate(last.date)} · {pluralize(last.exerciseCount, 'exercise')} · {pluralize(last.setCount, 'set')}
                 </p>
               </>
             ) : (

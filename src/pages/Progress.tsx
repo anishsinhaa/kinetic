@@ -27,6 +27,7 @@ import {
   roundBodyWeight,
   roundWeightForDisplay,
 } from '../features/settings/lib/units'
+import { pluralize } from '../lib/pluralize'
 import { cn } from '../lib/utils'
 
 // ── Page-level fade-in ────────────────────────────────────────────────────────
@@ -468,7 +469,7 @@ export default function Progress() {
                       <div key={row.category}>
                         <div className="flex items-baseline justify-between gap-3 text-sm">
                           <span className="text-text-primary">{CATEGORY_LABELS[row.category]}</span>
-                          <span className="text-text-secondary tabular-nums">{row.sets} sets</span>
+                          <span className="text-text-secondary tabular-nums">{pluralize(row.sets, 'set')}</span>
                         </div>
                         <div className="mt-1 h-1 rounded-full bg-surface-3">
                           <div
