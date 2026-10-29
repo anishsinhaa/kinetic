@@ -15,6 +15,7 @@ import {
   deleteSet,
   deleteSets,
   deleteWorkout,
+  discardWorkoutIfUnlogged,
   deleteWorkoutExercise,
   deleteWorkoutExercises,
   finishWorkout as finishWorkoutDb,
@@ -35,6 +36,7 @@ import { resolveSummaryTitle } from '../features/workout/lib/summaryTitle'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
+import { registerSetWriteHandlers } from '../features/workout/lib/setWriteRegistry'
 import { bestPersonalRecord, detectFirstLogs, detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
 import {
@@ -378,6 +380,13 @@ export default function Workout() {
     }, 800),
   )
 
+  useEffect(() => {
+    return registerSetWriteHandlers({
+      flush: () => persistQueueRef.current.flushAll(),
+      cancel: () => persistQueueRef.current.cancel(),
+    })
+  }, [])
+
   const latestWorkoutQuery = useQuery({
     queryKey: ['workout', 'latest-completed', userId],
     queryFn: () => getLatestCompletedWorkout(userId),
@@ -679,7 +688,7 @@ export default function Workout() {
       }
       // Discard empty in-progress so the chosen type wins
       const abandonId = state.currentWorkoutId
-      void deleteWorkout(abandonId).catch(() => {})
+      void discardWorkoutIfUnlogged(userId, abandonId, { allowExercises: false }).catch(() => {})
       useWorkoutStore.getState().finishWorkout()
     }
 

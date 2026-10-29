@@ -9,6 +9,7 @@ import { logout } from '../features/auth/authService'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { getExerciseCatalog } from '../features/workout/services/exerciseService'
 import { getRecentExerciseIds } from '../features/workout/services/workoutService'
+import { useAutoFinishExpiredWorkout } from '../features/workout/hooks/useAutoFinishExpiredWorkout'
 import { useRestNotificationCleanup } from '../features/workout/hooks/useRestNotificationCleanup'
 import { sectionKey } from '../lib/navRoutes'
 
@@ -35,6 +36,7 @@ export function MainLayout() {
   const { user } = useCurrentUser()
   const reduceMotion = useReducedMotion()
   useRestNotificationCleanup()
+  useAutoFinishExpiredWorkout(user?.id)
 
   // Prefetch the exercise catalogue + recents so Add Exercise opens instantly
   useQuery({

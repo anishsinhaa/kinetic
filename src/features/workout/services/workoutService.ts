@@ -8,6 +8,7 @@ import type {
 } from '../../../lib/supabase/database.types'
 import type { AddSetInput, UpdateWorkoutMetaInput } from '../types'
 import { listRestDays } from '../../dailyLog/services/restDayService'
+import { autoFinishEndedAt, workoutStartMs } from '../lib/autoFinish'
 import { onlyExercisesWithCompletedSets } from '../lib/completedExercises'
 import { isCompletedSet, totalVolumeKg } from '../lib/volume'
 
@@ -1021,4 +1022,146 @@ export async function logPastWorkout(
     }
     throw toServiceError(err)
   }
+}
+
+type GuardSetRow = { id: string; completed_at: string | null }
+type GuardExerciseRow = { id: string; sets: GuardSetRow[] | null }
+
+function loggedSet(set: GuardSetRow): boolean {
+  return set.completed_at != null
+}
+
+export async function discardWorkoutIfUnlogged(
+  userId: string,
+  workoutId: string,
+  options: { allowExercises: boolean },
+): Promise<{
+  deleted: boolean
+  reason: 'deleted' | 'missing' | 'finished' | 'has_exercises' | 'has_logged_sets'
+}> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('id, ended_at, workout_exercises ( id, sets ( id, completed_at ) )')
+    .eq('id', workoutId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw toServiceError(error)
+  if (!data) return { deleted: false, reason: 'missing' }
+
+  const row = data as {
+    id: string
+    ended_at: string | null
+    workout_exercises: GuardExerciseRow[] | null
+  }
+  if (row.ended_at != null) return { deleted: false, reason: 'finished' }
+
+  const exercises = row.workout_exercises ?? []
+  if (exercises.some((exercise) => (exercise.sets ?? []).some(loggedSet))) {
+    return { deleted: false, reason: 'has_logged_sets' }
+  }
+  if (!options.allowExercises && exercises.length > 0) {
+    return { deleted: false, reason: 'has_exercises' }
+  }
+
+  const removed = await supabase
+    .from('workouts')
+    .delete()
+    .eq('id', workoutId)
+    .eq('user_id', userId)
+    .is('ended_at', null)
+  if (removed.error) throw toServiceError(removed.error)
+  return { deleted: true, reason: 'deleted' }
+}
+
+export type ExpiredWorkoutResult =
+  | { kind: 'skipped'; reason: 'missing' | 'finished' | 'not_due' | 'unsynced' | 'has_logged_sets' }
+  | { kind: 'finished'; setCount: number; endedAt: string }
+  | { kind: 'discarded' }
+
+export async function resolveExpiredWorkout(
+  userId: string,
+  workoutId: string,
+  options: {
+    limitMs: number
+    requiredSetIds: string[]
+    meta?: FinishWorkoutMeta
+    nowMs?: number
+  },
+): Promise<ExpiredWorkoutResult> {
+  const nowMs = options.nowMs ?? Date.now()
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('id, started_at, created_at, ended_at, workout_exercises ( id, sets ( id, completed_at ) )')
+    .eq('id', workoutId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw toServiceError(error)
+  if (!data) return { kind: 'skipped', reason: 'missing' }
+
+  const row = data as {
+    id: string
+    started_at: string | null
+    created_at: string | null
+    ended_at: string | null
+    workout_exercises: GuardExerciseRow[] | null
+  }
+  if (row.ended_at != null) return { kind: 'skipped', reason: 'finished' }
+
+  const startMs = workoutStartMs(row.started_at, row.created_at)
+  if (startMs == null || nowMs - startMs < options.limitMs) {
+    return { kind: 'skipped', reason: 'not_due' }
+  }
+
+  const exercises = row.workout_exercises ?? []
+  const completed = exercises.flatMap((exercise) => (exercise.sets ?? []).filter(loggedSet))
+  const completedIds = new Set(completed.map((set) => set.id))
+  if (options.requiredSetIds.some((setId) => !completedIds.has(setId))) {
+    return { kind: 'skipped', reason: 'unsynced' }
+  }
+
+  if (completed.length === 0) {
+    const res = await discardWorkoutIfUnlogged(userId, workoutId, { allowExercises: true })
+    if (res.reason === 'deleted') return { kind: 'discarded' }
+    if (res.reason === 'missing') return { kind: 'skipped', reason: 'missing' }
+    if (res.reason === 'finished') return { kind: 'skipped', reason: 'finished' }
+    return { kind: 'skipped', reason: 'has_logged_sets' }
+  }
+
+  const endedAt = autoFinishEndedAt(
+    completed.map((set) => set.completed_at),
+    startMs,
+    nowMs,
+  )
+  if (!endedAt) return { kind: 'skipped', reason: 'has_logged_sets' }
+
+  const meta = options.meta
+  const updated = await supabase
+    .from('workouts')
+    .update({
+      ended_at: endedAt,
+      ...(meta?.feel !== undefined ? { feel: meta.feel } : {}),
+      ...(meta?.note !== undefined ? { note: meta.note } : {}),
+      ...(meta?.warmup_started_at !== undefined
+        ? { warmup_started_at: meta.warmup_started_at }
+        : {}),
+      ...(meta?.warmup_ended_at !== undefined ? { warmup_ended_at: meta.warmup_ended_at } : {}),
+      ...(meta?.warmup_note !== undefined ? { warmup_note: meta.warmup_note } : {}),
+    })
+    .eq('id', workoutId)
+    .eq('user_id', userId)
+    .is('ended_at', null)
+    .select('id')
+  if (updated.error) throw toServiceError(updated.error)
+  if (!updated.data || updated.data.length === 0) return { kind: 'skipped', reason: 'finished' }
+
+  const incompleteSetIds = exercises.flatMap((exercise) =>
+    (exercise.sets ?? []).filter((set) => !loggedSet(set)).map((set) => set.id),
+  )
+  const emptyExerciseIds = exercises
+    .filter((exercise) => !(exercise.sets ?? []).some(loggedSet))
+    .map((exercise) => exercise.id)
+  await deleteSets(incompleteSetIds).catch(() => {})
+  await deleteWorkoutExercises(emptyExerciseIds).catch(() => {})
+
+  return { kind: 'finished', setCount: completed.length, endedAt }
 }
