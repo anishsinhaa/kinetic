@@ -118,6 +118,7 @@ export async function getDailyLogs(userId: string): Promise<DailyLogEntry[]> {
         label: (w.workout_type ?? w.name ?? null) as string | null,
         durationMins: durationMins(w.started_at, w.ended_at),
         endedAt: w.ended_at ?? null,
+        startedAt: w.started_at ?? null,
       })),
     }
   })

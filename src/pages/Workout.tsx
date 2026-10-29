@@ -54,6 +54,10 @@ import {
   shouldApplySetPrefill,
 } from '../features/workout/lib/exercisePrefill'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
+import { PlannedWorkoutCard } from '../features/workout/components/PlannedWorkoutCard'
+import { useWorkoutPlan } from '../features/workout/hooks/useWorkoutPlan'
+import { clearWorkoutPlan, type WorkoutPlan } from '../features/workout/lib/workoutPlan'
+import { getExercisesByIds } from '../features/workout/services/exerciseService'
 import { StartWorkoutSheet } from '../features/workout/components/StartWorkoutSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
@@ -62,7 +66,6 @@ import type { Exercise } from '../features/exercises/types'
 import type { WeightUnits, WorkoutExerciseTarget } from '../lib/supabase/database.types'
 
 /** Enabled by later prompts. */
-const SHOW_PLAN = false
 const SHOW_LOG_PAST = true
 
 function newClientId() {
@@ -168,16 +171,16 @@ function RecentWorkoutsList({ userId }: { userId: string }) {
   )
 }
 
-function LaterWorkoutActions() {
+function LaterWorkoutActions({ hasPlan }: { hasPlan: boolean }) {
   const navigate = useNavigate()
-  if (!SHOW_PLAN && !SHOW_LOG_PAST) return null
+  if (!SHOW_LOG_PAST && hasPlan) return null
   return (
     <div className="flex gap-2">
-      {SHOW_PLAN && (
+      {!hasPlan && (
         <button
           type="button"
-          disabled
-          className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary disabled:opacity-40"
+          onClick={() => navigate('/workout/plan')}
+          className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:border-primary"
         >
           Plan workout
         </button>
@@ -255,6 +258,7 @@ export default function Workout() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [typeSheetOpen, setTypeSheetOpen] = useState(false)
   const [startOpen, setStartOpen] = useState(false)
+  const plan = useWorkoutPlan(userId)
   const [pickedType, setPickedType] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [exerciseMenuId, setExerciseMenuId] = useState<string | null>(null)
@@ -507,7 +511,12 @@ export default function Workout() {
     })
   }
 
-  const beginWorkoutWithType = (typeLabel: string, typeExplicit = false, repeat = false) => {
+  const beginWorkoutWithType = (
+    typeLabel: string,
+    typeExplicit = false,
+    repeat = false,
+    plan?: WorkoutPlan,
+  ) => {
     if (useWorkoutStore.getState().currentWorkoutId || startingRef.current) return
     const normalizedType = typeLabel.trim()
     if (!normalizedType) return
@@ -520,7 +529,9 @@ export default function Workout() {
 
     const workoutId = newClientId()
     const startedAt = new Date().toISOString()
-    if (repeat && latestWorkoutQuery.data?.exercises?.length) {
+    if (plan) {
+      setRepeatPlaceholders(plan.exercises.map((exercise) => exercise.name))
+    } else if (repeat && latestWorkoutQuery.data?.exercises?.length) {
       setRepeatPlaceholders(
         [...latestWorkoutQuery.data.exercises]
           .sort((a, b) => a.orderIndex - b.orderIndex)
@@ -545,6 +556,41 @@ export default function Workout() {
         // Release waiters before copying exercises. Each add awaits this promise;
         // resolving it only after the loop deadlocks on the first exercise.
         markReady()
+
+        if (plan) {
+          clearWorkoutPlan(userId)
+          let plannedExercises: Exercise[]
+          try {
+            const found = await getExercisesByIds(plan.exercises.map((exercise) => exercise.exerciseId))
+            const byId = new Map(found.map((exercise) => [exercise.id, exercise]))
+            plannedExercises = plan.exercises.flatMap((planned) => {
+              const exercise = byId.get(planned.exerciseId)
+              return exercise ? [exercise] : []
+            })
+          } catch {
+            plannedExercises = plan.exercises.map(
+              (planned) =>
+                ({
+                  id: planned.exerciseId,
+                  name: planned.name,
+                  muscleGroup: planned.muscleGroup,
+                }) as Exercise,
+            )
+          }
+          if (useWorkoutStore.getState().currentWorkoutId === workoutId) {
+            await Promise.all(
+              plannedExercises.map((exercise) => addExerciseFromLibrary(exercise).catch(() => {})),
+            )
+          }
+          const skipped = plan.exercises.length - plannedExercises.length
+          if (skipped > 0) {
+            toast.show(
+              skipped === 1
+                ? '1 planned exercise no longer exists and was skipped'
+                : `${skipped} planned exercises no longer exist and were skipped`,
+            )
+          }
+        }
 
         if (repeat && latestWorkoutQuery.data?.exercises?.length) {
           const displayUnits = useWorkoutStore.getState().units
@@ -1288,6 +1334,17 @@ export default function Workout() {
                   .join(' · ')}
               </p>
             </div>
+            {plan && (
+              <PlannedWorkoutCard
+                plan={plan}
+                onStart={() => beginWorkoutWithType(plan.type, true, false, plan)}
+                onEdit={() => navigate('/workout/plan')}
+                onDelete={() => {
+                  clearWorkoutPlan(userId)
+                  toast.show('Plan deleted')
+                }}
+              />
+            )}
             <button
               type="button"
               onClick={() => setStartOpen(true)}
@@ -1295,12 +1352,23 @@ export default function Workout() {
             >
               Start another workout
             </button>
-            <LaterWorkoutActions />
+            <LaterWorkoutActions hasPlan={Boolean(plan)} />
             <RecentWorkoutsList userId={userId} />
             <ExercisesLink />
           </div>
         ) : (
           <div className="space-y-4">
+            {plan && (
+              <PlannedWorkoutCard
+                plan={plan}
+                onStart={() => beginWorkoutWithType(plan.type, true, false, plan)}
+                onEdit={() => navigate('/workout/plan')}
+                onDelete={() => {
+                  clearWorkoutPlan(userId)
+                  toast.show('Plan deleted')
+                }}
+              />
+            )}
             <Button
               variant="primary"
               size="lg"
@@ -1311,7 +1379,7 @@ export default function Workout() {
               <Dumbbell size={16} className="mr-2" />
               Start workout
             </Button>
-            <LaterWorkoutActions />
+            <LaterWorkoutActions hasPlan={Boolean(plan)} />
             <RecentWorkoutsList userId={userId} />
             <ExercisesLink />
           </div>

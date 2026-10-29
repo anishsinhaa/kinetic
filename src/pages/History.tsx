@@ -29,10 +29,11 @@ function fmtDateLong(iso: string): string {
   }
 }
 
-function fmtTime(iso: string | null): string {
-  if (!iso) return ''
+function fmtWorkoutTime(startedAt: string | null, endedAt: string | null): string {
+  if (!endedAt) return ''
+  if (startedAt != null && new Date(startedAt).getTime() === new Date(endedAt).getTime()) return ''
   try {
-    return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+    return new Date(endedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }
@@ -44,6 +45,7 @@ type WorkoutCardData = {
   label: string
   durationMins: number | null
   endedAt: string | null
+  startedAt: string | null
 }
 
 type WorkoutDetail = {
@@ -89,6 +91,7 @@ export default function History() {
           label: w.label?.trim() || 'Workout',
           durationMins: w.durationMins,
           endedAt: w.endedAt,
+          startedAt: w.startedAt,
         })),
       ),
     [logs],
@@ -183,6 +186,10 @@ export default function History() {
     }
   }
 
+  const pendingTime = pendingDelete
+    ? fmtWorkoutTime(pendingDelete.startedAt, pendingDelete.endedAt)
+    : ''
+
   return (
     <div className="p-4 md:p-8 max-w-3xl mx-auto">
       <div className="mb-5 md:mb-6">
@@ -214,7 +221,7 @@ export default function History() {
         {workouts.slice(0, visible).map((w) => {
           const detail = details.get(w.id)
           const expanded = expandedId === w.id
-          const time = fmtTime(w.endedAt)
+          const time = fmtWorkoutTime(w.startedAt, w.endedAt)
           const setCount = detail?.exercises.reduce((n, e) => n + e.sets.length, 0) ?? 0
           return (
             <div
@@ -317,7 +324,7 @@ export default function History() {
           {pendingDelete && (
             <p className="text-sm font-semibold text-text-primary rounded-xl border border-border bg-surface-2 px-3 py-3">
               {pendingDelete.label} · {fmtDateLong(pendingDelete.date)}
-              {fmtTime(pendingDelete.endedAt) ? ` · ${fmtTime(pendingDelete.endedAt)}` : ''}
+              {pendingTime ? ` · ${pendingTime}` : ''}
             </p>
           )}
           <div className="flex gap-2">

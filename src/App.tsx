@@ -16,6 +16,7 @@ import AuthPage from './features/auth/AuthPage'
 const Dashboard  = lazyWithReload(() => import('./pages/Dashboard'))
 const Workout    = lazyWithReload(() => import('./pages/Workout'))
 const LogPastWorkout = lazyWithReload(() => import('./pages/LogPastWorkout'))
+const PlanWorkout = lazyWithReload(() => import('./pages/PlanWorkout'))
 const History    = lazyWithReload(() => import('./pages/History'))
 const Exercises  = lazyWithReload(() => import('./pages/Exercises'))
 const Progress   = lazyWithReload(() => import('./pages/Progress'))
@@ -74,6 +75,7 @@ function AppShell() {
             <Route index element={<Workout />} />
             <Route path="recovery" element={<Feedback />} />
             <Route path="log" element={<LogPastWorkout />} />
+            <Route path="plan" element={<PlanWorkout />} />
           </Route>
           <Route path="/progress" element={<SectionLayout tabs={PROGRESS_TABS} label="Progress" />}>
             <Route index element={<Progress />} />

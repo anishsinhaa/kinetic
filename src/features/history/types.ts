@@ -8,6 +8,7 @@ export interface HistoryDayWorkout {
   durationMins: number | null
   /** ISO timestamp when the workout ended (for delete labels). */
   endedAt: string | null
+  startedAt: string | null
 }
 
 export interface DailyLogEntry {

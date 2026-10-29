@@ -16,6 +16,7 @@ import { useCurrentUser } from '../features/auth/useAuth'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { useActiveSession } from '../features/workout/hooks/useActiveSession'
 import { useSuggestedType } from '../features/workout/hooks/useSuggestedType'
+import { useWorkoutPlan } from '../features/workout/hooks/useWorkoutPlan'
 import { StartWorkoutSheet } from '../features/workout/components/StartWorkoutSheet'
 import {
   getDashboardStats,
@@ -109,6 +110,7 @@ export default function Dashboard() {
   const [recoverySheetOpen, setRecoverySheetOpen] = useState(false)
   const [startOpen, setStartOpen] = useState(false)
   const { suggestedType, typeChips, suggestionsReady } = useSuggestedType(userId)
+  const plan = useWorkoutPlan(userId)
   const todayRest = useRestDay(localDateString())
 
   // Elapsed time for the resume button (minute precision)
@@ -219,6 +221,15 @@ export default function Dashboard() {
           >
             change
           </button>
+          {plan && (
+            <button
+              type="button"
+              onClick={() => navigate('/workout')}
+              className="block min-h-11 text-sm text-primary text-left"
+            >
+              Planned: {plan.type} · {pluralize(plan.exercises.length, 'exercise')} — open
+            </button>
+          )}
           {!todayRest.isLoading &&
             (todayRest.isRestDay ? (
               <p className="text-sm text-text-muted min-h-11 flex items-center gap-1">
