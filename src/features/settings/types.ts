@@ -17,6 +17,7 @@ export interface UserSettings {
   reminderWorkoutTime: string | null
   reminderWorkoutDays: number[]
   restTimerSeconds: number
+  restTimerEnabled: boolean
   weightStep: number
   units: WeightUnits
   timezone: string
@@ -49,6 +50,7 @@ export function defaultUserSettings(userId: string): UserSettings {
     reminderWorkoutTime: null,
     reminderWorkoutDays: [],
     restTimerSeconds: 90,
+    restTimerEnabled: true,
     weightStep: 2.5,
     units: 'kg',
     timezone: detectBrowserTimezone(),
@@ -76,6 +78,7 @@ export function mapUserSettingsRow(row: UserSettingsRow): UserSettings {
     reminderWorkoutTime: row.reminder_workout_time,
     reminderWorkoutDays: row.reminder_workout_days ?? [],
     restTimerSeconds: row.rest_timer_seconds,
+    restTimerEnabled: row.rest_timer_enabled !== false,
     weightStep: Number(row.weight_step),
     units: row.units,
     timezone: row.timezone?.trim() || 'UTC',

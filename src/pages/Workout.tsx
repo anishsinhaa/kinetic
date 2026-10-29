@@ -389,6 +389,7 @@ export default function Workout() {
     api.setPrefs({
       weightStep: settings.weightStep,
       restDefaultSeconds: settings.restTimerSeconds,
+      restTimerEnabled: settings.restTimerEnabled,
       units: settings.units,
     })
   }, [settings])

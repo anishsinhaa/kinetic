@@ -58,6 +58,7 @@ interface WorkoutStore {
   restEndsAt: string | null
   restTotalSeconds: number
   restDefaultSeconds: number
+  restTimerEnabled: boolean
   weightStep: number
   units: WeightUnits
   /** Last / PR / target strings were formatted in a previous unit and need a rebuild. */
@@ -86,6 +87,7 @@ interface WorkoutStore {
   setPrefs: (prefs: {
     weightStep?: number
     restDefaultSeconds?: number
+    restTimerEnabled?: boolean
     units?: WeightUnits
   }) => void
   clearExerciseMetaStale: () => void
@@ -171,6 +173,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
       workoutTypes: resolveWorkoutTypes(null),
       suggestedType: null,
       restDefaultSeconds: 90,
+      restTimerEnabled: true,
       weightStep: 2.5,
       units: 'kg',
       exerciseMetaStale: false,
@@ -188,6 +191,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           workoutTypes: get().workoutTypes,
           suggestedType: get().suggestedType,
           restDefaultSeconds: get().restDefaultSeconds,
+          restTimerEnabled: get().restTimerEnabled,
           weightStep: get().weightStep,
           units: get().units,
         }),
@@ -244,10 +248,13 @@ export const useWorkoutStore = create<WorkoutStore>()(
         set((state) => {
           const units = prefs.units ?? state.units
           const weightStep = prefs.weightStep ?? state.weightStep
+          const restTimerEnabled = prefs.restTimerEnabled ?? state.restTimerEnabled
           const unitsChanged = prefs.units != null && prefs.units !== state.units
           return {
             weightStep,
             restDefaultSeconds: prefs.restDefaultSeconds ?? state.restDefaultSeconds,
+            restTimerEnabled,
+            ...(restTimerEnabled === false ? { restEndsAt: null } : {}),
             units,
             // Set weights are display strings. Convert them in this same update so
             // "230 lb" doesn't stay "230" after the unit label flips to kg.
@@ -409,7 +416,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
                 },
           ),
         }))
-        get().startRest(restSeconds)
+        if (get().restTimerEnabled) get().startRest(restSeconds)
       },
 
       uncompleteSet: (exerciseLocalId, setLocalId) => {
@@ -484,6 +491,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           workoutTypes: get().workoutTypes,
           suggestedType: get().suggestedType,
           restDefaultSeconds: get().restDefaultSeconds,
+          restTimerEnabled: get().restTimerEnabled,
           weightStep: get().weightStep,
           units: get().units,
         }),
@@ -495,6 +503,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
           workoutTypes: get().workoutTypes,
           suggestedType: get().suggestedType,
           restDefaultSeconds: get().restDefaultSeconds,
+          restTimerEnabled: get().restTimerEnabled,
           weightStep: get().weightStep,
           units: get().units,
         }),
@@ -519,6 +528,7 @@ export const useWorkoutStore = create<WorkoutStore>()(
         restEndsAt: state.restEndsAt,
         restTotalSeconds: state.restTotalSeconds,
         restDefaultSeconds: state.restDefaultSeconds,
+        restTimerEnabled: state.restTimerEnabled,
         weightStep: state.weightStep,
         units: state.units,
         exerciseMetaStale: state.exerciseMetaStale,

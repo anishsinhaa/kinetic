@@ -117,6 +117,8 @@ export interface UserSettingsRow {
   reminder_workout_time: string | null
   reminder_workout_days: number[]
   rest_timer_seconds: number
+  /** Absent until the rest_timer_enabled migration has been applied. */
+  rest_timer_enabled?: boolean
   weight_step: number
   units: WeightUnits
   /** IANA timezone; reminder times are wall-clock in this zone */

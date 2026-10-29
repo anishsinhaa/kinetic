@@ -31,6 +31,7 @@ import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
   getVapidPublicKey,
   pushSupported,
+  clearRestNotifications,
   sendTestPushNotification,
   subscribeUserPush,
   unsubscribeUserPush,
@@ -288,8 +289,10 @@ function PreferencesSection({ userId }: { userId: string }) {
       setPrefs({
         weightStep: next.weightStep,
         restDefaultSeconds: next.restTimerSeconds,
+        restTimerEnabled: next.restTimerEnabled,
         units: next.units,
       })
+      if (!next.restTimerEnabled) void clearRestNotifications()
       void queryClient.setQueryData(['user-settings', userId], next)
       setSaveMsg('Saved')
       window.setTimeout(() => setSaveMsg(''), 1500)
@@ -707,16 +710,27 @@ function PreferencesSection({ userId }: { userId: string }) {
         <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <Row
           label="Rest timer"
+          value="Count down between sets"
+          action={
+            <Toggle
+              checked={local.restTimerEnabled}
+              disabled={saveMutation.isPending}
+              onChange={(v) => persist({ restTimerEnabled: v })}
+            />
+          }
+        />
+        <Row
+          label="Rest length"
           value="Default countdown between sets"
           action={
-            <div className="flex items-center gap-2">
+            <div className={cn('flex items-center gap-2', !local.restTimerEnabled && 'opacity-50')}>
               <input
                 type="number"
                 min={15}
                 max={600}
                 step={15}
                 value={local.restTimerSeconds}
-                disabled={saveMutation.isPending}
+                disabled={saveMutation.isPending || !local.restTimerEnabled}
                 onChange={(e) => {
                   const n = Number.parseInt(e.target.value, 10)
                   if (!Number.isFinite(n)) return

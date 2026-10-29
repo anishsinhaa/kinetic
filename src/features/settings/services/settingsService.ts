@@ -36,6 +36,7 @@ function toRowPatch(update: UserSettingsUpdate): Partial<UserSettingsRow> {
     patch.reminder_workout_days = update.reminderWorkoutDays
   }
   if (update.restTimerSeconds !== undefined) patch.rest_timer_seconds = update.restTimerSeconds
+  if (update.restTimerEnabled !== undefined) patch.rest_timer_enabled = update.restTimerEnabled
   if (update.weightStep !== undefined) patch.weight_step = update.weightStep
   if (update.units !== undefined) patch.units = update.units
   if (update.timezone !== undefined) patch.timezone = update.timezone
@@ -137,6 +138,17 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
   })
 }
 
+function isMissingColumnError(error: { message?: string; code?: string; details?: string } | null): boolean {
+  if (!error?.message && !error?.details) return false
+  const blob = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
+  return (
+    blob.includes('schema cache') ||
+    blob.includes('column') ||
+    blob.includes('could not find') ||
+    error.code === 'PGRST204'
+  )
+}
+
 export async function updateUserSettings(
   userId: string,
   update: UserSettingsUpdate,
@@ -144,12 +156,32 @@ export async function updateUserSettings(
   // Ensure a row exists first
   await getUserSettings(userId)
 
+  const patch = toRowPatch(update)
   const { data, error } = await supabase
     .from('user_settings')
-    .update(toRowPatch(update))
+    .update(patch)
     .eq('user_id', userId)
     .select('*')
     .single()
+
+  if (error && patch.rest_timer_enabled !== undefined && isMissingColumnError(error)) {
+    const withoutFlag = { ...patch }
+    delete withoutFlag.rest_timer_enabled
+    const retry =
+      Object.keys(withoutFlag).length === 0
+        ? await supabase.from('user_settings').select('*').eq('user_id', userId).single()
+        : await supabase
+            .from('user_settings')
+            .update(withoutFlag)
+            .eq('user_id', userId)
+            .select('*')
+            .single()
+    if (retry.error) throw toServiceError(retry.error)
+    return {
+      ...mapUserSettingsRow(retry.data as UserSettingsRow),
+      restTimerEnabled: update.restTimerEnabled !== false,
+    }
+  }
 
   if (error) throw toServiceError(error)
   return mapUserSettingsRow(data as UserSettingsRow)
