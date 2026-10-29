@@ -792,3 +792,111 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
     exercises,
   }
 }
+
+export type RecentWorkout = {
+  id: string
+  label: string
+  date: string
+  exerciseCount: number
+  setCount: number
+  durationMins: number | null
+}
+
+type RecentWorkoutRow = {
+  id: string
+  name: string | null
+  workout_type?: string | null
+  date: string
+  started_at: string | null
+  ended_at: string
+  workout_exercises: Array<{
+    exercise_id: string
+    sets: Array<{
+      weight: number | null
+      reps: number | null
+      completed_at?: string | null
+    }> | null
+  }> | null
+}
+
+/** Finished workouts only, newest first. Read-only. */
+export async function getRecentWorkouts(userId: string, limit = 8): Promise<RecentWorkout[]> {
+  const v2Select = `
+      id,
+      name,
+      workout_type,
+      date,
+      created_at,
+      started_at,
+      ended_at,
+      workout_exercises (
+        exercise_id,
+        sets ( weight, reps, completed_at )
+      )
+    `
+  const legacySelect = `
+      id,
+      name,
+      date,
+      created_at,
+      started_at,
+      ended_at,
+      workout_exercises (
+        exercise_id,
+        sets ( weight, reps )
+      )
+    `
+
+  let data: unknown[] | null = null
+  const first = await supabase
+    .from('workouts')
+    .select(v2Select)
+    .eq('user_id', userId)
+    .not('ended_at', 'is', null)
+    .order('ended_at', { ascending: false })
+    .limit(limit)
+
+  if (first.error && isMissingColumnError(first.error)) {
+    const fallback = await supabase
+      .from('workouts')
+      .select(legacySelect)
+      .eq('user_id', userId)
+      .not('ended_at', 'is', null)
+      .order('ended_at', { ascending: false })
+      .limit(limit)
+    if (fallback.error) throw toServiceError(fallback.error)
+    data = fallback.data
+  } else if (first.error) {
+    throw toServiceError(first.error)
+  } else {
+    data = first.data
+  }
+
+  return ((data ?? []) as unknown as RecentWorkoutRow[]).map((row) => {
+    let exerciseCount = 0
+    let setCount = 0
+    for (const exercise of row.workout_exercises ?? []) {
+      const completed = (exercise.sets ?? []).filter((set) => isCompletedSet(set))
+      if (completed.length === 0) continue
+      exerciseCount += 1
+      setCount += completed.length
+    }
+
+    let durationMins: number | null = null
+    if (row.started_at != null) {
+      const minutes = Math.round(
+        (new Date(row.ended_at).getTime() - new Date(row.started_at).getTime()) / 60000,
+      )
+      durationMins = minutes < 1 ? null : minutes
+    }
+
+    return {
+      id: row.id,
+      label: row.workout_type || row.name || 'Workout',
+      date: row.date,
+      exerciseCount,
+      setCount,
+      durationMins,
+    }
+  })
+}

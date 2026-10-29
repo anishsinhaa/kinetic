@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
-import { ChevronDown, EllipsisVertical, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, EllipsisVertical, Plus, Timer, Dumbbell, Loader2, X } from 'lucide-react'
 import { localDateString } from '../lib/localDate'
 import { pluralize } from '../lib/pluralize'
 import { cn } from '../lib/utils'
@@ -21,20 +21,19 @@ import {
   getLatestCompletedWorkout,
   getExercisePersonalRecord,
   getExercisePrefillContext,
+  getRecentWorkouts,
   updateWorkoutLabel,
   updateWorkoutMeta,
   updateWorkoutExercise,
   upsertSet,
-  getRecentWorkoutTypes,
 } from '../features/workout/services/workoutService'
+import { useSuggestedType } from '../features/workout/hooks/useSuggestedType'
 import { useWorkoutStoreHydrated } from '../features/workout/hooks/useWorkoutStoreHydrated'
 import { useActiveSession } from '../features/workout/hooks/useActiveSession'
 import { useToast } from '../components/ui/toastContext'
 import { resolveSummaryTitle } from '../features/workout/lib/summaryTitle'
-import { getUserSettings } from '../features/settings/services/settingsService'
 import { createSetPersistQueue } from '../features/workout/lib/setPersistQueue'
 import { resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
-import { suggestNextType } from '../features/workout/lib/suggestNextType'
 import { formatRelativeDate } from '../features/workout/lib/formatRelativeDate'
 import { bestPersonalRecord, detectFirstLogs, detectPrHits } from '../features/workout/lib/prDetection'
 import { useCurrentUser } from '../features/auth/useAuth'
@@ -55,11 +54,16 @@ import {
   shouldApplySetPrefill,
 } from '../features/workout/lib/exercisePrefill'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
+import { StartWorkoutSheet } from '../features/workout/components/StartWorkoutSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
 import { PrCelebration } from '../features/workout/components/PrCelebration'
 import type { Exercise } from '../features/exercises/types'
 import type { WeightUnits, WorkoutExerciseTarget } from '../lib/supabase/database.types'
+
+/** Enabled by later prompts. */
+const SHOW_PLAN = false
+const SHOW_LOG_PAST = false
 
 function newClientId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -106,6 +110,103 @@ function targetPreview(
   return formatSetLine(toStoredKg(nextWeight, units), nextReps, units, step)
 }
 
+function RecentWorkoutsList({ userId }: { userId: string }) {
+  const navigate = useNavigate()
+  const recentQuery = useQuery({
+    queryKey: ['workout', 'recent-list', userId],
+    queryFn: () => getRecentWorkouts(userId, 8),
+  })
+
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] uppercase tracking-widest text-text-secondary">Recent workouts</p>
+        <button
+          type="button"
+          onClick={() => navigate('/progress/history')}
+          className="text-sm text-primary min-h-11 px-2"
+        >
+          See all
+        </button>
+      </div>
+      {recentQuery.isPending ? (
+        <div className="space-y-2">
+          <div className="animate-pulse rounded-xl bg-surface-3 h-14" />
+          <div className="animate-pulse rounded-xl bg-surface-3 h-14" />
+          <div className="animate-pulse rounded-xl bg-surface-3 h-14" />
+        </div>
+      ) : recentQuery.isError ? (
+        <p className="text-sm text-text-secondary">Couldn&apos;t load recent workouts.</p>
+      ) : (recentQuery.data?.length ?? 0) === 0 ? (
+        <p className="text-sm text-text-secondary">
+          No workouts yet — your finished workouts show up here.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {recentQuery.data?.map((row) => (
+            <button
+              key={row.id}
+              type="button"
+              onClick={() => navigate(`/progress/history?w=${row.id}`)}
+              className="w-full border border-border bg-surface rounded-xl px-4 py-3 min-h-14 flex items-center gap-3 text-left"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-text-primary truncate">
+                  {row.label} · {formatRelativeDate(row.date)}
+                </span>
+                <span className="block text-xs text-text-secondary mt-0.5 truncate">
+                  {pluralize(row.exerciseCount, 'exercise')} · {pluralize(row.setCount, 'set')}
+                  {row.durationMins != null ? ` · ${row.durationMins}m` : ''}
+                </span>
+              </span>
+              <ChevronRight size={16} className="shrink-0 text-text-secondary" />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function LaterWorkoutActions() {
+  if (!SHOW_PLAN && !SHOW_LOG_PAST) return null
+  return (
+    <div className="flex gap-2">
+      {SHOW_PLAN && (
+        <button
+          type="button"
+          disabled
+          className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary disabled:opacity-40"
+        >
+          Plan workout
+        </button>
+      )}
+      {SHOW_LOG_PAST && (
+        <button
+          type="button"
+          disabled
+          className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary disabled:opacity-40"
+        >
+          Log past workout
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ExercisesLink() {
+  const navigate = useNavigate()
+  return (
+    <button
+      type="button"
+      onClick={() => navigate('/settings/exercises')}
+      className="text-sm text-primary min-h-11"
+    >
+      Exercises
+    </button>
+  )
+}
+
 export default function Workout() {
   const { user } = useCurrentUser()
   const userId = user!.id
@@ -149,7 +250,7 @@ export default function Workout() {
   const [tick, setTick] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [typeSheetOpen, setTypeSheetOpen] = useState(false)
-  const [startSheet, setStartSheet] = useState<null | 'new' | 'repeat'>(null)
+  const [startOpen, setStartOpen] = useState(false)
   const [pickedType, setPickedType] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [exerciseMenuId, setExerciseMenuId] = useState<string | null>(null)
@@ -274,19 +375,9 @@ export default function Workout() {
     queryFn: () => getLatestCompletedWorkout(userId),
   })
 
-  const recentTypesQuery = useQuery({
-    queryKey: ['workout', 'recent-types', userId],
-    queryFn: () => getRecentWorkoutTypes(userId),
-  })
-
-  // Shared with the Settings page: edits there show up here without a refetch,
-  // and the rest-timer default always comes from the same cached value.
-  const settingsQuery = useQuery({
-    queryKey: ['user-settings', userId],
-    queryFn: () => getUserSettings(userId),
-    staleTime: 5 * 60 * 1000,
-  })
-  const settings = settingsQuery.data
+  const typeChips = useMemo(() => resolveWorkoutTypes(workoutTypes), [workoutTypes])
+  // Shared with Home and Settings: same cache keys, rest-timer default included.
+  const { suggestedType, suggestionsReady, settings } = useSuggestedType(userId, typeChips)
 
   useEffect(() => {
     if (!settings) return
@@ -362,10 +453,9 @@ export default function Workout() {
   }, [exerciseMetaStale, currentWorkoutId, queryClient, userId])
 
   useEffect(() => {
-    if (settingsQuery.isError) {
-      useWorkoutStore.getState().setWorkoutTypes(resolveWorkoutTypes(null))
-    }
-  }, [settingsQuery.isError])
+    if (!suggestionsReady || settings) return
+    useWorkoutStore.getState().setWorkoutTypes(resolveWorkoutTypes(null))
+  }, [suggestionsReady, settings])
 
   useEffect(() => {
     if (!currentWorkoutId || !workoutStartedAt) return
@@ -385,20 +475,7 @@ export default function Workout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warmupStartedAt, warmupEndedAt, tick])
 
-  const typeChips = useMemo(() => resolveWorkoutTypes(workoutTypes), [workoutTypes])
-
-  // Derive suggestion — never write it into the store during render/effects
-  const suggestedType = useMemo(
-    () =>
-      suggestNextType(recentTypesQuery.data ?? [], typeChips, settings?.split) ??
-      typeChips[0] ??
-      '',
-    [recentTypesQuery.data, typeChips, settings?.split],
-  )
   const idleType = pickedType ?? suggestedType
-  const suggestionsReady =
-    (settingsQuery.isSuccess || settingsQuery.isError) &&
-    (recentTypesQuery.isSuccess || recentTypesQuery.isError)
   const typePending = !suggestionsReady && pickedType == null
 
   // Don't wait on the workout-create round trip. The id exists as soon as Start
@@ -564,14 +641,6 @@ export default function Workout() {
     beginWorkoutWithType(label, false, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeHydrated, isRepeatMode, latestWorkoutQuery.data?.label])
-
-  // Home's "Start another" lands here. Open the confirm sheet once, then drop the param.
-  useEffect(() => {
-    if (!storeHydrated) return
-    if (searchParams.get('confirm') !== '1') return
-    setStartSheet('new')
-    setSearchParams({}, { replace: true })
-  }, [storeHydrated, searchParams, setSearchParams])
 
   const addExerciseFromLibrary = async (
     exercise: Exercise,
@@ -871,6 +940,10 @@ export default function Workout() {
       refetchType: 'all',
     })
     void queryClient.invalidateQueries({ queryKey: ['workout', 'recent-types', userId] })
+    void queryClient.invalidateQueries({
+      queryKey: ['workout', 'recent-list', userId],
+      refetchType: 'all',
+    })
     void queryClient.invalidateQueries({ queryKey: ['exercises', 'recent-ids', userId] })
     void queryClient.invalidateQueries({ queryKey: ['history'], refetchType: 'all' })
     void queryClient.invalidateQueries({ queryKey: ['progress'], refetchType: 'all' })
@@ -1200,11 +1273,14 @@ export default function Workout() {
             </div>
             <button
               type="button"
-              onClick={() => setStartSheet('new')}
+              onClick={() => setStartOpen(true)}
               className="text-sm text-primary min-h-11"
             >
               Start another workout
             </button>
+            <LaterWorkoutActions />
+            <RecentWorkoutsList userId={userId} />
+            <ExercisesLink />
           </div>
         ) : (
           <div className="space-y-4">
@@ -1213,111 +1289,34 @@ export default function Workout() {
               size="lg"
               className="w-full min-h-14 text-base"
               disabled={typePending || !idleType}
-              onClick={() => setStartSheet('new')}
+              onClick={() => setStartOpen(true)}
             >
               <Dumbbell size={16} className="mr-2" />
               Start workout
             </Button>
-
-            {latest && (
-              <button
-                type="button"
-                onClick={() => setStartSheet('repeat')}
-                className="block mx-auto min-h-11 px-3 text-sm text-primary underline underline-offset-4"
-              >
-                Repeat last workout
-              </button>
-            )}
-
-            {latest && (
-              <div className="rounded-xl border border-border bg-surface p-4">
-                <p className="text-[11px] text-text-secondary uppercase tracking-widest mb-1">
-                  Last workout
-                </p>
-                <p className="text-sm font-semibold text-text-primary">
-                  {latest.label || 'Workout'} · {formatRelativeDate(latest.date)}
-                </p>
-                <p className="text-xs text-text-secondary mt-1">
-                  {pluralize(latest.exerciseCount, 'exercise')} · {pluralize(latest.setCount, 'set')} ·{' '}
-                  {formatVolume(latest.totalVolumeKg, units)}
-                </p>
-              </div>
-            )}
+            <LaterWorkoutActions />
+            <RecentWorkoutsList userId={userId} />
+            <ExercisesLink />
           </div>
         )}
-        <BottomSheet
-          open={startSheet != null}
-          onClose={() => setStartSheet(null)}
-          title="Start workout"
-        >
-          <div className="p-4 space-y-4">
-            {startSheet === 'repeat' && latest ? (
-              <>
-                <p className="text-sm text-text-secondary">
-                  {latest.label} · {pluralize(latest.exerciseCount, 'exercise')} · {pluralize(latest.setCount, 'set')}
-                </p>
-                <Button
-                  variant="primary"
-                  size="lg"
-                  className="w-full min-h-12"
-                  onClick={() => {
-                    setStartSheet(null)
-                    beginWorkoutWithType(latest.label || idleType, false, true)
-                  }}
-                >
-                  Repeat {latest.label}
-                </Button>
-              </>
-            ) : (
-              <>
-                <div className="flex flex-wrap gap-2">
-                  {typeChips.map((type) => {
-                    const active = idleType === type
-                    return (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => setPickedType(type)}
-                        className={cn(
-                          'px-4 rounded-xl text-sm font-semibold uppercase tracking-wider border min-h-11',
-                          active
-                            ? 'bg-primary text-black border-primary'
-                            : 'border-border text-text-secondary hover:border-primary',
-                        )}
-                      >
-                        {type}
-                      </button>
-                    )
-                  })}
-                </div>
-                {pickedType == null && suggestedType && (
-                  <p className="text-xs text-text-secondary">Suggested: {suggestedType}</p>
-                )}
-                <Button
-                  variant="primary"
-                  size="lg"
-                  className="w-full min-h-12"
-                  disabled={typePending || !idleType}
-                  onClick={() => {
-                    const explicit = pickedType != null
-                    setStartSheet(null)
-                    beginWorkoutWithType(idleType, explicit)
-                  }}
-                >
-                  Start {idleType}
-                </Button>
-              </>
-            )}
-            <Button
-              variant="ghost"
-              size="lg"
-              className="w-full min-h-12"
-              onClick={() => setStartSheet(null)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </BottomSheet>
+        <StartWorkoutSheet
+          open={startOpen}
+          onClose={() => setStartOpen(false)}
+          typeChips={typeChips}
+          suggestedType={suggestedType}
+          ready={suggestionsReady}
+          latest={
+            latest
+              ? {
+                  label: latest.label,
+                  exerciseCount: latest.exerciseCount,
+                  setCount: latest.setCount,
+                }
+              : null
+          }
+          onStartType={(type, explicit) => beginWorkoutWithType(type, explicit)}
+          onRepeat={() => beginWorkoutWithType(latest?.label || idleType, false, true)}
+        />
       </div>
     )
   }

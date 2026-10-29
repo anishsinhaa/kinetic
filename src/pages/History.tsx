@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, ChevronDown, Dumbbell, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
@@ -69,8 +70,11 @@ export default function History() {
   const { data: exerciseHistory } = useExerciseHistory()
   const { units, step } = useWeightDisplay()
   const queryClient = useQueryClient()
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusId = searchParams.get('w')
+  const [expandedId, setExpandedId] = useState<string | null>(focusId)
   const [visible, setVisible] = useState(PAGE_SIZE)
+  const scrolledFor = useRef<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<WorkoutCardData | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
@@ -89,6 +93,12 @@ export default function History() {
       ),
     [logs],
   )
+
+  const focusIndex = focusId ? workouts.findIndex((w) => w.id === focusId) : -1
+  if (focusIndex >= visible) {
+    const nextVisible = Math.ceil((focusIndex + 1) / PAGE_SIZE) * PAGE_SIZE
+    if (nextVisible !== visible) setVisible(nextVisible)
+  }
 
   // workoutId → exercises / volume, built from the per-exercise history
   const details = useMemo(() => {
@@ -207,7 +217,17 @@ export default function History() {
           const time = fmtTime(w.endedAt)
           const setCount = detail?.exercises.reduce((n, e) => n + e.sets.length, 0) ?? 0
           return (
-            <div key={w.id} className="rounded-xl border border-border bg-surface overflow-hidden">
+            <div
+              key={w.id}
+              className="rounded-xl border border-border bg-surface overflow-hidden"
+              ref={(node) => {
+                if (!node || !focusId || w.id !== focusId) return
+                if (scrolledFor.current === focusId) return
+                scrolledFor.current = focusId
+                node.scrollIntoView({ block: 'center', behavior: 'auto' })
+                setSearchParams({}, { replace: true })
+              }}
+            >
               <div className="flex items-stretch">
                 <button
                   type="button"

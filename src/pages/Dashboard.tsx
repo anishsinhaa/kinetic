@@ -14,6 +14,8 @@ import { recoveryScoreFromFeedback, recoveryLabel } from '../features/feedback/t
 import { useCurrentUser } from '../features/auth/useAuth'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { useActiveSession } from '../features/workout/hooks/useActiveSession'
+import { useSuggestedType } from '../features/workout/hooks/useSuggestedType'
+import { StartWorkoutSheet } from '../features/workout/components/StartWorkoutSheet'
 import {
   getDashboardStats,
   getLatestCompletedWorkout,
@@ -104,6 +106,8 @@ export default function Dashboard() {
   const { activeSession } = useActiveSession()
 
   const [recoverySheetOpen, setRecoverySheetOpen] = useState(false)
+  const [startOpen, setStartOpen] = useState(false)
+  const { suggestedType, typeChips, suggestionsReady } = useSuggestedType(userId)
 
   // Elapsed time for the resume button (minute precision)
   const [now, setNow] = useState(() => Date.now())
@@ -153,7 +157,7 @@ export default function Dashboard() {
         <h1 className="text-4xl md:text-5xl font-black text-text-primary leading-none">Today</h1>
       </div>
 
-      {/* Primary: resume, today's done card, or start (confirms on the workout page) */}
+      {/* Primary: resume, today's done card, or one-tap start */}
       {activeSession ? (
         <button
           type="button"
@@ -187,21 +191,33 @@ export default function Dashboard() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/workout?confirm=1')}
+            onClick={() => setStartOpen(true)}
             className="text-sm text-primary min-h-11"
           >
             Start another workout
           </button>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => navigate('/workout?confirm=1')}
-          className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-5 min-h-20 flex items-center justify-center gap-3 text-left"
-        >
-          <Dumbbell size={26} className="shrink-0" />
-          <span className="block text-xl font-black leading-tight">Start Workout</span>
-        </button>
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={!suggestionsReady}
+            onClick={() => navigate('/workout?start=1')}
+            className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-5 min-h-20 flex items-center justify-center gap-3 text-left disabled:opacity-40"
+          >
+            <Dumbbell size={26} className="shrink-0" />
+            <span className="block text-xl font-black leading-tight">
+              {suggestionsReady ? `Start ${suggestedType}` : 'Start Workout'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStartOpen(true)}
+            className="text-sm text-primary min-h-11"
+          >
+            change
+          </button>
+        </div>
       )}
 
       <TodayLogCard userId={userId} />
@@ -318,6 +334,24 @@ export default function Dashboard() {
           <RecoveryPanel onSaved={() => window.setTimeout(() => setRecoverySheetOpen(false), 600)} />
         </div>
       </BottomSheet>
+
+      <StartWorkoutSheet
+        open={startOpen}
+        onClose={() => setStartOpen(false)}
+        typeChips={typeChips}
+        suggestedType={suggestedType}
+        ready={suggestionsReady}
+        latest={
+          last
+            ? { label: last.label, exerciseCount: last.exerciseCount, setCount: last.setCount }
+            : null
+        }
+        onStartType={(type) => {
+          setStartOpen(false)
+          navigate(`/workout?type=${encodeURIComponent(type)}`)
+        }}
+        onRepeat={() => navigate('/workout?repeat=1')}
+      />
     </div>
   )
 }
