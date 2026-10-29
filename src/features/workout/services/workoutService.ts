@@ -7,6 +7,7 @@ import type {
   WorkoutRow,
 } from '../../../lib/supabase/database.types'
 import type { AddSetInput, UpdateWorkoutMetaInput } from '../types'
+import { listRestDays } from '../../dailyLog/services/restDayService'
 import { onlyExercisesWithCompletedSets } from '../lib/completedExercises'
 import { isCompletedSet, totalVolumeKg } from '../lib/volume'
 
@@ -568,7 +569,10 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
   const weekAgoStr = localDateString(weekAgo)
   const weekStart = startOfLocalWeekMonday()
 
-  const [weights, workouts] = await Promise.all([
+  const streakFrom = new Date()
+  streakFrom.setDate(streakFrom.getDate() - 59)
+
+  const [weights, workouts, restDayDates] = await Promise.all([
     supabase
       .from('daily_logs')
       .select('date, weight')
@@ -583,6 +587,7 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
       .not('ended_at', 'is', null)
       .order('ended_at', { ascending: false })
       .limit(60),
+    listRestDays(userId, { from: localDateString(streakFrom) }),
   ])
 
   if (weights.error) throw toServiceError(weights.error)
@@ -594,6 +599,7 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
 
   const workoutRows = workouts.data ?? []
   const workoutDates = new Set(workoutRows.map((r) => r.date as string))
+  const restDates = new Set(restDayDates)
   // Completed sessions in the current local calendar week (Monday through today).
   const workoutsThisWeek = workoutRows.filter((r) => (r.date as string) >= weekStart).length
 
@@ -609,6 +615,11 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
     }
     if (i === 0) {
       // allow missing today — start from yesterday
+      cursor.setDate(cursor.getDate() - 1)
+      continue
+    }
+    if (restDates.has(key)) {
+      // Marked rest days bridge the streak without counting.
       cursor.setDate(cursor.getDate() - 1)
       continue
     }

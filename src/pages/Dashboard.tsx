@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, ChevronRight, Dumbbell, Flame, HeartPulse } from 'lucide-react'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { Card } from '../components/ui/Card'
+import { useRestDay } from '../features/dailyLog/hooks/useRestDays'
 import { todayDateString } from '../features/dailyLog/services/dailyLogService'
 import { TodayLogCard } from '../features/dailyLog/components/TodayLogCard'
 import { localDateString } from '../lib/localDate'
@@ -108,6 +109,7 @@ export default function Dashboard() {
   const [recoverySheetOpen, setRecoverySheetOpen] = useState(false)
   const [startOpen, setStartOpen] = useState(false)
   const { suggestedType, typeChips, suggestionsReady } = useSuggestedType(userId)
+  const todayRest = useRestDay(localDateString())
 
   // Elapsed time for the resume button (minute precision)
   const [now, setNow] = useState(() => Date.now())
@@ -217,6 +219,29 @@ export default function Dashboard() {
           >
             change
           </button>
+          {!todayRest.isLoading &&
+            (todayRest.isRestDay ? (
+              <p className="text-sm text-text-muted min-h-11 flex items-center gap-1">
+                Rest day ·
+                <button
+                  type="button"
+                  onClick={() => todayRest.toggle()}
+                  disabled={todayRest.isSaving}
+                  className="text-sm text-primary min-h-11"
+                >
+                  Undo
+                </button>
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => todayRest.toggle()}
+                disabled={todayRest.isSaving}
+                className="text-sm text-primary min-h-11"
+              >
+                Mark rest day
+              </button>
+            ))}
         </div>
       )}
 

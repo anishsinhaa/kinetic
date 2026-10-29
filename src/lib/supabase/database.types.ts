@@ -129,6 +129,12 @@ export interface UserSettingsRow {
   updated_at: string
 }
 
+export interface RestDayRow {
+  user_id: string
+  date: string
+  created_at: string
+}
+
 export interface PushSubscriptionRow {
   id: string
   user_id: string

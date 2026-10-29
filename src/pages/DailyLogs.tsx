@@ -11,6 +11,7 @@ import type { BodyFeedback } from '../features/feedback/types'
 import type { DailyLogEntry } from '../features/history/types'
 import { LogDaySheet } from '../features/dailyLog/components/LogDaySheet'
 import { dailyLogKeys } from '../features/dailyLog/hooks/useDailyLog'
+import { useRestDay, useRestDays } from '../features/dailyLog/hooks/useRestDays'
 import { RecoveryPanel } from '../features/feedback/components/RecoveryPanel'
 import { deleteDailyLog } from '../features/dailyLog/services/dailyLogService'
 import type { DailyLog } from '../features/dailyLog/types'
@@ -53,6 +54,15 @@ type PendingDelete = { kind: 'log' | 'recovery'; date: string }
 const iconBtn =
   'min-h-11 px-3 inline-flex items-center gap-1.5 rounded-xl border border-border text-xs font-semibold text-text-secondary hover:text-primary hover:border-primary'
 
+function RestDayToggle({ date }: { date: string }) {
+  const { isRestDay, toggle, isSaving } = useRestDay(date)
+  return (
+    <button type="button" className={iconBtn} onClick={() => toggle()} disabled={isSaving}>
+      {isRestDay ? 'Undo rest day' : 'Mark rest day'}
+    </button>
+  )
+}
+
 /** One stacked card per day: daily log + recovery check-in, each with Edit / Delete. */
 export default function DailyLogs() {
   const { user } = useCurrentUser()
@@ -60,6 +70,7 @@ export default function DailyLogs() {
   const { units } = useWeightDisplay()
   const queryClient = useQueryClient()
   const logsQuery = useDailyLogs()
+  const { dates: restSet, isLoading: restLoading } = useRestDays()
   const feedbackQuery = useFeedbackHistory()
   const deleteFeedback = useDeleteFeedback()
 
@@ -82,12 +93,17 @@ export default function DailyLogs() {
       if (existing) existing.feedback = fb
       else byDate.set(fb.date, { date: fb.date, row: null, hasLog: false, feedback: fb })
     }
+    for (const date of restSet) {
+      if (!byDate.has(date)) {
+        byDate.set(date, { date, row: null, hasLog: false, feedback: null })
+      }
+    }
     return [...byDate.values()]
-      .filter((e) => e.hasLog || e.feedback)
+      .filter((e) => e.hasLog || e.feedback || restSet.has(e.date))
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-  }, [logsQuery.data, feedbackQuery.data])
+  }, [logsQuery.data, feedbackQuery.data, restSet])
 
-  const isLoading = logsQuery.isLoading || feedbackQuery.isLoading
+  const isLoading = logsQuery.isLoading || feedbackQuery.isLoading || restLoading
   const error = logsQuery.error ?? feedbackQuery.error
 
   const handleDelete = async () => {
@@ -222,6 +238,7 @@ export default function DailyLogs() {
           if (row?.sleep != null) metrics.push(['Sleep', fmtSleep(row.sleep)])
           const score = feedback ? recoveryScoreFromFeedback(feedback) : null
           const soreCount = feedback?.soreness.length ?? 0
+          const noWorkout = !(row && row.workoutCount > 0)
 
           return (
             <div key={entry.date} className="rounded-xl border border-border bg-surface overflow-hidden">
@@ -233,8 +250,10 @@ export default function DailyLogs() {
                     {row.workoutType ?? 'Workout'}
                     {row.workoutDurationMins ? ` · ${row.workoutDurationMins}m` : ''}
                   </span>
-                ) : (
+                ) : restSet.has(entry.date) ? (
                   <span className="text-xs text-text-muted">Rest day</span>
+                ) : (
+                  <span className="text-xs text-text-muted">No workout</span>
                 )}
               </div>
 
@@ -254,6 +273,7 @@ export default function DailyLogs() {
                   )}
                   {row?.notes && <p className="text-xs text-text-secondary mt-2">{row.notes}</p>}
                   <div className="flex gap-2 mt-3">
+                    {noWorkout && <RestDayToggle date={entry.date} />}
                     <button type="button" className={iconBtn} onClick={() => setLogSheet({ date: entry.date })}>
                       <Pencil size={14} /> Edit log
                     </button>
@@ -290,6 +310,7 @@ export default function DailyLogs() {
                       </p>
                     )}
                     <div className="flex gap-2 mt-3">
+                      {!entry.hasLog && noWorkout && <RestDayToggle date={entry.date} />}
                       <button
                         type="button"
                         className={iconBtn}
@@ -307,13 +328,16 @@ export default function DailyLogs() {
                     </div>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    className="min-h-11 text-sm text-primary underline underline-offset-4"
-                    onClick={() => setRecoverySheetDate(entry.date)}
-                  >
-                    Add recovery update
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!entry.hasLog && noWorkout && <RestDayToggle date={entry.date} />}
+                    <button
+                      type="button"
+                      className="min-h-11 text-sm text-primary underline underline-offset-4"
+                      onClick={() => setRecoverySheetDate(entry.date)}
+                    >
+                      Add recovery update
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
