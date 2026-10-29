@@ -760,7 +760,7 @@ export async function getLatestCompletedWorkout(userId: string): Promise<LatestC
   const startMs = new Date(row.started_at ?? row.created_at).getTime()
   const endMs = new Date(row.ended_at).getTime()
   const minutes = Math.max(1, Math.round((endMs - startMs) / 60000))
-  const durationText = `${minutes}m`
+  const durationText = endMs <= startMs ? '' : `${minutes}m`
 
   const exerciseRows = (row.workout_exercises ?? []).sort(
     (a, b) => (a.order_index ?? 0) - (b.order_index ?? 0),
@@ -910,4 +910,115 @@ export async function getRecentWorkouts(userId: string, limit = 8): Promise<Rece
       durationMins,
     }
   })
+}
+
+export type PastWorkoutInput = {
+  /** Local calendar day, YYYY-MM-DD. */
+  date: string
+  workoutType: string
+  /** ISO timestamp for started_at, ended_at, and each set's completed_at. */
+  endedAt: string
+  exercises: Array<{
+    exerciseId: string
+    sets: Array<{ weight: number | null; reps: number | null; toFailure: boolean }>
+  }>
+}
+
+function newPastRowId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+}
+
+/** Insert one finished workout for a past (or today) date. Never touches an existing row. */
+export async function logPastWorkout(
+  userId: string,
+  input: PastWorkoutInput,
+): Promise<{ id: string }> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error('You are offline — reconnect and try again.')
+  }
+
+  const id = newPastRowId()
+  const workoutType = input.workoutType.trim()
+
+  try {
+    const withType = await supabase.from('workouts').insert({
+      id,
+      user_id: userId,
+      date: input.date,
+      started_at: input.endedAt,
+      workout_type: workoutType,
+      name: workoutType,
+    })
+
+    if (withType.error && isMissingColumnError(withType.error)) {
+      const fallback = await supabase.from('workouts').insert({
+        id,
+        user_id: userId,
+        date: input.date,
+        started_at: input.endedAt,
+        name: workoutType,
+      })
+      if (fallback.error) throw fallback.error
+    } else if (withType.error) {
+      throw withType.error
+    }
+
+    const exerciseRows: Array<{
+      id: string
+      workout_id: string
+      exercise_id: string
+      order_index: number
+    }> = []
+    const setRows: SetUpsertPayload[] = []
+
+    for (const exercise of input.exercises) {
+      if (exercise.sets.length === 0) continue
+      const workoutExerciseId = newPastRowId()
+      exerciseRows.push({
+        id: workoutExerciseId,
+        workout_id: id,
+        exercise_id: exercise.exerciseId,
+        order_index: exerciseRows.length,
+      })
+      exercise.sets.forEach((set, setIndex) => {
+        setRows.push(
+          buildSetUpsertPayload(newPastRowId(), workoutExerciseId, {
+            reps: set.reps,
+            weight: set.weight,
+            to_failure: set.toFailure,
+            set_index: setIndex + 1,
+            completed_at: input.endedAt,
+          }),
+        )
+      })
+    }
+
+    if (exerciseRows.length > 0) {
+      const exercisesInsert = await supabase.from('workout_exercises').insert(exerciseRows)
+      if (exercisesInsert.error) throw exercisesInsert.error
+    }
+    if (setRows.length > 0) {
+      const setsInsert = await supabase.from('sets').insert(setRows)
+      if (setsInsert.error) throw setsInsert.error
+    }
+
+    const finished = await supabase
+      .from('workouts')
+      .update({ ended_at: input.endedAt })
+      .eq('id', id)
+      .eq('user_id', userId)
+    if (finished.error) throw finished.error
+
+    return { id }
+  } catch (err) {
+    try {
+      await supabase.from('workouts').delete().eq('id', id).eq('user_id', userId).is('ended_at', null)
+    } catch {
+      // The leftover row is unfinished and invisible to history and stats.
+    }
+    throw toServiceError(err)
+  }
 }

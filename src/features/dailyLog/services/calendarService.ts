@@ -65,7 +65,9 @@ function wholeMinutes(
   if (!start) return null
   const ms = new Date(endedAt).getTime() - new Date(start).getTime()
   if (!Number.isFinite(ms)) return null
-  return Math.max(0, Math.round(ms / 60000))
+  const minutes = Math.max(0, Math.round(ms / 60000))
+  if (minutes < 1) return null
+  return minutes
 }
 
 function mapWorkouts(rows: RawWorkout[], everySetCompleted: boolean): MonthWorkout[] {

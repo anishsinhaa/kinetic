@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { BottomSheet } from '../../../components/ui/BottomSheet'
-import { Button } from '../../../components/ui/Button'
 import type { BodyFeedback } from '../../feedback/types'
 import { recoveryLabel, recoveryScoreFromFeedback } from '../../feedback/types'
 import { deriveDayWorkoutSummary } from '../../history/lib/deriveDayWorkoutSummary'
@@ -14,9 +13,6 @@ import { cn } from '../../../lib/utils'
 import { useRestDay } from '../hooks/useRestDays'
 import { useMonthOverview } from '../hooks/useMonthOverview'
 import type { MonthLog, MonthWorkout } from '../services/calendarService'
-
-/** Placeholder for logging a workout onto a past day. */
-export const SHOW_LOG_PAST = false
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
 
@@ -144,7 +140,16 @@ function DaySheetBody({
         </button>
       )}
 
-      {SHOW_LOG_PAST && <Button disabled>Log workout for this day</Button>}
+      <button
+        type="button"
+        className="block min-h-11 text-sm text-primary"
+        onClick={() => {
+          onClose()
+          navigate(`/workout/log?date=${date}`)
+        }}
+      >
+        {hasWorkout ? 'Log another workout' : 'Log workout for this day'}
+      </button>
     </div>
   )
 }

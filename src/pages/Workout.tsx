@@ -63,7 +63,7 @@ import type { WeightUnits, WorkoutExerciseTarget } from '../lib/supabase/databas
 
 /** Enabled by later prompts. */
 const SHOW_PLAN = false
-const SHOW_LOG_PAST = false
+const SHOW_LOG_PAST = true
 
 function newClientId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -169,6 +169,7 @@ function RecentWorkoutsList({ userId }: { userId: string }) {
 }
 
 function LaterWorkoutActions() {
+  const navigate = useNavigate()
   if (!SHOW_PLAN && !SHOW_LOG_PAST) return null
   return (
     <div className="flex gap-2">
@@ -184,8 +185,8 @@ function LaterWorkoutActions() {
       {SHOW_LOG_PAST && (
         <button
           type="button"
-          disabled
-          className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary disabled:opacity-40"
+          onClick={() => navigate('/workout/log')}
+          className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:border-primary"
         >
           Log past workout
         </button>
@@ -1277,8 +1278,14 @@ export default function Workout() {
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-surface p-4">
               <p className="text-sm font-semibold text-text-primary">
-                ✓ {latest.label} · {latest.durationText} · {pluralize(latest.exerciseCount, 'exercise')} ·{' '}
-                {pluralize(latest.setCount, 'set')}
+                {[
+                  `✓ ${latest.label}`,
+                  latest.durationText,
+                  pluralize(latest.exerciseCount, 'exercise'),
+                  pluralize(latest.setCount, 'set'),
+                ]
+                  .filter((part) => part !== '')
+                  .join(' · ')}
               </p>
             </div>
             <button
