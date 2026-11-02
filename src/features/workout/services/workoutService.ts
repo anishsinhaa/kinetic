@@ -554,7 +554,8 @@ export async function getRecentWorkoutTypes(
 export type DashboardStats = {
   weightTrend: Array<{ date: string; weight: number }>
   workoutsThisWeek: number
-  streakDays: number
+  trainingDates: string[]
+  restDates: string[]
 }
 
 /** Monday of this week as YYYY-MM-DD in the local timezone (not a rolling 7 days, not UTC). */
@@ -572,8 +573,10 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
 
   const streakFrom = new Date()
   streakFrom.setDate(streakFrom.getDate() - 59)
+  const trainingFrom = new Date()
+  trainingFrom.setDate(trainingFrom.getDate() - 364)
 
-  const [weights, workouts, restDayDates] = await Promise.all([
+  const [weights, workouts, restDayDates, training] = await Promise.all([
     supabase
       .from('daily_logs')
       .select('date, weight')
@@ -589,45 +592,32 @@ export async function getDashboardStats(userId: string): Promise<DashboardStats>
       .order('ended_at', { ascending: false })
       .limit(60),
     listRestDays(userId, { from: localDateString(streakFrom) }),
+    supabase
+      .from('workouts')
+      .select('date')
+      .eq('user_id', userId)
+      .not('ended_at', 'is', null)
+      .gte('date', localDateString(trainingFrom))
+      .order('date', { ascending: false }),
   ])
 
   if (weights.error) throw toServiceError(weights.error)
   if (workouts.error) throw toServiceError(workouts.error)
+  if (training.error) throw toServiceError(training.error)
 
   const weightTrend = (weights.data ?? [])
     .filter((r) => r.weight != null)
     .map((r) => ({ date: r.date as string, weight: Number(r.weight) }))
 
   const workoutRows = workouts.data ?? []
-  const workoutDates = new Set(workoutRows.map((r) => r.date as string))
   const restDates = new Set(restDayDates)
   // Completed sessions in the current local calendar week (Monday through today).
   const workoutsThisWeek = workoutRows.filter((r) => (r.date as string) >= weekStart).length
+  const trainingDates = [...new Set((training.data ?? []).map((row) => row.date as string))].sort(
+    (a, b) => (a < b ? 1 : a > b ? -1 : 0),
+  )
 
-  // Streak: consecutive calendar days with a completed workout ending today/yesterday
-  let streakDays = 0
-  const cursor = new Date()
-  for (let i = 0; i < 60; i++) {
-    const key = localDateString(cursor)
-    if (workoutDates.has(key)) {
-      streakDays += 1
-      cursor.setDate(cursor.getDate() - 1)
-      continue
-    }
-    if (i === 0) {
-      // allow missing today — start from yesterday
-      cursor.setDate(cursor.getDate() - 1)
-      continue
-    }
-    if (restDates.has(key)) {
-      // Marked rest days bridge the streak without counting.
-      cursor.setDate(cursor.getDate() - 1)
-      continue
-    }
-    break
-  }
-
-  return { weightTrend, workoutsThisWeek, streakDays }
+  return { weightTrend, workoutsThisWeek, trainingDates, restDates: [...restDates] }
 }
 
 /** Exercise IDs the user has logged recently (most recent first). */

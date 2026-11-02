@@ -26,6 +26,8 @@ import {
 } from '../features/settings/services/settingsService'
 import type { UserSettings, UserSettingsUpdate, WeightUnits } from '../features/settings/types'
 import { DEFAULT_WORKOUT_TYPES } from '../features/workout/constants'
+import { useWeeklyGoal } from '../features/workout/hooks/useWeeklyGoal'
+import { MAX_WEEKLY_GOAL, MIN_WEEKLY_GOAL } from '../features/workout/lib/weeklyConsistency'
 import { isDefaultWorkoutType, resolveWorkoutTypes } from '../features/workout/lib/workoutTypes'
 import { useWorkoutStore } from '../features/workout/store/useWorkoutStore'
 import {
@@ -261,6 +263,7 @@ function WorkoutTypesEditor({
 
 function PreferencesSection({ userId }: { userId: string }) {
   const navigate = useNavigate()
+  const { goal: weeklyGoal, setGoal: setWeeklyGoal } = useWeeklyGoal(userId)
   const queryClient = useQueryClient()
   const setWorkoutTypes = useWorkoutStore((s) => s.setWorkoutTypes)
   const setPrefs = useWorkoutStore((s) => s.setPrefs)
@@ -780,6 +783,35 @@ function PreferencesSection({ userId }: { userId: string }) {
                 className="w-20 bg-surface-2 border border-border rounded-lg px-2 py-1.5 text-sm text-center text-text-primary"
               />
               <span className="text-xs text-text-muted">{local.units}</span>
+            </div>
+          }
+        />
+        <Row
+          label="Weekly goal"
+          value="Training days per week to keep your weekly streak (this device)"
+          action={
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="Decrease weekly goal"
+                className="min-h-11 min-w-11 rounded-lg border border-border text-lg text-text-primary disabled:opacity-40"
+                disabled={weeklyGoal <= MIN_WEEKLY_GOAL}
+                onClick={() => setWeeklyGoal(weeklyGoal - 1)}
+              >
+                −
+              </button>
+              <span className="w-12 text-center text-sm font-semibold text-text-primary tabular-nums">
+                {weeklyGoal} days
+              </span>
+              <button
+                type="button"
+                aria-label="Increase weekly goal"
+                className="min-h-11 min-w-11 rounded-lg border border-border text-lg text-text-primary disabled:opacity-40"
+                disabled={weeklyGoal >= MAX_WEEKLY_GOAL}
+                onClick={() => setWeeklyGoal(weeklyGoal + 1)}
+              >
+                +
+              </button>
             </div>
           }
         />

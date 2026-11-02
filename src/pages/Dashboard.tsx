@@ -17,7 +17,9 @@ import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { useActiveSession } from '../features/workout/hooks/useActiveSession'
 import { useSuggestedType } from '../features/workout/hooks/useSuggestedType'
 import { useTodayType } from '../features/workout/hooks/useTodayType'
+import { useWeeklyGoal } from '../features/workout/hooks/useWeeklyGoal'
 import { useWorkoutPlan } from '../features/workout/hooks/useWorkoutPlan'
+import { computeOnTrack, computeWeeklyStreak } from '../features/workout/lib/weeklyConsistency'
 import {
   getDashboardStats,
   getLatestCompletedWorkout,
@@ -29,6 +31,10 @@ import { cn } from '../lib/utils'
 
 function SkeletonBlock({ className }: { className?: string }) {
   return <div className={cn('animate-pulse rounded-xl bg-surface-3', className)} />
+}
+
+function daysAgoLabel(n: number): string {
+  return n === 1 ? 'yesterday' : `${n} days ago`
 }
 
 function formatElapsedShort(ms: number): string {
@@ -113,7 +119,9 @@ export default function Dashboard() {
   const { override, setOverride, clearOverride } = useTodayType(userId, typeChips)
   const todayType = override ?? suggestedType
   const plan = useWorkoutPlan(userId)
-  const todayRest = useRestDay(localDateString())
+  const today = localDateString()
+  const { goal } = useWeeklyGoal(userId)
+  const todayRest = useRestDay(today)
 
   // Elapsed time for the resume button (minute precision)
   const [now, setNow] = useState(() => Date.now())
@@ -135,6 +143,14 @@ export default function Dashboard() {
     queryKey: ['dashboard', 'stats', userId],
     queryFn: () => getDashboardStats(userId),
   })
+  const weekly = useMemo(
+    () => computeWeeklyStreak(statsQuery.data?.trainingDates ?? [], goal, today),
+    [statsQuery.data?.trainingDates, goal, today],
+  )
+  const onTrack = useMemo(
+    () => computeOnTrack(statsQuery.data?.trainingDates ?? [], statsQuery.data?.restDates ?? [], today),
+    [statsQuery.data?.trainingDates, statsQuery.data?.restDates, today],
+  )
 
   const avgWeight = useMemo(() => {
     if (!logsQuery.isFetched) return null
@@ -342,12 +358,25 @@ export default function Dashboard() {
                 '—'
               )}
             </StatTile>
-            <StatTile label="Workouts this week">{statsQuery.data?.workoutsThisWeek ?? 0}</StatTile>
-            <StatTile label="Streak" icon={<Flame size={11} />}>
-              <span className="text-primary">{statsQuery.data?.streakDays ?? 0}</span>
-              <span className="text-sm font-medium text-text-secondary ml-1">
-                {(statsQuery.data?.streakDays ?? 0) === 1 ? 'day' : 'days'}
-              </span>
+            <StatTile label="This week" hint={weekly.goalHit ? 'Goal hit ✓' : 'training days'}>
+              <span className={weekly.goalHit ? 'text-primary' : undefined}>{weekly.thisWeekDays}</span>
+              <span className="text-sm font-medium text-text-secondary ml-1">/ {goal}</span>
+            </StatTile>
+            <StatTile
+              label="Weekly streak"
+              icon={<Flame size={11} />}
+              hint={weekly.streak > 0 ? `${goal}+ days a week` : `Hit ${goal} days this week`}
+            >
+              {weekly.streak > 0 ? (
+                <>
+                  <span className="text-primary">{weekly.streak}</span>
+                  <span className="text-sm font-medium text-text-secondary ml-1">
+                    {weekly.streak === 1 ? 'week' : 'weeks'}
+                  </span>
+                </>
+              ) : (
+                '—'
+              )}
             </StatTile>
           </>
         )}
@@ -381,6 +410,24 @@ export default function Dashboard() {
           </Card>
         </button>
       </div>
+
+      {!statsQuery.isLoading && onTrack.status !== 'none' && (
+        <p className="flex items-center gap-2 text-xs text-text-secondary -mt-2">
+          <span
+            className={cn(
+              'h-2 w-2 rounded-full',
+              onTrack.status === 'time_to_train' ? 'bg-amber-400' : 'bg-green-400',
+            )}
+          />
+          {onTrack.status === 'trained_today'
+            ? 'On track · trained today'
+            : onTrack.status === 'rest_today'
+              ? 'On track · rest day today'
+              : onTrack.status === 'on_track'
+                ? `On track · last workout ${daysAgoLabel(onTrack.daysSince ?? 0)}`
+                : `Time to train · ${onTrack.daysSince ?? 0} days since last workout`}
+        </p>
+      )}
 
       {/* Recovery tile */}
       <Card className="p-4">
