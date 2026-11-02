@@ -25,6 +25,7 @@ import {
   weightUnitLabel,
 } from '../features/settings/lib/units'
 import type { WeightUnits } from '../lib/supabase/database.types'
+import { localDateString } from '../lib/localDate'
 import { selectOnFocus } from '../lib/selectOnFocus'
 import { pluralize } from '../lib/pluralize'
 import { cn } from '../lib/utils'
@@ -111,12 +112,21 @@ function storedWeight(display: string, units: WeightUnits): number | null {
   return Math.min(MAX_SET_WEIGHT_KG, toStoredKg(Number.parseFloat(display), units))
 }
 
-function longDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString('en-GB', {
-    weekday: 'short',
+function isRealDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(year, month - 1, day)
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
+}
+
+function fmtShort(value: string): string {
+  if (!isRealDate(value)) return value
+  return new Date(`${value}T00:00:00`).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
-    year: 'numeric',
   })
 }
 
@@ -148,6 +158,8 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
   const displayLimit = roundDisplayWeight(kgToDisplay(MAX_SET_WEIGHT_KG, units), units)
 
   const [type, setType] = useState(workout.type)
+  const [date, setDate] = useState(workout.date)
+  const today = localDateString()
   const [exercises, setExercises] = useState(() => buildCards(workout, units))
   const [removedSetIds, setRemovedSetIds] = useState<string[]>([])
   const [removedExerciseIds, setRemovedExerciseIds] = useState<string[]>([])
@@ -174,17 +186,21 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
   )
   const addedExerciseCount = exercises.filter((exercise) => exercise.isNew).length
   const remainingSets = exercises.reduce((count, exercise) => count + exercise.sets.length, 0)
+  const dateInvalid = !isRealDate(date) || date > today || date < '2000-01-01'
   const anyInvalid =
+    dateInvalid ||
     exercises.some((exercise) => exercise.isNew && exercise.sets.length === 0) ||
     exercises.some((exercise) => exercise.sets.some((set) => isInvalidSet(set, displayLimit)))
   const typeChanged = type.trim() !== workout.type.trim()
+  const dateChanged = date !== workout.date
   const hasChanges =
     changedCount > 0 ||
     addedSetCount > 0 ||
     removedSetIds.length > 0 ||
     removedExerciseIds.length > 0 ||
     addedExerciseCount > 0 ||
-    typeChanged
+    typeChanged ||
+    dateChanged
 
   const summary = useMemo(() => {
     const parts: string[] = []
@@ -196,15 +212,19 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
       parts.push(`${pluralize(removedExerciseIds.length, 'exercise')} removed`)
     }
     if (typeChanged) parts.push(`Type: ${workout.type.trim()} → ${type.trim()}`)
+    if (dateChanged) parts.push(`Date: ${fmtShort(workout.date)} → ${fmtShort(date)}`)
     return parts.length > 0 ? parts.join(' · ') : 'No changes yet'
   }, [
     addedExerciseCount,
     addedSetCount,
     changedCount,
+    date,
+    dateChanged,
     removedExerciseIds.length,
     removedSetIds.length,
     type,
     typeChanged,
+    workout.date,
     workout.type,
   ])
 
@@ -310,6 +330,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         changedSets,
         newExercises,
         addedSets,
+        date: date !== workout.date ? date : undefined,
       })
       await invalidateAfterEdit(queryClient, userId)
       toast.show('Workout updated')
@@ -338,8 +359,9 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
     }
   }
 
-  const blockMessage =
-    remainingSets === 0
+  const blockMessage = dateInvalid
+    ? 'Pick a valid date'
+    : remainingSets === 0
       ? 'A workout needs at least one set — delete the workout instead.'
       : anyInvalid
         ? 'Fill weight and reps, or delete the set'
@@ -354,7 +376,22 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         </button>
       </div>
 
-      <p className="text-sm text-text-secondary">{longDate(workout.date)}</p>
+      <div>
+        <label className="block text-xs uppercase tracking-widest text-text-secondary">Date</label>
+        <input
+          type="date"
+          value={date}
+          max={today}
+          min="2000-01-01"
+          onChange={(event) => setDate(event.target.value)}
+          className={cn(inputClass, 'w-full')}
+        />
+        {date !== workout.date && (
+          <p className="mt-1 text-xs text-text-secondary">
+            The workout moves to this day. Its time of day is kept.
+          </p>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {chips.map((chip) => {

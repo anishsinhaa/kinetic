@@ -1,3 +1,4 @@
+import { localDateString } from '../../../lib/localDate'
 import { supabase } from '../../../lib/supabase/client'
 import { toServiceError } from '../../../lib/supabase/errors'
 import { isCompletedSet } from '../lib/volume'
@@ -55,6 +56,7 @@ export type WorkoutEditDraft = {
     exerciseRowId: string
     set: { id: string; weight: number | null; reps: number | null }
   }>
+  date?: string
 }
 
 type JoinedExercise = { name: string; muscle_group: string }
@@ -173,6 +175,74 @@ export async function getWorkoutForEdit(
   }
 }
 
+function isRealDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(year, month - 1, day)
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
+}
+
+function parseLocal(date: string): Date {
+  const [year, month, day] = date.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function noonOrNow(date: string, nowMs: number): string {
+  const [year, month, day] = date.split('-').map(Number)
+  const noon = new Date(year, month - 1, day, 12, 0, 0, 0)
+  const stamp = noon.getTime() > nowMs ? new Date(nowMs) : noon
+  return stamp.toISOString()
+}
+
+export function computeMovedTimestamps(
+  original: { date: string; startedAt: string | null; endedAt: string },
+  newDate: string,
+  nowMs: number = Date.now(),
+): { startedAt: string | null; endedAt: string } {
+  const delta = Math.round(
+    (parseLocal(newDate).getTime() - parseLocal(original.date).getTime()) / 86_400_000,
+  )
+  const shift = (iso: string): Date => {
+    const d = new Date(iso)
+    return new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate() + delta,
+      d.getHours(),
+      d.getMinutes(),
+      d.getSeconds(),
+      d.getMilliseconds(),
+    )
+  }
+
+  if (
+    original.startedAt != null &&
+    new Date(original.startedAt).getTime() === new Date(original.endedAt).getTime()
+  ) {
+    const stamp = noonOrNow(newDate, nowMs)
+    return { startedAt: stamp, endedAt: stamp }
+  }
+
+  let ended = shift(original.endedAt)
+  let started = original.startedAt ? shift(original.startedAt) : null
+  if (ended.getTime() > nowMs) {
+    const overshoot = ended.getTime() - nowMs
+    ended = new Date(ended.getTime() - overshoot)
+    if (started) started = new Date(started.getTime() - overshoot)
+  }
+  if (started && started.getTime() < parseLocal(newDate).getTime()) {
+    const stamp = noonOrNow(newDate, nowMs)
+    return { startedAt: original.startedAt != null ? stamp : null, endedAt: stamp }
+  }
+  return {
+    startedAt: started ? started.toISOString() : null,
+    endedAt: ended.toISOString(),
+  }
+}
+
 function originalSet(original: EditableWorkout, setId: string): EditableSet | undefined {
   for (const exercise of original.exercises) {
     const found = exercise.sets.find((set) => set.id === setId)
@@ -181,6 +251,7 @@ function originalSet(original: EditableWorkout, setId: string): EditableSet | un
   return undefined
 }
 
+/** Save order: new exercises → added sets → changed sets → deleted sets → deleted exercises → type → date. */
 export async function saveWorkoutEdits(
   userId: string,
   original: EditableWorkout,
@@ -274,6 +345,27 @@ export async function saveWorkoutEdits(
   const nextType = draft.type.trim()
   if (nextType !== original.type.trim() && nextType !== '') {
     await updateWorkoutMeta(original.id, { workout_type: nextType })
+  }
+
+  if (draft.date && draft.date !== original.date) {
+    const today = localDateString()
+    if (!isRealDate(draft.date) || draft.date > today || draft.date < '2000-01-01') {
+      throw new Error('Pick a valid date')
+    }
+    const moved = computeMovedTimestamps(original, draft.date)
+    const updated = await supabase
+      .from('workouts')
+      .update({
+        date: draft.date,
+        ...(original.startedAt != null ? { started_at: moved.startedAt } : {}),
+        ended_at: moved.endedAt,
+      })
+      .eq('id', original.id)
+      .eq('user_id', userId)
+      .not('ended_at', 'is', null)
+      .select('id')
+    if (updated.error) throw toServiceError(updated.error)
+    if (!updated.data || updated.data.length === 0) throw new Error('This workout no longer exists')
   }
 }
 
