@@ -368,7 +368,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         : ''
 
   return (
-    <div className="p-4 md:p-8 pb-24 max-w-lg mx-auto space-y-4">
+    <div className="p-4 md:p-8 pb-32 max-w-lg mx-auto space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-black text-text-primary">Edit workout</h1>
         <button type="button" onClick={requestLeave} className="min-h-11 px-3 text-sm text-text-secondary">
@@ -469,7 +469,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
                   type="button"
                   aria-label={`Delete set ${index + 1} of ${exercise.name}`}
                   onClick={() => removeSet(exercise, set)}
-                  className="min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center text-text-muted"
+                  className="min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center text-text-secondary hover:text-red-400"
                 >
                   <Trash2 size={16} />
                 </button>
@@ -504,7 +504,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         Delete workout
       </button>
 
-      <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] pt-2 space-y-2">
+      <div className="sticky z-10 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 -mx-4 md:-mx-8 px-4 md:px-8 pt-3 pb-3 space-y-2 bg-background border-t border-border">
         <p className="text-xs text-text-secondary">{summary}</p>
         {blockMessage && <p className="text-xs text-red-400">{blockMessage}</p>}
         <Button

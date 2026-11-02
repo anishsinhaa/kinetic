@@ -370,7 +370,8 @@ export default function Dashboard() {
               {weekly.streak > 0 ? (
                 <>
                   <span className="text-primary">{weekly.streak}</span>
-                  <span className="text-sm font-medium text-text-secondary ml-1">
+                  <span className="text-sm font-medium text-text-secondary">
+                    {' '}
                     {weekly.streak === 1 ? 'week' : 'weeks'}
                   </span>
                 </>

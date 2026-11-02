@@ -1213,7 +1213,7 @@ export default function Workout() {
           useWorkoutStore.getState().finishWorkout()
           setConfirmFinish(false)
           invalidateAfterWorkout()
-          navigate('/')
+          navigate('/workout', { replace: true })
         } catch (err) {
           toast.show(`Couldn't discard workout: ${(err as Error).message}`, { kind: 'error' })
         } finally {
@@ -1293,7 +1293,7 @@ export default function Workout() {
         useWorkoutStore.getState().finishWorkout()
         setConfirmFinish(false)
         invalidateAfterWorkout()
-        navigate('/')
+        navigate('/workout', { replace: true })
         return
       }
 
