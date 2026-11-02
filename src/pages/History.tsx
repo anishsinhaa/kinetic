@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, ChevronDown, Dumbbell, Loader2, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronDown, Dumbbell, Loader2, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { useCurrentUser } from '../features/auth/useAuth'
@@ -68,6 +68,7 @@ async function invalidateHistoryCaches(queryClient: ReturnType<typeof useQueryCl
 export default function History() {
   const { user } = useCurrentUser()
   const userId = user!.id
+  const navigate = useNavigate()
   const { data: logs, isLoading, error } = useDailyLogs()
   const { data: exerciseHistory } = useExerciseHistory()
   const { units, step } = useWeightDisplay()
@@ -267,6 +268,14 @@ export default function History() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => navigate(`/progress/history/${w.id}/edit`)}
+                  aria-label={`Edit ${w.label} on ${fmtDateLong(w.date)}`}
+                  className="min-w-11 flex items-center justify-center text-text-muted hover:text-primary border-l border-border"
+                >
+                  <Pencil size={16} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => setPendingDelete(w)}
                   aria-label={`Delete ${w.label} on ${fmtDateLong(w.date)}`}
                   className="min-w-11 flex items-center justify-center text-text-muted hover:text-red-400 border-l border-border"
@@ -292,6 +301,13 @@ export default function History() {
                   ) : (
                     <p className="text-xs text-text-muted">No sets recorded.</p>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/progress/history/${w.id}/edit`)}
+                    className="min-h-11 text-sm text-primary"
+                  >
+                    Edit workout
+                  </button>
                 </div>
               )}
             </div>

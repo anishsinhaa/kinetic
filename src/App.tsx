@@ -18,6 +18,7 @@ const Workout    = lazyWithReload(() => import('./pages/Workout'))
 const LogPastWorkout = lazyWithReload(() => import('./pages/LogPastWorkout'))
 const PlanWorkout = lazyWithReload(() => import('./pages/PlanWorkout'))
 const History    = lazyWithReload(() => import('./pages/History'))
+const EditWorkout = lazyWithReload(() => import('./pages/EditWorkout'))
 const Exercises  = lazyWithReload(() => import('./pages/Exercises'))
 const Progress   = lazyWithReload(() => import('./pages/Progress'))
 const DailyLogs  = lazyWithReload(() => import('./pages/DailyLogs'))
@@ -80,6 +81,7 @@ function AppShell() {
           <Route path="/progress" element={<SectionLayout tabs={PROGRESS_TABS} label="Progress" />}>
             <Route index element={<Progress />} />
             <Route path="history" element={<History />} />
+            <Route path="history/:workoutId/edit" element={<EditWorkout />} />
             <Route path="logs" element={<DailyLogs />} />
           </Route>
           <Route path="/settings" element={<Settings />} />

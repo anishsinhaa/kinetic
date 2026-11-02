@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil } from 'lucide-react'
 import { BottomSheet } from '../../../components/ui/BottomSheet'
 import type { BodyFeedback } from '../../feedback/types'
 import { recoveryLabel, recoveryScoreFromFeedback } from '../../feedback/types'
@@ -91,24 +91,36 @@ function DaySheetBody({
   return (
     <div className="p-4 space-y-3">
       {workouts.map((workout) => (
-        <button
-          key={workout.id}
-          type="button"
-          className="w-full min-h-12 rounded-xl border border-border bg-surface-2 px-3 py-2 flex items-center justify-between gap-3 text-left"
-          onClick={() => {
-            onClose()
-            navigate(`/progress/history?w=${workout.id}`)
-          }}
-        >
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary truncate">{workout.label || 'Workout'}</p>
-            <p className="text-xs text-text-secondary">
-              {pluralize(workout.exerciseCount, 'exercise')} · {pluralize(workout.setCount, 'set')}
-              {workout.durationMins != null ? ` · ${workout.durationMins}m` : ''}
-            </p>
-          </div>
-          <ChevronRight size={16} className="shrink-0 text-text-muted" />
-        </button>
+        <div key={workout.id} className="flex items-stretch gap-2">
+          <button
+            type="button"
+            className="flex-1 min-w-0 min-h-12 rounded-xl border border-border bg-surface-2 px-3 py-2 flex items-center justify-between gap-3 text-left"
+            onClick={() => {
+              onClose()
+              navigate(`/progress/history?w=${workout.id}`)
+            }}
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-text-primary truncate">{workout.label || 'Workout'}</p>
+              <p className="text-xs text-text-secondary">
+                {pluralize(workout.exerciseCount, 'exercise')} · {pluralize(workout.setCount, 'set')}
+                {workout.durationMins != null ? ` · ${workout.durationMins}m` : ''}
+              </p>
+            </div>
+            <ChevronRight size={16} className="shrink-0 text-text-muted" />
+          </button>
+          <button
+            type="button"
+            aria-label={`Edit ${workout.label || 'workout'}`}
+            onClick={() => {
+              onClose()
+              navigate(`/progress/history/${workout.id}/edit`)
+            }}
+            className="min-h-12 min-w-12 rounded-xl border border-border bg-surface-2 flex items-center justify-center text-text-secondary hover:text-primary"
+          >
+            <Pencil size={16} />
+          </button>
+        </div>
       ))}
 
       {isRestDay && !hasWorkout && (
