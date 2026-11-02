@@ -57,10 +57,10 @@ import {
 } from '../features/workout/lib/exercisePrefill'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
 import { PlannedWorkoutCard } from '../features/workout/components/PlannedWorkoutCard'
+import { useTodayType } from '../features/workout/hooks/useTodayType'
 import { useWorkoutPlan } from '../features/workout/hooks/useWorkoutPlan'
 import { clearWorkoutPlan, type WorkoutPlan } from '../features/workout/lib/workoutPlan'
 import { getExercisesByIds } from '../features/workout/services/exerciseService'
-import { StartWorkoutSheet } from '../features/workout/components/StartWorkoutSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { RestTimerRing } from '../features/workout/components/RestTimerRing'
 import { PrCelebration } from '../features/workout/components/PrCelebration'
@@ -184,7 +184,7 @@ function LaterWorkoutActions({ hasPlan }: { hasPlan: boolean }) {
           onClick={() => navigate('/workout/plan')}
           className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:border-primary"
         >
-          Plan workout
+          Plan for later
         </button>
       )}
       {SHOW_LOG_PAST && (
@@ -194,6 +194,78 @@ function LaterWorkoutActions({ hasPlan }: { hasPlan: boolean }) {
           className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:border-primary"
         >
           Log past workout
+        </button>
+      )}
+    </div>
+  )
+}
+
+function StartBlock({
+  type,
+  ready,
+  isOverride,
+  hasSplit,
+  typeChips,
+  latest,
+  onStart,
+  onRepeat,
+}: {
+  type: string
+  ready: boolean
+  isOverride: boolean
+  hasSplit: boolean
+  typeChips: string[]
+  latest: { label: string; exerciseCount: number; setCount: number } | null
+  onStart: (type: string, explicit: boolean) => void
+  onRepeat: () => void
+}) {
+  const others = typeChips.filter(
+    (chip) => chip.trim().toLowerCase() !== type.trim().toLowerCase(),
+  )
+  return (
+    <div className="space-y-3">
+      <Button
+        variant="primary"
+        size="lg"
+        className="w-full min-h-14 text-base"
+        disabled={!ready || !type}
+        onClick={() => onStart(type, isOverride)}
+      >
+        <Dumbbell size={16} className="mr-2" />
+        {ready ? `Start ${type}` : 'Start workout'}
+      </Button>
+      <p className="text-xs text-text-secondary text-center">
+        {isOverride ? 'Your pick for today' : hasSplit ? 'Suggested from your split' : 'Suggested next'}
+      </p>
+      {ready && others.length > 0 && (
+        <>
+          <p className="text-[11px] uppercase tracking-widest text-text-secondary pt-1">
+            Or start a different day
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {others.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                aria-label={`Start ${chip}`}
+                disabled={!ready}
+                onClick={() => onStart(chip, true)}
+                className="min-h-11 px-4 rounded-full border border-border bg-surface-2 text-sm font-medium text-text-primary hover:border-primary disabled:opacity-40"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {latest && (
+        <button
+          type="button"
+          onClick={onRepeat}
+          className="block w-full min-h-11 text-sm text-primary text-left truncate"
+        >
+          Repeat last: {latest.label} · {pluralize(latest.exerciseCount, 'exercise')} ·{' '}
+          {pluralize(latest.setCount, 'set')}
         </button>
       )}
     </div>
@@ -259,7 +331,6 @@ export default function Workout() {
   const [tick, setTick] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [typeSheetOpen, setTypeSheetOpen] = useState(false)
-  const [startOpen, setStartOpen] = useState(false)
   const plan = useWorkoutPlan(userId)
   const [pickedType, setPickedType] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
@@ -395,6 +466,7 @@ export default function Workout() {
   const typeChips = useMemo(() => resolveWorkoutTypes(workoutTypes), [workoutTypes])
   // Shared with Home and Settings: same cache keys, rest-timer default included.
   const { suggestedType, suggestionsReady, settings } = useSuggestedType(userId, typeChips)
+  const todayType = useTodayType(userId, typeChips)
 
   useEffect(() => {
     if (!settings) return
@@ -493,8 +565,9 @@ export default function Workout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warmupStartedAt, warmupEndedAt, tick])
 
-  const idleType = pickedType ?? suggestedType
+  const idleType = pickedType ?? todayType.override ?? suggestedType
   const typePending = !suggestionsReady && pickedType == null
+  const typeIsOverride = pickedType != null || todayType.override != null
 
   // Don't wait on the workout-create round trip. The id exists as soon as Start
   // runs; DB inserts queue on `workoutReadyRef` until the row is actually there.
@@ -558,6 +631,15 @@ export default function Workout() {
       markReady = resolve
     })
 
+    const focusFirstExercise = () => {
+      const s = useWorkoutStore.getState()
+      if (s.currentWorkoutId !== workoutId || s.exercises.length < 2) return
+      const first = s.exercises[0]
+      const last = s.exercises[s.exercises.length - 1]
+      if (!first || !last) return
+      if (s.activeExerciseId == null || s.activeExerciseId === last.id) s.setActiveExercise(first.id)
+    }
+
     void (async () => {
       try {
         await createWorkout(userId, today, normalizedType, workoutId)
@@ -587,9 +669,11 @@ export default function Workout() {
             )
           }
           if (useWorkoutStore.getState().currentWorkoutId === workoutId) {
-            await Promise.all(
+            const adds = Promise.all(
               plannedExercises.map((exercise) => addExerciseFromLibrary(exercise).catch(() => {})),
             )
+            focusFirstExercise()
+            await adds
           }
           const skipped = plan.exercises.length - plannedExercises.length
           if (skipped > 0) {
@@ -624,7 +708,7 @@ export default function Workout() {
             }),
           )
           if (useWorkoutStore.getState().currentWorkoutId === workoutId) {
-            await Promise.all(
+            const adds = Promise.all(
               prepared.map(async ({ ex, sets, prefill }) => {
                 try {
                   await addExerciseFromLibrary(
@@ -653,6 +737,8 @@ export default function Workout() {
                 }
               }),
             )
+            focusFirstExercise()
+            await adds
           }
         }
       } catch (err) {
@@ -1354,13 +1440,30 @@ export default function Workout() {
                 }}
               />
             )}
-            <button
-              type="button"
-              onClick={() => setStartOpen(true)}
-              className="text-sm text-primary min-h-11"
-            >
+            <p className="text-[11px] uppercase tracking-widest text-text-secondary">
               Start another workout
-            </button>
+            </p>
+            <StartBlock
+              type={idleType}
+              ready={!typePending}
+              isOverride={typeIsOverride}
+              hasSplit={Boolean(settings?.split?.length)}
+              typeChips={typeChips}
+              latest={
+                latest
+                  ? {
+                      label: latest.label,
+                      exerciseCount: latest.exerciseCount,
+                      setCount: latest.setCount,
+                    }
+                  : null
+              }
+              onStart={(type, explicit) => beginWorkoutWithType(type, explicit)}
+              onRepeat={() => beginWorkoutWithType(latest?.label || idleType, false, true)}
+            />
+            <p className="text-[11px] uppercase tracking-widest text-text-secondary">
+              Not training now?
+            </p>
             <LaterWorkoutActions hasPlan={Boolean(plan)} />
             <RecentWorkoutsList userId={userId} />
             <ExercisesLink />
@@ -1378,39 +1481,32 @@ export default function Workout() {
                 }}
               />
             )}
-            <Button
-              variant="primary"
-              size="lg"
-              className="w-full min-h-14 text-base"
-              disabled={typePending || !idleType}
-              onClick={() => setStartOpen(true)}
-            >
-              <Dumbbell size={16} className="mr-2" />
-              Start workout
-            </Button>
+            <StartBlock
+              type={idleType}
+              ready={!typePending}
+              isOverride={typeIsOverride}
+              hasSplit={Boolean(settings?.split?.length)}
+              typeChips={typeChips}
+              latest={
+                latest
+                  ? {
+                      label: latest.label,
+                      exerciseCount: latest.exerciseCount,
+                      setCount: latest.setCount,
+                    }
+                  : null
+              }
+              onStart={(type, explicit) => beginWorkoutWithType(type, explicit)}
+              onRepeat={() => beginWorkoutWithType(latest?.label || idleType, false, true)}
+            />
+            <p className="text-[11px] uppercase tracking-widest text-text-secondary">
+              Not training now?
+            </p>
             <LaterWorkoutActions hasPlan={Boolean(plan)} />
             <RecentWorkoutsList userId={userId} />
             <ExercisesLink />
           </div>
         )}
-        <StartWorkoutSheet
-          open={startOpen}
-          onClose={() => setStartOpen(false)}
-          typeChips={typeChips}
-          suggestedType={suggestedType}
-          ready={suggestionsReady}
-          latest={
-            latest
-              ? {
-                  label: latest.label,
-                  exerciseCount: latest.exerciseCount,
-                  setCount: latest.setCount,
-                }
-              : null
-          }
-          onStartType={(type, explicit) => beginWorkoutWithType(type, explicit)}
-          onRepeat={() => beginWorkoutWithType(latest?.label || idleType, false, true)}
-        />
       </div>
     )
   }

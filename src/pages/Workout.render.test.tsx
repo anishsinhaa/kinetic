@@ -152,10 +152,9 @@ describe('Workout page render', () => {
 
     renderWorkout('/workout')
 
-    const start = await screen.findByRole('button', { name: /start workout/i })
+    const start = await screen.findByRole('button', { name: /^start pull$/i })
     await waitFor(() => expect(start).toBeEnabled())
     fireEvent.click(start)
-    fireEvent.click(await screen.findByRole('button', { name: /^start pull$/i }))
 
     await waitFor(() => {
       expect(useWorkoutStore.getState().currentWorkoutId).toBeTruthy()
