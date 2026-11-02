@@ -1074,7 +1074,10 @@ export async function discardWorkoutIfUnlogged(
 }
 
 export type ExpiredWorkoutResult =
-  | { kind: 'skipped'; reason: 'missing' | 'finished' | 'not_due' | 'unsynced' | 'has_logged_sets' }
+  | {
+      kind: 'skipped'
+      reason: 'missing' | 'finished' | 'not_due' | 'unsynced' | 'has_logged_sets' | 'has_sets'
+    }
   | { kind: 'finished'; setCount: number; endedAt: string }
   | { kind: 'discarded' }
 
@@ -1086,6 +1089,7 @@ export async function resolveExpiredWorkout(
     requiredSetIds: string[]
     meta?: FinishWorkoutMeta
     nowMs?: number
+    discardOnlyIfNoSets?: boolean
   },
 ): Promise<ExpiredWorkoutResult> {
   const nowMs = options.nowMs ?? Date.now()
@@ -1120,6 +1124,12 @@ export async function resolveExpiredWorkout(
   }
 
   if (completed.length === 0) {
+    if (
+      options.discardOnlyIfNoSets &&
+      exercises.some((exercise) => (exercise.sets ?? []).length > 0)
+    ) {
+      return { kind: 'skipped', reason: 'has_sets' }
+    }
     const res = await discardWorkoutIfUnlogged(userId, workoutId, { allowExercises: true })
     if (res.reason === 'deleted') return { kind: 'discarded' }
     if (res.reason === 'missing') return { kind: 'skipped', reason: 'missing' }
@@ -1164,4 +1174,73 @@ export async function resolveExpiredWorkout(
   await deleteWorkoutExercises(emptyExerciseIds).catch(() => {})
 
   return { kind: 'finished', setCount: completed.length, endedAt }
+}
+
+export async function resolveOtherExpiredWorkouts(
+  userId: string,
+  options: {
+    limitMs: number
+    getCurrentWorkoutId: () => string | null
+    skipIds?: ReadonlySet<string>
+    nowMs?: number
+  },
+): Promise<{
+  finished: Array<{ id: string; setCount: number }>
+  discarded: string[]
+  settledIds: string[]
+}> {
+  const nowMs = options.nowMs ?? Date.now()
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('id, started_at, created_at')
+    .eq('user_id', userId)
+    .is('ended_at', null)
+    .order('created_at', { ascending: true })
+    .limit(25)
+  if (error) throw toServiceError(error)
+
+  const rows = (data ?? []) as Array<{
+    id: string
+    started_at: string | null
+    created_at: string | null
+  }>
+  const due = rows.filter((row) => {
+    if (options.skipIds?.has(row.id)) return false
+    const startMs = workoutStartMs(row.started_at, row.created_at)
+    return startMs != null && nowMs - startMs >= options.limitMs
+  })
+
+  const finished: Array<{ id: string; setCount: number }> = []
+  const discarded: string[] = []
+  const settledIds: string[] = []
+
+  for (const row of due) {
+    if (options.getCurrentWorkoutId() === row.id) continue
+    let result: ExpiredWorkoutResult
+    try {
+      result = await resolveExpiredWorkout(userId, row.id, {
+        limitMs: options.limitMs,
+        requiredSetIds: [],
+        nowMs,
+        discardOnlyIfNoSets: true,
+      })
+    } catch {
+      continue
+    }
+    if (result.kind === 'finished') {
+      finished.push({ id: row.id, setCount: result.setCount })
+      settledIds.push(row.id)
+    } else if (result.kind === 'discarded') {
+      discarded.push(row.id)
+      settledIds.push(row.id)
+    } else if (
+      result.reason === 'has_sets' ||
+      result.reason === 'finished' ||
+      result.reason === 'missing'
+    ) {
+      settledIds.push(row.id)
+    }
+  }
+
+  return { finished, discarded, settledIds }
 }

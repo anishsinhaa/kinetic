@@ -3,14 +3,21 @@ import { useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useToast } from '../../../components/ui/toastContext'
 import { peekOfflineQueue } from '../../../lib/offline/syncQueue'
+import { pluralize } from '../../../lib/pluralize'
 import { AUTO_FINISH_AFTER_MS, AUTO_FINISH_HOURS, isPastAutoFinishLimit } from '../lib/autoFinish'
 import { cancelPendingSetWrites, flushPendingSetWrites } from '../lib/setWriteRegistry'
-import { getWorkoutStatus, resolveExpiredWorkout } from '../services/workoutService'
+import {
+  getWorkoutStatus,
+  resolveExpiredWorkout,
+  resolveOtherExpiredWorkouts,
+} from '../services/workoutService'
 import { useWorkoutStore } from '../store/useWorkoutStore'
 import { useWorkoutStoreHydrated } from './useWorkoutStoreHydrated'
 
 let inFlight = false
 const handledIds = new Set<string>()
+const SWEEP_INTERVAL_MS = 5 * 60_000
+let lastSweep = { userId: '', at: 0 }
 
 function invalidateAfterAutoFinish(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -49,6 +56,7 @@ export function useAutoFinishExpiredWorkout(userId: string | undefined) {
   const toast = useToast()
   const pathname = useLocation().pathname
   const checkRef = useRef<() => Promise<void>>(async () => {})
+  const sweepRef = useRef<() => Promise<void>>(async () => {})
 
   checkRef.current = async () => {
     if (!userId || !hydrated) return
@@ -128,9 +136,56 @@ export function useAutoFinishExpiredWorkout(userId: string | undefined) {
     }
   }
 
+  sweepRef.current = async () => {
+    if (!userId || !hydrated) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return
+    if (inFlight) return
+    if (lastSweep.userId === userId && Date.now() - lastSweep.at < SWEEP_INTERVAL_MS) return
+
+    lastSweep = { userId, at: Date.now() }
+    inFlight = true
+    try {
+      let result: Awaited<ReturnType<typeof resolveOtherExpiredWorkouts>>
+      try {
+        result = await resolveOtherExpiredWorkouts(userId, {
+          limitMs: AUTO_FINISH_AFTER_MS,
+          getCurrentWorkoutId: () => useWorkoutStore.getState().currentWorkoutId,
+          skipIds: handledIds,
+        })
+      } catch (err) {
+        console.warn('[auto-finish]', err)
+        return
+      }
+
+      for (const id of result.settledIds) handledIds.add(id)
+      if (result.finished.length === 0 && result.discarded.length === 0) return
+
+      const firstId = result.settledIds[0]
+      if (firstId) invalidateAfterAutoFinish(queryClient, userId, firstId, [])
+      void queryClient.invalidateQueries({
+        queryKey: ['exercise-prefill', userId],
+        refetchType: 'all',
+      })
+      const parts: string[] = []
+      if (result.finished.length > 0) {
+        parts.push(
+          `Auto-finished ${pluralize(result.finished.length, 'older workout')} left open for over ${AUTO_FINISH_HOURS} hours`,
+        )
+      }
+      if (result.discarded.length > 0) {
+        parts.push(
+          `Discarded ${pluralize(result.discarded.length, 'empty workout')} left open for over ${AUTO_FINISH_HOURS} hours`,
+        )
+      }
+      toast.show(parts.join(' · '), { durationMs: 10000 })
+    } finally {
+      inFlight = false
+    }
+  }
+
   useEffect(() => {
     const run = () => {
-      void checkRef.current()
+      void checkRef.current().then(() => sweepRef.current())
     }
     run()
     const onVisible = () => {

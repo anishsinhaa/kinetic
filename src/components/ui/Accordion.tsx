@@ -20,8 +20,8 @@ export function Accordion({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <section className="mb-8">
-      <div className="flex items-center gap-2 mb-3">
+    <section className={cn(open ? 'mb-8' : 'mb-2')}>
+      <div className={cn('flex items-center gap-2', open && 'mb-3')}>
         <button
           type="button"
           aria-expanded={open}
@@ -38,7 +38,7 @@ export function Accordion({
             className={cn('shrink-0 text-text-muted transition-transform', open && 'rotate-180')}
           />
         </button>
-        {action}
+        {open ? action : null}
       </div>
       {open ? children : null}
     </section>

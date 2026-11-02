@@ -4,7 +4,6 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { BottomSheet } from '../../../components/ui/BottomSheet'
 import type { BodyFeedback } from '../../feedback/types'
 import { recoveryLabel, recoveryScoreFromFeedback } from '../../feedback/types'
-import { deriveDayWorkoutSummary } from '../../history/lib/deriveDayWorkoutSummary'
 import { useWeightDisplay } from '../../settings/hooks/useWeightUnits'
 import { formatWeight } from '../../settings/lib/units'
 import { localDateString } from '../../../lib/localDate'
@@ -67,89 +66,117 @@ function DaySheetBody({
   const { isRestDay, toggle, isSaving } = useRestDay(date)
   const score = feedback ? recoveryScoreFromFeedback(feedback) : null
   const hasWorkout = workouts.length > 0
+  const entries: { label: string; value: string }[] = []
+  if (log?.weight != null) {
+    entries.push({ label: 'Weight', value: formatWeight(log.weight, units, { decimals: 1 }) })
+  }
+  if (log?.calories != null) {
+    entries.push({ label: 'Calories', value: `${log.calories.toLocaleString()} kcal` })
+  }
+  if (log?.protein != null) {
+    entries.push({ label: 'Protein', value: `${log.protein} g` })
+  }
+  if (log?.sleep != null) {
+    entries.push({ label: 'Sleep', value: fmtSleep(log.sleep) })
+  }
+  if (feedback) {
+    entries.push({
+      label: 'Recovery',
+      value: score != null ? `${score}% · ${recoveryLabel(score)}` : 'Logged',
+    })
+  }
+  const notes = log?.notes ?? ''
+  const showEmpty = entries.length === 0 && notes === '' && !hasWorkout && !isRestDay
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 space-y-3">
       {workouts.map((workout) => (
         <button
           key={workout.id}
           type="button"
-          className="w-full min-h-11 text-left"
+          className="w-full min-h-12 rounded-xl border border-border bg-surface-2 px-3 py-2 flex items-center justify-between gap-3 text-left"
           onClick={() => {
             onClose()
             navigate(`/progress/history?w=${workout.id}`)
           }}
         >
-          <p className="font-semibold text-text-primary">{workout.label || 'Workout'}</p>
-          <p className="text-xs text-text-secondary">
-            {pluralize(workout.exerciseCount, 'exercise')} · {pluralize(workout.setCount, 'set')}
-            {workout.durationMins != null ? ` · ${workout.durationMins}m` : ''}
-          </p>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-text-primary truncate">{workout.label || 'Workout'}</p>
+            <p className="text-xs text-text-secondary">
+              {pluralize(workout.exerciseCount, 'exercise')} · {pluralize(workout.setCount, 'set')}
+              {workout.durationMins != null ? ` · ${workout.durationMins}m` : ''}
+            </p>
+          </div>
+          <ChevronRight size={16} className="shrink-0 text-text-muted" />
         </button>
       ))}
 
-      {log ? (
-        <div className="space-y-1 text-sm text-text-primary">
-          {log.weight != null && <p>Weight {formatWeight(log.weight, units, { decimals: 1 })}</p>}
-          {log.calories != null && <p>Calories {log.calories.toLocaleString()} kcal</p>}
-          {log.protein != null && <p>Protein {log.protein} g</p>}
-          {log.sleep != null && <p>Sleep {fmtSleep(log.sleep)}</p>}
-          {log.notes && <p>Notes {log.notes}</p>}
+      {isRestDay && !hasWorkout && (
+        <span className="inline-flex rounded-full bg-surface-2 px-3 py-1 text-xs font-semibold text-text-secondary">
+          Rest day
+        </span>
+      )}
+
+      {entries.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          {entries.map((entry) => (
+            <div key={entry.label} className="rounded-lg bg-surface-2 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-text-muted">{entry.label}</p>
+              <p className="text-sm font-semibold text-text-primary truncate">{entry.value}</p>
+            </div>
+          ))}
         </div>
-      ) : (
-        <p className="text-sm text-text-muted">Nothing logged</p>
       )}
 
-      {feedback && (
-        <p className="text-sm text-text-primary">
-          Recovery
-          {score != null ? ` · ${score}% ${recoveryLabel(score)}` : ''}
-        </p>
-      )}
+      {notes !== '' && <p className="text-xs text-text-secondary line-clamp-2">{notes}</p>}
 
-      <button
-        type="button"
-        className="min-h-11 text-sm text-primary"
-        onClick={() => {
-          onClose()
-          onOpenRecovery(date)
-        }}
-      >
-        {feedback ? 'Edit recovery' : 'Add recovery update'}
-      </button>
+      {showEmpty && <p className="text-sm text-text-muted">Nothing logged yet</p>}
 
-      <button
-        type="button"
-        className="block min-h-11 text-sm text-primary"
-        onClick={() => {
-          onClose()
-          onEditLog(date)
-        }}
-      >
-        {log ? 'Edit daily log' : 'Add daily log'}
-      </button>
-
-      {!hasWorkout && (
+      <div className="grid grid-cols-2 gap-2 pt-1">
         <button
           type="button"
-          className="block min-h-11 text-sm text-primary"
-          onClick={() => toggle()}
-          disabled={isSaving}
+          className="min-h-11 rounded-xl border border-border px-2 text-sm font-medium text-text-primary hover:border-primary disabled:opacity-40"
+          onClick={() => {
+            onClose()
+            onEditLog(date)
+          }}
         >
-          {isRestDay ? 'Undo rest day' : 'Mark rest day'}
+          {log ? 'Edit log' : 'Add log'}
         </button>
-      )}
-
-      <button
-        type="button"
-        className="block min-h-11 text-sm text-primary"
-        onClick={() => {
-          onClose()
-          navigate(`/workout/log?date=${date}`)
-        }}
-      >
-        {hasWorkout ? 'Log another workout' : 'Log workout for this day'}
-      </button>
+        <button
+          type="button"
+          className="min-h-11 rounded-xl border border-border px-2 text-sm font-medium text-text-primary hover:border-primary disabled:opacity-40"
+          onClick={() => {
+            onClose()
+            onOpenRecovery(date)
+          }}
+        >
+          {feedback ? 'Edit recovery' : 'Add recovery'}
+        </button>
+        <button
+          type="button"
+          className={cn(
+            'min-h-11 rounded-xl border border-border px-2 text-sm font-medium text-text-primary hover:border-primary disabled:opacity-40',
+            hasWorkout && 'col-span-2',
+          )}
+          onClick={() => {
+            onClose()
+            navigate(`/workout/log?date=${date}`)
+          }}
+        >
+          Add workout
+        </button>
+        {!hasWorkout && (
+          <button
+            type="button"
+            className="min-h-11 rounded-xl border border-border px-2 text-sm font-medium text-text-primary hover:border-primary disabled:opacity-40"
+            onClick={() => toggle()}
+            disabled={isSaving}
+          >
+            {isRestDay ? 'Undo rest day' : 'Mark rest day'}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -247,16 +274,11 @@ export function MonthCalendar({ userId, feedback, onEditLog, onOpenRecovery }: M
           let marker: string | null = null
           let markerClass = 'text-text-muted'
           if (dayWorkouts.length > 0) {
-            const summary = deriveDayWorkoutSummary(
-              dayWorkouts.map((workout) => ({
-                workout_type: workout.label || null,
-                name: null,
-                started_at: workout.startedAt,
-                created_at: workout.startedAt ?? workout.endedAt ?? date,
-                ended_at: workout.endedAt ?? workout.startedAt ?? date,
-              })),
+            const sorted = [...dayWorkouts].sort((a, b) =>
+              (a.startedAt ?? a.endedAt ?? '').localeCompare(b.startedAt ?? b.endedAt ?? ''),
             )
-            marker = abbreviateType(summary.typeLabel)
+            const first = abbreviateType(sorted[0]?.label || null)
+            marker = sorted.length > 1 ? `${first}+${sorted.length - 1}` : first
             markerClass = 'text-primary'
           } else if (restDates.has(date)) {
             marker = 'Rest'
@@ -269,6 +291,7 @@ export function MonthCalendar({ userId, feedback, onEditLog, onOpenRecovery }: M
               key={date}
               type="button"
               disabled={isFuture}
+              aria-label={`${fmtSheetTitle(date)}${marker && marker !== '·' ? `, ${marker}` : ''}`}
               onClick={() => setSelectedDate(date)}
               className={cn(
                 'min-h-11 flex flex-col items-center justify-center rounded-lg text-sm tabular-nums text-text-primary',
