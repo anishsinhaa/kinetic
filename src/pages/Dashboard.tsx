@@ -16,8 +16,8 @@ import { useCurrentUser } from '../features/auth/useAuth'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { useActiveSession } from '../features/workout/hooks/useActiveSession'
 import { useSuggestedType } from '../features/workout/hooks/useSuggestedType'
+import { useTodayType } from '../features/workout/hooks/useTodayType'
 import { useWorkoutPlan } from '../features/workout/hooks/useWorkoutPlan'
-import { StartWorkoutSheet } from '../features/workout/components/StartWorkoutSheet'
 import {
   getDashboardStats,
   getLatestCompletedWorkout,
@@ -108,8 +108,10 @@ export default function Dashboard() {
   const { activeSession } = useActiveSession()
 
   const [recoverySheetOpen, setRecoverySheetOpen] = useState(false)
-  const [startOpen, setStartOpen] = useState(false)
-  const { suggestedType, typeChips, suggestionsReady } = useSuggestedType(userId)
+  const [changing, setChanging] = useState(false)
+  const { suggestedType, typeChips, suggestionsReady, settings } = useSuggestedType(userId)
+  const { override, setOverride, clearOverride } = useTodayType(userId, typeChips)
+  const todayType = override ?? suggestedType
   const plan = useWorkoutPlan(userId)
   const todayRest = useRestDay(localDateString())
 
@@ -195,65 +197,114 @@ export default function Dashboard() {
           </button>
           <button
             type="button"
-            onClick={() => setStartOpen(true)}
+            onClick={() => navigate('/workout')}
             className="text-sm text-primary min-h-11"
           >
             Start another workout
           </button>
         </div>
-      ) : (
-        <div className="space-y-2">
+      ) : !suggestionsReady ? (
+        <SkeletonBlock className="h-44" />
+      ) : todayRest.isRestDay ? (
+        <Card className="p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-widest text-text-secondary">Today</p>
+              <p className="text-2xl font-black text-text-primary leading-tight">Today&apos;s a rest day</p>
+              <p className="text-xs text-text-secondary">Recovery counts too.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => todayRest.toggle()}
+              disabled={todayRest.isSaving}
+              className="text-sm text-primary min-h-11 px-2 shrink-0"
+            >
+              Undo
+            </button>
+          </div>
           <button
             type="button"
-            disabled={!suggestionsReady}
-            onClick={() => navigate('/workout?start=1')}
-            className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-5 min-h-20 flex items-center justify-center gap-3 text-left disabled:opacity-40"
+            onClick={() => navigate('/workout')}
+            className="block w-full min-h-11 text-sm text-primary text-left"
           >
-            <Dumbbell size={26} className="shrink-0" />
-            <span className="block text-xl font-black leading-tight">
-              {suggestionsReady ? `Start ${suggestedType}` : 'Start Workout'}
-            </span>
+            Track a workout anyway
           </button>
+        </Card>
+      ) : (
+        <Card className="p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-widest text-text-secondary">Today</p>
+              <p className="text-2xl font-black text-text-primary leading-tight">{todayType} day</p>
+              <p className="text-xs text-text-secondary">
+                {override
+                  ? 'Your pick for today'
+                  : settings?.split?.length
+                    ? 'From your split'
+                    : 'Suggested for today'}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-expanded={changing}
+              onClick={() => setChanging((open) => !open)}
+              className="text-sm text-primary min-h-11 px-2 shrink-0"
+            >
+              Change
+            </button>
+          </div>
+          {changing && !todayRest.isRestDay && (
+            <div className="flex flex-wrap gap-2">
+              {typeChips.map((chip) => {
+                const selected = chip.trim().toLowerCase() === todayType.trim().toLowerCase()
+                return (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => {
+                      if (chip.trim().toLowerCase() === suggestedType.trim().toLowerCase()) clearOverride()
+                      else setOverride(chip)
+                      setChanging(false)
+                    }}
+                    className={cn(
+                      'min-h-11 px-4 rounded-full border text-sm',
+                      selected
+                        ? 'bg-primary text-black border-primary'
+                        : 'bg-surface-2 text-text-primary border-border',
+                    )}
+                  >
+                    {chip}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           <button
             type="button"
-            onClick={() => setStartOpen(true)}
-            className="text-sm text-primary min-h-11"
+            onClick={() => navigate('/workout')}
+            className="w-full rounded-2xl bg-primary text-black hover:bg-primary-hover active:scale-[0.99] transition px-6 py-4 min-h-14 flex items-center justify-center gap-2 text-lg font-black"
           >
-            change
+            <Dumbbell size={20} />
+            Track workout
           </button>
           {plan && (
             <button
               type="button"
               onClick={() => navigate('/workout')}
-              className="block min-h-11 text-sm text-primary text-left"
+              className="block w-full min-h-11 text-sm text-text-secondary text-left"
             >
-              Planned: {plan.type} · {pluralize(plan.exercises.length, 'exercise')} — open
+              Planned: {plan.type} · {pluralize(plan.exercises.length, 'exercise')}
             </button>
           )}
-          {!todayRest.isLoading &&
-            (todayRest.isRestDay ? (
-              <p className="text-sm text-text-muted min-h-11 flex items-center gap-1">
-                Rest day ·
-                <button
-                  type="button"
-                  onClick={() => todayRest.toggle()}
-                  disabled={todayRest.isSaving}
-                  className="text-sm text-primary min-h-11"
-                >
-                  Undo
-                </button>
-              </p>
-            ) : (
-              <button
-                type="button"
-                onClick={() => todayRest.toggle()}
-                disabled={todayRest.isSaving}
-                className="text-sm text-primary min-h-11"
-              >
-                Mark rest day
-              </button>
-            ))}
-        </div>
+          <button
+            type="button"
+            onClick={() => todayRest.toggle()}
+            disabled={todayRest.isLoading || todayRest.isSaving}
+            className="block w-full min-h-11 rounded-xl border border-border text-sm text-text-secondary hover:border-primary hover:text-primary disabled:opacity-40"
+          >
+            Mark rest day
+          </button>
+        </Card>
       )}
 
       <TodayLogCard userId={userId} />
@@ -370,24 +421,6 @@ export default function Dashboard() {
           <RecoveryPanel onSaved={() => window.setTimeout(() => setRecoverySheetOpen(false), 600)} />
         </div>
       </BottomSheet>
-
-      <StartWorkoutSheet
-        open={startOpen}
-        onClose={() => setStartOpen(false)}
-        typeChips={typeChips}
-        suggestedType={suggestedType}
-        ready={suggestionsReady}
-        latest={
-          last
-            ? { label: last.label, exerciseCount: last.exerciseCount, setCount: last.setCount }
-            : null
-        }
-        onStartType={(type) => {
-          setStartOpen(false)
-          navigate(`/workout?type=${encodeURIComponent(type)}`)
-        }}
-        onRepeat={() => navigate('/workout?repeat=1')}
-      />
     </div>
   )
 }
