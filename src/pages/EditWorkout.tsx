@@ -7,6 +7,10 @@ import { Button } from '../components/ui/Button'
 import { useToast } from '../components/ui/toastContext'
 import { useCurrentUser } from '../features/auth/useAuth'
 import type { Exercise } from '../features/exercises/types'
+import {
+  CollapsibleExerciseCard,
+  exerciseSummary,
+} from '../features/workout/components/CollapsibleExerciseCard'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
 import { MAX_REPS, MAX_SET_WEIGHT_KG } from '../features/workout/constants'
 import { useSuggestedType } from '../features/workout/hooks/useSuggestedType'
@@ -155,12 +159,14 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
   const toast = useToast()
   const { typeChips, settings } = useSuggestedType(userId)
   const units = settings?.units ?? 'kg'
+  const weightStep = settings?.weightStep ?? 2.5
   const displayLimit = roundDisplayWeight(kgToDisplay(MAX_SET_WEIGHT_KG, units), units)
 
   const [type, setType] = useState(workout.type)
   const [date, setDate] = useState(workout.date)
   const today = localDateString()
   const [exercises, setExercises] = useState(() => buildCards(workout, units))
+  const [openCardId, setOpenCardId] = useState<string | null>(null)
   const [removedSetIds, setRemovedSetIds] = useState<string[]>([])
   const [removedExerciseIds, setRemovedExerciseIds] = useState<string[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -257,6 +263,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
       }
     }
     setExercises((prev) => prev.filter((card) => card.rowId !== exercise.rowId))
+    setOpenCardId((current) => (current === exercise.rowId ? null : current))
   }
 
   const removeSet = (exercise: DraftExercise, set: DraftSet) => {
@@ -414,88 +421,88 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         })}
       </div>
 
-      {exercises.map((exercise) => (
-        <section key={exercise.rowId} className="rounded-xl border border-border bg-surface overflow-hidden">
-          <div className="px-4 py-3 flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="font-semibold text-text-primary truncate">{exercise.name}</p>
-              <p className="text-xs text-text-secondary">{exercise.muscleGroup}</p>
-            </div>
+      {exercises.map((exercise) => {
+        const hasInvalid =
+          (exercise.isNew && exercise.sets.length === 0) ||
+          exercise.sets.some((set) => isInvalidSet(set, displayLimit))
+        return (
+          <CollapsibleExerciseCard
+            key={exercise.rowId}
+            name={exercise.name}
+            subtitle={<p className="text-xs text-text-secondary">{exercise.muscleGroup}</p>}
+            summary={exerciseSummary(exercise.sets, units, weightStep)}
+            open={exercise.rowId === openCardId || hasInvalid}
+            onOpen={() => setOpenCardId(exercise.rowId)}
+            onDone={() => setOpenCardId(null)}
+            onRemove={() => removeExercise(exercise)}
+          >
+            {exercise.sets.map((set, index) => {
+              const highlighted = set.isNew || isChangedSet(set)
+              return (
+                <div
+                  key={set.id}
+                  className={cn(
+                    'px-4 py-2 flex items-center gap-2 border-t border-border',
+                    highlighted && 'border-l-2 border-l-primary',
+                  )}
+                >
+                  <span className="text-xs text-text-secondary w-12 shrink-0">Set {index + 1}</span>
+                  <input
+                    inputMode="decimal"
+                    placeholder={weightUnitLabel(units)}
+                    value={set.weight}
+                    onFocus={selectOnFocus}
+                    onChange={(event) => {
+                      const next = event.target.value
+                      if (next !== '' && !/^\d*\.?\d*$/.test(next)) return
+                      patchSet(exercise.rowId, set.id, { weight: next })
+                    }}
+                    className={cn(inputClass, 'w-full')}
+                  />
+                  <input
+                    inputMode="numeric"
+                    placeholder="reps"
+                    value={set.reps}
+                    onFocus={selectOnFocus}
+                    onChange={(event) => {
+                      const next = event.target.value
+                      if (next !== '' && !/^\d*$/.test(next)) return
+                      patchSet(exercise.rowId, set.id, { reps: next })
+                    }}
+                    className={cn(inputClass, 'w-full')}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Delete set ${index + 1} of ${exercise.name}`}
+                    onClick={() => removeSet(exercise, set)}
+                    className="min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center text-text-secondary hover:text-red-400"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )
+            })}
             <button
               type="button"
-              aria-label={`Remove ${exercise.name}`}
-              onClick={() => removeExercise(exercise)}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center text-text-secondary"
+              onClick={() =>
+                setExercises((prev) =>
+                  prev.map((card) => {
+                    if (card.rowId !== exercise.rowId) return card
+                    const last = card.sets[card.sets.length - 1]
+                    const next = last
+                      ? { ...emptySet(), weight: last.weight, reps: last.reps }
+                      : emptySet()
+                    return { ...card, sets: [...card.sets, next] }
+                  }),
+                )
+              }
+              className="w-full min-h-11 text-sm text-primary"
             >
-              <Trash2 size={16} />
+              Add set
             </button>
-          </div>
-          {exercise.sets.map((set, index) => {
-            const highlighted = set.isNew || isChangedSet(set)
-            return (
-              <div
-                key={set.id}
-                className={cn(
-                  'px-4 py-2 flex items-center gap-2 border-t border-border',
-                  highlighted && 'border-l-2 border-l-primary',
-                )}
-              >
-                <span className="text-xs text-text-secondary w-12 shrink-0">Set {index + 1}</span>
-                <input
-                  inputMode="decimal"
-                  placeholder={weightUnitLabel(units)}
-                  value={set.weight}
-                  onFocus={selectOnFocus}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    if (next !== '' && !/^\d*\.?\d*$/.test(next)) return
-                    patchSet(exercise.rowId, set.id, { weight: next })
-                  }}
-                  className={cn(inputClass, 'w-full')}
-                />
-                <input
-                  inputMode="numeric"
-                  placeholder="reps"
-                  value={set.reps}
-                  onFocus={selectOnFocus}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    if (next !== '' && !/^\d*$/.test(next)) return
-                    patchSet(exercise.rowId, set.id, { reps: next })
-                  }}
-                  className={cn(inputClass, 'w-full')}
-                />
-                <button
-                  type="button"
-                  aria-label={`Delete set ${index + 1} of ${exercise.name}`}
-                  onClick={() => removeSet(exercise, set)}
-                  className="min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center text-text-secondary hover:text-red-400"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            )
-          })}
-          <button
-            type="button"
-            onClick={() =>
-              setExercises((prev) =>
-                prev.map((card) => {
-                  if (card.rowId !== exercise.rowId) return card
-                  const last = card.sets[card.sets.length - 1]
-                  const next = last
-                    ? { ...emptySet(), weight: last.weight, reps: last.reps }
-                    : emptySet()
-                  return { ...card, sets: [...card.sets, next] }
-                }),
-              )
-            }
-            className="w-full min-h-11 text-sm text-primary"
-          >
-            Add set
-          </button>
-        </section>
-      ))}
+          </CollapsibleExerciseCard>
+        )
+      })}
 
       <Button variant="secondary" className="w-full min-h-11" onClick={() => setPickerOpen(true)}>
         Add exercise
@@ -508,6 +515,8 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
       >
         Delete workout
       </button>
+
+      <div className="h-24" aria-hidden />
 
       <div className="sticky z-10 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 -mx-4 md:-mx-8 px-4 md:px-8 pt-3 pb-3 space-y-2 bg-background border-t border-border">
         <p className="text-xs text-text-secondary">{summary}</p>
@@ -530,10 +539,11 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         workoutType={type}
         excludeExerciseIds={exercises.map((exercise) => exercise.exerciseId)}
         onPick={(exercise: Exercise) => {
+          const rowId = newClientId()
           setExercises((prev) => [
             ...prev,
             {
-              rowId: newClientId(),
+              rowId,
               exerciseId: exercise.id,
               name: exercise.name,
               muscleGroup: exercise.muscleGroup,
@@ -541,6 +551,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
               sets: [emptySet()],
             },
           ])
+          setOpenCardId(rowId)
           setPickerOpen(false)
         }}
       />

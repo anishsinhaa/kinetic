@@ -6,6 +6,10 @@ import { Button } from '../components/ui/Button'
 import { useToast } from '../components/ui/toastContext'
 import { useCurrentUser } from '../features/auth/useAuth'
 import type { Exercise } from '../features/exercises/types'
+import {
+  CollapsibleExerciseCard,
+  exerciseSummary,
+} from '../features/workout/components/CollapsibleExerciseCard'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
 import { SetStepperRow } from '../features/workout/components/SetStepperRow'
 import { MAX_REPS, MAX_SET_WEIGHT_KG } from '../features/workout/constants'
@@ -114,6 +118,7 @@ export default function LogPastWorkout() {
   const [date, setDate] = useState(() => initialDate(searchParams.get('date'), today))
   const [pickedType, setPickedType] = useState<string | null>(null)
   const [exercises, setExercises] = useState<PastExerciseCard[]>([])
+  const [openCardId, setOpenCardId] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -154,6 +159,7 @@ export default function LogPastWorkout() {
         sets: [emptySet()],
       },
     ])
+    setOpenCardId(cardId)
     setPickerOpen(false)
 
     void (async () => {
@@ -246,7 +252,7 @@ export default function LogPastWorkout() {
   }
 
   return (
-    <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto space-y-4">
+    <div className="p-4 md:p-8 pb-32 max-w-lg mx-auto space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-black text-text-primary">Log workout</h1>
         <button type="button" onClick={requestLeave} className="min-h-11 px-3 text-sm text-text-secondary">
@@ -291,24 +297,26 @@ export default function LogPastWorkout() {
       </div>
 
       {exercises.map((exercise) => (
-        <section key={exercise.id} className="rounded-xl border border-border bg-surface overflow-hidden">
-          <div className="px-4 py-3 flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="font-semibold text-text-primary truncate">{exercise.name}</p>
+        <CollapsibleExerciseCard
+          key={exercise.id}
+          name={exercise.name}
+          subtitle={
+            <>
               <p className="text-xs text-text-secondary">{exercise.muscleGroup}</p>
               {exercise.lastPerformance && (
                 <p className="text-xs text-text-secondary mt-1">{exercise.lastPerformance}</p>
               )}
-            </div>
-            <button
-              type="button"
-              aria-label={`Remove ${exercise.name}`}
-              onClick={() => setExercises((prev) => prev.filter((card) => card.id !== exercise.id))}
-              className="min-h-11 min-w-11 text-text-secondary"
-            >
-              ×
-            </button>
-          </div>
+            </>
+          }
+          summary={exerciseSummary(exercise.sets, units, weightStep)}
+          open={exercise.id === openCardId}
+          onOpen={() => setOpenCardId(exercise.id)}
+          onDone={() => setOpenCardId(null)}
+          onRemove={() => {
+            setExercises((prev) => prev.filter((card) => card.id !== exercise.id))
+            setOpenCardId((current) => (current === exercise.id ? null : current))
+          }}
+        >
           {exercise.sets.map((set, index) => (
             <SetStepperRow
               key={set.id}
@@ -359,14 +367,16 @@ export default function LogPastWorkout() {
           >
             Add set
           </button>
-        </section>
+        </CollapsibleExerciseCard>
       ))}
 
       <Button variant="secondary" className="w-full min-h-11" onClick={() => setPickerOpen(true)}>
         Add exercise
       </Button>
 
-      <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] pt-2">
+      <div className="h-24" aria-hidden />
+
+      <div className="sticky z-10 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 -mx-4 md:-mx-8 px-4 md:px-8 pt-3 pb-3 space-y-2 bg-background border-t border-border">
         <Button
           variant="primary"
           size="lg"
