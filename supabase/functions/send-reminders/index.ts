@@ -36,6 +36,154 @@ type SubRow = {
 }
 
 type DueItem = { userId: string; kind: string; title: string; body: string }
+type Candidate = DueItem & { localDate: string }
+
+/** Same map as src/sw.ts KIND_URL — deep-link target for notification taps. */
+const KIND_URL: Record<string, string> = {
+  workout: '/workout',
+  morning_weight: '/logs?log=today',
+  night_recovery: '/logs/recovery',
+  test: '/settings',
+}
+
+function candidateKey(c: { userId: string; kind: string; localDate: string }): string {
+  return `${c.userId}|${c.kind}|${c.localDate}`
+}
+
+/**
+ * Keys `${userId}|${kind}|${localDate}` that should not be claimed/sent this tick.
+ * One batched query per kind; each check fails open (suppress nothing on error).
+ */
+async function suppressedKeys(
+  supabase: ReturnType<typeof createClient>,
+  candidates: Candidate[],
+): Promise<Set<string>> {
+  const skip = new Set<string>()
+  if (candidates.length === 0) return skip
+
+  const byKind = new Map<string, Candidate[]>()
+  for (const c of candidates) {
+    const list = byKind.get(c.kind) ?? []
+    list.push(c)
+    byKind.set(c.kind, list)
+  }
+
+  const pairSet = (rows: Array<{ user_id: string; date: string }>) => {
+    const set = new Set<string>()
+    for (const r of rows) set.add(`${r.user_id}|${r.date}`)
+    return set
+  }
+
+  const workoutCandidates = byKind.get('workout') ?? []
+  if (workoutCandidates.length > 0) {
+    const userIds = [...new Set(workoutCandidates.map((c) => c.userId))]
+    const localDates = [...new Set(workoutCandidates.map((c) => c.localDate))]
+    const wanted = new Set(workoutCandidates.map((c) => `${c.userId}|${c.localDate}`))
+
+    try {
+      const { data, error } = await supabase
+        .from('rest_days')
+        .select('user_id, date')
+        .in('user_id', userIds)
+        .in('date', localDates)
+      if (error) throw error
+      const rest = pairSet((data ?? []) as Array<{ user_id: string; date: string }>)
+      for (const c of workoutCandidates) {
+        if (rest.has(`${c.userId}|${c.localDate}`)) skip.add(candidateKey(c))
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn('[send-reminders] suppress check failed', 'workout/rest_days', message)
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('workouts')
+        .select('user_id, date, started_at, ended_at')
+        .in('user_id', userIds)
+        .in('date', localDates)
+      if (error) throw error
+      const activeOrDone = new Set<string>()
+      for (const row of (data ?? []) as Array<{
+        user_id: string
+        date: string
+        started_at: string | null
+        ended_at: string | null
+      }>) {
+        const pair = `${row.user_id}|${row.date}`
+        if (!wanted.has(pair)) continue
+        if (row.ended_at != null || (row.started_at != null && row.ended_at == null)) {
+          activeOrDone.add(pair)
+        }
+      }
+      for (const c of workoutCandidates) {
+        if (activeOrDone.has(`${c.userId}|${c.localDate}`)) skip.add(candidateKey(c))
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn('[send-reminders] suppress check failed', 'workout', message)
+    }
+  }
+
+  const weightCandidates = byKind.get('morning_weight') ?? []
+  if (weightCandidates.length > 0) {
+    const userIds = [...new Set(weightCandidates.map((c) => c.userId))]
+    const localDates = [...new Set(weightCandidates.map((c) => c.localDate))]
+    const wanted = new Set(weightCandidates.map((c) => `${c.userId}|${c.localDate}`))
+    try {
+      const { data, error } = await supabase
+        .from('daily_logs')
+        .select('user_id, date, weight')
+        .in('user_id', userIds)
+        .in('date', localDates)
+      if (error) throw error
+      const logged = new Set<string>()
+      for (const row of (data ?? []) as Array<{
+        user_id: string
+        date: string
+        weight: number | null
+      }>) {
+        const pair = `${row.user_id}|${row.date}`
+        if (!wanted.has(pair)) continue
+        if (row.weight != null) logged.add(pair)
+      }
+      for (const c of weightCandidates) {
+        if (logged.has(`${c.userId}|${c.localDate}`)) skip.add(candidateKey(c))
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn('[send-reminders] suppress check failed', 'morning_weight', message)
+    }
+  }
+
+  const recoveryCandidates = byKind.get('night_recovery') ?? []
+  if (recoveryCandidates.length > 0) {
+    const userIds = [...new Set(recoveryCandidates.map((c) => c.userId))]
+    const localDates = [...new Set(recoveryCandidates.map((c) => c.localDate))]
+    const wanted = new Set(recoveryCandidates.map((c) => `${c.userId}|${c.localDate}`))
+    try {
+      const { data, error } = await supabase
+        .from('body_feedback')
+        .select('user_id, date')
+        .in('user_id', userIds)
+        .in('date', localDates)
+      if (error) throw error
+      const logged = new Set<string>()
+      for (const row of (data ?? []) as Array<{ user_id: string; date: string }>) {
+        const pair = `${row.user_id}|${row.date}`
+        if (wanted.has(pair)) logged.add(pair)
+      }
+      for (const c of recoveryCandidates) {
+        if (logged.has(`${c.userId}|${c.localDate}`)) skip.add(candidateKey(c))
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn('[send-reminders] suppress check failed', 'night_recovery', message)
+    }
+  }
+
+  return skip
+}
 
 function pushErrorInfo(err: unknown): { message: string; statusCode: number | null } {
   if (err && typeof err === 'object') {
@@ -119,7 +267,12 @@ async function deliver(
       continue
     }
 
-    const payload = JSON.stringify({ title: item.title, body: item.body, kind: item.kind })
+    const payload = JSON.stringify({
+      title: item.title,
+      body: item.body,
+      kind: item.kind,
+      url: KIND_URL[item.kind] ?? '/',
+    })
     for (const sub of userSubs) {
       const tail = endpointTail(sub.endpoint)
       try {
@@ -292,7 +445,6 @@ Deno.serve(async (req) => {
   const rows = (settings ?? []) as SettingsRow[]
   console.log(`[send-reminders] users_checked=${rows.length}`)
 
-  type Candidate = DueItem & { localDate: string }
   const candidates: Candidate[] = []
 
   for (const row of rows) {
@@ -337,14 +489,20 @@ Deno.serve(async (req) => {
     }
   }
 
+  const skip = await suppressedKeys(supabase, candidates)
+  const toClaim = candidates.filter((c) => !skip.has(candidateKey(c)))
+  console.log(
+    `[send-reminders] candidates=${candidates.length} suppressed=${skip.size} toClaim=${toClaim.length}`,
+  )
+
   // Claim before sending: only rows this tick actually inserted are sent, so a
   // reminder in the overlapping 6-minute window is delivered exactly once.
   let due: DueItem[] = []
-  if (candidates.length > 0) {
+  if (toClaim.length > 0) {
     const { data: claimed, error: claimError } = await supabase
       .from('reminder_deliveries')
       .upsert(
-        candidates.map((c) => ({ user_id: c.userId, kind: c.kind, local_date: c.localDate })),
+        toClaim.map((c) => ({ user_id: c.userId, kind: c.kind, local_date: c.localDate })),
         { onConflict: 'user_id,kind,local_date', ignoreDuplicates: true },
       )
       .select('user_id, kind, local_date')
@@ -359,8 +517,8 @@ Deno.serve(async (req) => {
         (r) => `${r.user_id}|${r.kind}|${r.local_date}`,
       ),
     )
-    due = candidates
-      .filter((c) => claimedKeys.has(`${c.userId}|${c.kind}|${c.localDate}`))
+    due = toClaim
+      .filter((c) => claimedKeys.has(candidateKey(c)))
       .map(({ userId, kind, title, body }) => ({ userId, kind, title, body }))
   }
 
