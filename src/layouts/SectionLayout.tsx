@@ -2,8 +2,12 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { cn } from '../lib/utils'
 import type { SubTab } from '../lib/navRoutes'
 
-/** Sub-tab bar + routed content for a top-level section (Workout, Progress). */
+/** Sub-tab bar + routed content for a top-level section (Workout, Progress, Log). */
 export function SectionLayout({ tabs, label }: { tabs: SubTab[]; label: string }) {
+  if (tabs.length < 2) {
+    return <Outlet />
+  }
+
   return (
     <div>
       <nav

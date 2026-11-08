@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
 import { Card } from '../../../components/ui/Card'
@@ -101,9 +102,12 @@ export function TodayLogCard({ userId }: TodayLogCardProps) {
   return (
     <>
       <Card className="overflow-hidden">
-        <h2 className="px-4 pt-4 pb-2 text-[11px] text-text-secondary uppercase tracking-widest">
-          Today's log
-        </h2>
+        <div className="px-4 pt-4 pb-2 flex items-center justify-between gap-2">
+          <h2 className="text-[11px] text-text-secondary uppercase tracking-widest">Today's log</h2>
+          <Link to="/logs" className="text-sm font-semibold text-primary min-h-11 inline-flex items-center">
+            Open log
+          </Link>
+        </div>
         <ul className="divide-y divide-border">
           {rows.map((row) => (
             <li key={row.field} className="flex items-center gap-3 min-h-12 px-4">

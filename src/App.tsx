@@ -1,12 +1,19 @@
 import { Suspense } from 'react'
-import { createBrowserRouter, Navigate, Route, RouterProvider, Routes } from 'react-router-dom'
+import {
+  createBrowserRouter,
+  Navigate,
+  Route,
+  RouterProvider,
+  Routes,
+  useLocation,
+} from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
-import { ErrorBoundary } from './components/ErrorBoundary'
+import { CrashFallback, ErrorBoundary } from './components/ErrorBoundary'
 import { ToastProvider } from './components/ui/Toast'
 import { MainLayout } from './layouts/MainLayout'
 import { SectionLayout } from './layouts/SectionLayout'
-import { LEGACY_REDIRECTS, PROGRESS_TABS, WORKOUT_TABS } from './lib/navRoutes'
+import { LEGACY_REDIRECTS, LOG_TABS, PROGRESS_TABS, WORKOUT_TABS } from './lib/navRoutes'
 import { useAuthListener, useCurrentUser } from './features/auth/useAuth'
 import { lazyWithReload } from './lib/lazyWithReload'
 
@@ -33,6 +40,11 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+function RedirectWithSearch({ to }: { to: string }) {
+  const location = useLocation()
+  return <Navigate to={`${to}${location.search}`} replace />
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppShell: sets up the auth listener + handles routing/guarding
@@ -74,20 +86,24 @@ function AppShell() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/workout" element={<SectionLayout tabs={WORKOUT_TABS} label="Workout" />}>
             <Route index element={<Workout />} />
-            <Route path="recovery" element={<Feedback />} />
+            <Route path="recovery" element={<RedirectWithSearch to="/logs/recovery" />} />
             <Route path="log" element={<LogPastWorkout />} />
             <Route path="plan" element={<PlanWorkout />} />
+          </Route>
+          <Route path="/logs" element={<SectionLayout tabs={LOG_TABS} label="Log" />}>
+            <Route index element={<DailyLogs />} />
+            <Route path="recovery" element={<Feedback />} />
           </Route>
           <Route path="/progress" element={<SectionLayout tabs={PROGRESS_TABS} label="Progress" />}>
             <Route index element={<Progress />} />
             <Route path="history" element={<History />} />
             <Route path="history/:workoutId/edit" element={<EditWorkout />} />
-            <Route path="logs" element={<DailyLogs />} />
+            <Route path="logs" element={<RedirectWithSearch to="/logs" />} />
           </Route>
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/exercises" element={<Exercises />} />
           {LEGACY_REDIRECTS.map(({ from, to }) => (
-            <Route key={from} path={from} element={<Navigate to={to} replace />} />
+            <Route key={from} path={from} element={<RedirectWithSearch to={to} />} />
           ))}
         </Route>
       </Routes>
@@ -95,7 +111,9 @@ function AppShell() {
   )
 }
 
-const router = createBrowserRouter([{ path: '*', element: <AppShell /> }])
+const router = createBrowserRouter([
+  { path: '*', element: <AppShell />, errorElement: <CrashFallback /> },
+])
 
 export default function App() {
   return (

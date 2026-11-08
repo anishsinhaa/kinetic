@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { BottomSheet } from '../components/ui/BottomSheet'
@@ -60,6 +60,7 @@ export default function PlanWorkout() {
   const [discardOpen, setDiscardOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [draftBanner, setDraftBanner] = useState(() => Boolean(restoredDraft))
+  const draftTimerRef = useRef<number | null>(null)
 
   const type = pickedType ?? saved?.type ?? suggestedType
   const chipsEnabled = suggestionsReady || Boolean(saved)
@@ -71,13 +72,24 @@ export default function PlanWorkout() {
       clearDraft(draftStorageKey)
       return
     }
-    const timer = window.setTimeout(() => {
+    draftTimerRef.current = window.setTimeout(() => {
       saveDraft(draftStorageKey, { pickedType, exercises })
+      draftTimerRef.current = null
     }, 500)
-    return () => window.clearTimeout(timer)
+    return () => {
+      if (draftTimerRef.current != null) window.clearTimeout(draftTimerRef.current)
+    }
   }, [dirty, pickedType, exercises, draftStorageKey])
 
+  const cancelDraftAutosave = () => {
+    if (draftTimerRef.current != null) {
+      window.clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = null
+    }
+  }
+
   const resetDraftState = () => {
+    cancelDraftAutosave()
     clearDraft(draftStorageKey)
     setPickedType(null)
     setExercises(saved?.exercises ?? [])
@@ -132,8 +144,10 @@ export default function PlanWorkout() {
       toast.show("Couldn't save the plan on this device", { kind: 'error' })
       return
     }
+    cancelDraftAutosave()
     clearDraft(draftStorageKey)
     allowNextNavigation()
+    clearDraft(draftStorageKey)
     toast.show('Plan saved', { kind: 'success' })
     navigate('/workout', { replace: true })
   }
@@ -289,8 +303,10 @@ export default function PlanWorkout() {
             type="button"
             onClick={() => {
               clearWorkoutPlan(userId)
+              cancelDraftAutosave()
               clearDraft(draftStorageKey)
               allowNextNavigation()
+              clearDraft(draftStorageKey)
               toast.show('Plan deleted', { kind: 'success' })
               navigate('/workout')
             }}

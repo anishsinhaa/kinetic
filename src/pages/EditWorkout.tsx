@@ -217,6 +217,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
   const [draftBanner, setDraftBanner] = useState(() => Boolean(restoredDraft))
   const [isSaving, setIsSaving] = useState(false)
   const savingRef = useRef(false)
+  const draftTimerRef = useRef<number | null>(null)
 
   const chips = useMemo(() => {
     const current = workout.type.trim()
@@ -257,7 +258,7 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
       clearDraft(draftStorageKey)
       return
     }
-    const timer = window.setTimeout(() => {
+    draftTimerRef.current = window.setTimeout(() => {
       saveDraft(draftStorageKey, {
         type,
         date,
@@ -266,8 +267,11 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         removedExerciseIds,
         base: liveBase,
       })
+      draftTimerRef.current = null
     }, 500)
-    return () => window.clearTimeout(timer)
+    return () => {
+      if (draftTimerRef.current != null) window.clearTimeout(draftTimerRef.current)
+    }
   }, [
     hasChanges,
     type,
@@ -279,7 +283,15 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
     liveBase,
   ])
 
+  const cancelDraftAutosave = () => {
+    if (draftTimerRef.current != null) {
+      window.clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = null
+    }
+  }
+
   const resetDraftState = () => {
+    cancelDraftAutosave()
     clearDraft(draftStorageKey)
     setType(workout.type)
     setDate(workout.date)
@@ -425,6 +437,8 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
     }
 
     try {
+      cancelDraftAutosave()
+      clearDraft(draftStorageKey)
       await saveWorkoutEdits(userId, workout, {
         type,
         removedSetIds,
@@ -434,9 +448,9 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         addedSets,
         date: date !== workout.date ? date : undefined,
       })
-      clearDraft(draftStorageKey)
       allowNextNavigation()
       await invalidateAfterEdit(queryClient, userId)
+      clearDraft(draftStorageKey)
       toast.show('Workout updated')
       navigate(`/progress/history?w=${workout.id}`, { replace: true })
     } catch (err) {
@@ -452,10 +466,12 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
     savingRef.current = true
     setIsSaving(true)
     try {
-      await deleteFinishedWorkout(userId, workout.id)
+      cancelDraftAutosave()
       clearDraft(draftStorageKey)
+      await deleteFinishedWorkout(userId, workout.id)
       allowNextNavigation()
       await invalidateAfterEdit(queryClient, userId)
+      clearDraft(draftStorageKey)
       toast.show('Workout deleted')
       navigate('/progress/history', { replace: true })
     } catch (err) {

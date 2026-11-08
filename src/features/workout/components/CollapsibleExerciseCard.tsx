@@ -32,7 +32,8 @@ export function exerciseSummary(
       ? null
       : toStoredKg(displayWeight, units)
   const reps = Number.parseInt(best.reps, 10)
-  return `${filled.length} sets · best ${formatSetLine(
+  const setLabel = filled.length === 1 ? '1 set' : `${filled.length} sets`
+  return `${setLabel} · best ${formatSetLine(
     kg,
     Number.isFinite(reps) ? reps : null,
     units,

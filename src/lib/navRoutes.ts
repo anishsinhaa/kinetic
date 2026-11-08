@@ -3,22 +3,28 @@ export type SubTab = { label: string; to: string; end?: boolean }
 /** Sub-tabs of the Workout section (/workout/*). */
 export const WORKOUT_TABS: SubTab[] = [
   { label: 'Session', to: '/workout', end: true },
-  { label: 'Recovery', to: '/workout/recovery' },
 ]
 
 /** Sub-tabs of the Progress section (/progress/*). */
 export const PROGRESS_TABS: SubTab[] = [
   { label: 'Overview', to: '/progress', end: true },
   { label: 'History', to: '/progress/history' },
-  { label: 'Daily logs', to: '/progress/logs' },
+]
+
+/** Sub-tabs of the Log section (/logs/*). */
+export const LOG_TABS: SubTab[] = [
+  { label: 'Calendar', to: '/logs', end: true },
+  { label: 'Recovery', to: '/logs/recovery' },
 ]
 
 /** Old top-level routes → their new home (kept so bookmarks / installed PWAs don't 404). */
 export const LEGACY_REDIRECTS: Array<{ from: string; to: string }> = [
   { from: '/exercises', to: '/settings/exercises' },
   { from: '/workout/library', to: '/settings/exercises' },
-  { from: '/feedback', to: '/workout/recovery' },
+  { from: '/feedback', to: '/logs/recovery' },
   { from: '/history', to: '/progress/history' },
+  { from: '/progress/logs', to: '/logs' },
+  { from: '/workout/recovery', to: '/logs/recovery' },
 ]
 
 /**

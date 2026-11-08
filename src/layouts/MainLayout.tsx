@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import fullLogo from '../assets/full_logo.png'
 import { cn } from '../lib/utils'
-import { Home, Dumbbell, Settings, LogOut, TrendingUp, Loader2 } from 'lucide-react'
+import { Home, Dumbbell, Settings, LogOut, TrendingUp, Loader2, NotebookPen } from 'lucide-react'
 import { logout } from '../features/auth/authService'
 import { useCurrentUser } from '../features/auth/useAuth'
 import { getExerciseCatalog } from '../features/workout/services/exerciseService'
@@ -17,6 +17,7 @@ import { sectionKey } from '../lib/navRoutes'
 const navItems = [
   { label: 'Home', icon: Home, to: '/' },
   { label: 'Workout', icon: Dumbbell, to: '/workout' },
+  { label: 'Log', icon: NotebookPen, to: '/logs' },
   { label: 'Progress', icon: TrendingUp, to: '/progress' },
   { label: 'Settings', icon: Settings, to: '/settings' },
 ]
@@ -171,7 +172,7 @@ export function MainLayout() {
         </main>
       </div>
 
-      {/* ── Mobile bottom tab bar (hidden on desktop): 4 tabs, ≥44px targets, iOS safe area ── */}
+      {/* ── Mobile bottom tab bar (hidden on desktop): ≥44px targets, iOS safe area ── */}
       <nav
         aria-label="Primary"
         className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-border flex items-stretch h-[calc(4rem+env(safe-area-inset-bottom,0px))] pb-[env(safe-area-inset-bottom,0px)]"

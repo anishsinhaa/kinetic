@@ -141,6 +141,7 @@ export default function LogPastWorkout() {
   const [draftBanner, setDraftBanner] = useState(() => Boolean(restoredDraft))
   const [isSaving, setIsSaving] = useState(false)
   const savingRef = useRef(false)
+  const draftTimerRef = useRef<number | null>(null)
 
   const workoutType = pickedType ?? (suggestionsReady ? suggestedType : '')
   const dirty = exercises.length > 0 || pickedType != null || date !== baselineDate
@@ -156,13 +157,24 @@ export default function LogPastWorkout() {
       clearDraft(draftStorageKey)
       return
     }
-    const timer = window.setTimeout(() => {
+    draftTimerRef.current = window.setTimeout(() => {
       saveDraft(draftStorageKey, { date, pickedType, exercises })
+      draftTimerRef.current = null
     }, 500)
-    return () => window.clearTimeout(timer)
+    return () => {
+      if (draftTimerRef.current != null) window.clearTimeout(draftTimerRef.current)
+    }
   }, [dirty, date, pickedType, exercises, draftStorageKey])
 
+  const cancelDraftAutosave = () => {
+    if (draftTimerRef.current != null) {
+      window.clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = null
+    }
+  }
+
   const resetDraftState = () => {
+    cancelDraftAutosave()
     clearDraft(draftStorageKey)
     setDate(baselineDate)
     setPickedType(null)
@@ -267,6 +279,8 @@ export default function LogPastWorkout() {
       return [{ exerciseId: exercise.exerciseId, sets }]
     })
     try {
+      cancelDraftAutosave()
+      clearDraft(draftStorageKey)
       const { id } = await logPastWorkout(userId, {
         date,
         workoutType,
@@ -295,8 +309,8 @@ export default function LogPastWorkout() {
           refetchType: 'all',
         })
       }
-      clearDraft(draftStorageKey)
       allowNextNavigation()
+      clearDraft(draftStorageKey)
       toast.show(`Workout saved for ${formatRelativeDate(date)}`, { kind: 'success' })
       navigate(`/progress/history?w=${id}`)
     } catch (err) {
