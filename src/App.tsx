@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import {
   createBrowserRouter,
   Navigate,
@@ -115,12 +115,45 @@ const router = createBrowserRouter([
   { path: '*', element: <AppShell />, errorElement: <CrashFallback /> },
 ])
 
+/** Accept only same-origin path strings (leading `/`, not `//` or absolute URLs). */
+function sameOriginPath(u: unknown): string | null {
+  if (typeof u !== 'string') return null
+  if (!u.startsWith('/') || u.startsWith('//')) return null
+  return u
+}
+
+/** Focused-window navigation from service-worker / fallback notification clicks. */
+function SwNavigateListener() {
+  useEffect(() => {
+    const navigateTo = (raw: unknown) => {
+      const path = sameOriginPath(raw)
+      if (path) void router.navigate(path)
+    }
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; url?: string } | undefined
+      if (data?.type !== 'NAVIGATE') return
+      navigateTo(data.url)
+    }
+    const onCustom = (event: Event) => {
+      navigateTo((event as CustomEvent<unknown>).detail)
+    }
+    navigator.serviceWorker?.addEventListener('message', onMessage)
+    window.addEventListener('kinetic:navigate', onCustom)
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', onMessage)
+      window.removeEventListener('kinetic:navigate', onCustom)
+    }
+  }, [])
+  return null
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           <RouterProvider router={router} />
+          <SwNavigateListener />
         </ToastProvider>
       </QueryClientProvider>
     </ErrorBoundary>

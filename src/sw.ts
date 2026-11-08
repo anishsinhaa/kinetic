@@ -10,6 +10,20 @@ import { StaleWhileRevalidate } from 'workbox-strategies'
 
 declare let self: ServiceWorkerGlobalScope
 
+const KIND_URL: Record<string, string> = {
+  workout: '/workout',
+  morning_weight: '/logs?log=today',
+  night_recovery: '/logs/recovery',
+  test: '/settings',
+}
+
+/** Accept only same-origin path strings (leading `/`, not `//` or absolute URLs). */
+function sameOriginPath(u: unknown): string | null {
+  if (typeof u !== 'string') return null
+  if (!u.startsWith('/') || u.startsWith('//')) return null
+  return u
+}
+
 // Take over immediately so deploys don't leave tabs on a dead precache
 self.skipWaiting()
 clientsClaim()
@@ -35,17 +49,22 @@ self.addEventListener('push', (event) => {
   let title = 'Kinetic'
   let body = 'You have a reminder'
   let kind: string | undefined
+  let payloadUrl: string | undefined
   try {
     const data = event.data?.json() as
-      | { title?: string; body?: string; kind?: string }
+      | { title?: string; body?: string; kind?: string; url?: string }
       | undefined
     if (data?.title) title = data.title
     if (data?.body) body = data.body
     if (data?.kind) kind = data.kind
+    if (data?.url) payloadUrl = data.url
   } catch {
     const text = event.data?.text()
     if (text) body = text
   }
+
+  const url =
+    sameOriginPath(payloadUrl) ?? (kind ? KIND_URL[kind] : undefined) ?? '/'
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -54,24 +73,50 @@ self.addEventListener('push', (event) => {
       badge: '/just_logo.png',
       tag: kind ? `reminder-${kind}` : 'reminder',
       renotify: true,
-      data: { url: '/' },
+      data: { url, kind },
     }),
   )
 })
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const target = (event.notification.data as { url?: string } | undefined)?.url ?? '/'
+  const target =
+    sameOriginPath((event.notification.data as { url?: string } | undefined)?.url) ?? '/'
+  const url = new URL(target, self.location.origin)
+
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ('focus' in client) {
-          void client.navigate(target)
-          return client.focus()
+    (async () => {
+      try {
+        const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+        const controlled = await self.clients.matchAll({ type: 'window' })
+        const controlledIds = new Set(controlled.map((c) => c.id))
+
+        const sameOrigin = all.filter((c) => {
+          try {
+            return new URL(c.url).origin === self.location.origin
+          } catch {
+            return false
+          }
+        })
+        const client =
+          sameOrigin.find((c) => c.focused) ??
+          sameOrigin.find((c) => c.visibilityState === 'visible') ??
+          sameOrigin[0]
+
+        if (client) {
+          await client.focus()
+          client.postMessage({ type: 'NAVIGATE', url: url.pathname + url.search })
+          if (!controlledIds.has(client.id) && 'navigate' in client) {
+            await client.navigate(url.href).catch(() => undefined)
+          }
+          return
         }
+
+        await self.clients.openWindow(url.href)
+      } catch {
+        await self.clients.openWindow(url.href)
       }
-      return self.clients.openWindow(target)
-    }),
+    })(),
   )
 })
 
@@ -88,6 +133,7 @@ self.addEventListener('message', (event) => {
           renotify: true,
           requireInteraction: false,
           silent: false,
+          data: { url: '/workout', kind: 'rest-timer' },
         })
         await new Promise((resolve) => setTimeout(resolve, 60_000))
         const list = await self.registration.getNotifications({ tag: 'rest-timer' })

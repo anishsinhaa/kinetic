@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, Heart, Loader2, Moon, Pencil, Plus, Trash2, Dumbbell } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { useCurrentUser } from '../features/auth/useAuth'
+import { localDateString } from '../lib/localDate'
 import { useDailyLogs } from '../features/history/hooks/useHistory'
 import { useDeleteFeedback, useFeedbackHistory } from '../features/feedback/hooks/useFeedback'
 import { recoveryLabel, recoveryScoreFromFeedback } from '../features/feedback/types'
@@ -70,6 +72,7 @@ export default function DailyLogs() {
   const userId = user!.id
   const { units } = useWeightDisplay()
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const logsQuery = useDailyLogs()
   const { dates: restSet, isLoading: restLoading } = useRestDays()
   const feedbackQuery = useFeedbackHistory()
@@ -81,6 +84,14 @@ export default function DailyLogs() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+
+  useEffect(() => {
+    if (searchParams.get('log') !== 'today') return
+    setLogSheet({ date: localDateString() })
+    const next = new URLSearchParams(searchParams)
+    next.delete('log')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const entries = useMemo<DayEntry[]>(() => {
     const byDate = new Map<string, DayEntry>()

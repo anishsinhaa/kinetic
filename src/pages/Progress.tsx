@@ -22,6 +22,7 @@ import {
   allTimeSummary,
   chartTickFormatter,
   dailyMetricSeries,
+  isoWeek,
   longestWeeklyStreak,
   niceTicks,
   weekSummary,
@@ -391,19 +392,20 @@ export default function Progress() {
 
   const today = todayDateString()
 
-  // Convert kg series → display units for charts/labels
+  const thisWeekStart = startOfLocalWeekMonday()
+
+  // Convert kg series → display units for charts/labels (calendar-week window, not last N data points)
   const recentWeekly = useMemo(() => {
+    const weeksBack = volumeRange === '12w' ? 11 : volumeRange === '6m' ? 25 : null
+    const cutoff =
+      weeksBack == null ? null : isoWeek(addDays(thisWeekStart, -7 * weeksBack))
     const sliced =
-      volumeRange === '12w'
-        ? weeklyVolume.slice(-12)
-        : volumeRange === '6m'
-          ? weeklyVolume.slice(-26)
-          : weeklyVolume
+      cutoff == null ? weeklyVolume : weeklyVolume.filter((p) => p.week >= cutoff)
     return sliced.map((p) => ({
       ...p,
       volume: units === 'kg' ? p.volume : kgToDisplay(p.volume, units),
     }))
-  }, [weeklyVolume, units, volumeRange])
+  }, [weeklyVolume, units, volumeRange, thisWeekStart])
   const weightData = useMemo(
     () =>
       dailyMetricSeries(dailyLogs, 'weight', range, today).map((p) => ({
@@ -459,7 +461,6 @@ export default function Progress() {
     [weeklyTicks.ticks],
   )
 
-  const thisWeekStart = startOfLocalWeekMonday()
   const selectedWeekStart = useMemo(
     () => addDays(thisWeekStart, 7 * weekOffset),
     [thisWeekStart, weekOffset],

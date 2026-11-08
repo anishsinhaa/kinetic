@@ -258,6 +258,7 @@ function restDoneOptions(): NotificationOptions & { renotify: boolean } {
     badge: REST_DONE_ICON,
     tag: 'rest-timer',
     renotify: true,
+    data: { url: '/workout', kind: 'rest-timer' },
   }
 }
 
@@ -318,6 +319,8 @@ export async function showRestDoneNotification(): Promise<void> {
     notification.onclick = () => {
       notification.close()
       if (fallbackRestNotification === notification) fallbackRestNotification = null
+      window.focus()
+      window.dispatchEvent(new CustomEvent('kinetic:navigate', { detail: '/workout' }))
     }
     window.setTimeout(() => void clearRestNotifications(), 60_000)
   } catch {
