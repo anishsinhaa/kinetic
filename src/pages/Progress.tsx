@@ -5,17 +5,30 @@ import {
   Area,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts'
-import { TrendingUp, Loader2, ChevronDown, Search } from 'lucide-react'
+import { TrendingUp, Loader2, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { Accordion } from '../components/ui/Accordion'
 import { CATEGORY_LABELS } from '../features/exercises/lib/muscles'
+import { useCurrentUser } from '../features/auth/useAuth'
 import { useProgressData } from '../features/progress/hooks/useProgress'
-import { chartTickFormatter, dailyMetricSeries, niceTicks, weekSummary } from '../features/progress/lib/progressAggregators'
+import {
+  allTimeSummary,
+  chartTickFormatter,
+  dailyMetricSeries,
+  longestWeeklyStreak,
+  niceTicks,
+  weekSummary,
+  workoutsPerWeekSeries,
+} from '../features/progress/lib/progressAggregators'
+import { useWeeklyGoal } from '../features/workout/hooks/useWeeklyGoal'
+import { addDays } from '../features/workout/lib/weeklyConsistency'
 import { startOfLocalWeekMonday } from '../features/workout/services/workoutService'
 import { useWeightDisplay } from '../features/settings/hooks/useWeightUnits'
 import { BottomSheet } from '../components/ui/BottomSheet'
@@ -48,6 +61,53 @@ function fmtShortDate(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function formatWeekRangeTitle(start: string, end: string): string {
+  try {
+    const s = new Date(`${start}T00:00:00`)
+    const e = new Date(`${end}T00:00:00`)
+    const startMonth = s.toLocaleDateString('en-GB', { month: 'short' })
+    const endMonth = e.toLocaleDateString('en-GB', { month: 'short' })
+    if (startMonth === endMonth) return `${startMonth} ${s.getDate()} – ${e.getDate()}`
+    return `${startMonth} ${s.getDate()} – ${endMonth} ${e.getDate()}`
+  } catch {
+    return `${start} – ${end}`
+  }
+}
+
+type VolumeRange = '12w' | '6m' | 'all'
+
+function VolumeRangeSelector({
+  value,
+  onChange,
+}: {
+  value: VolumeRange
+  onChange: (r: VolumeRange) => void
+}) {
+  const options: Array<{ id: VolumeRange; label: string }> = [
+    { id: '12w', label: '12w' },
+    { id: '6m', label: '6m' },
+    { id: 'all', label: 'All' },
+  ]
+  return (
+    <div role="group" aria-label="Volume range" className="flex gap-1 bg-surface-2 border border-border rounded-xl p-1">
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          aria-pressed={value === opt.id}
+          className={cn(
+            'min-h-9 px-3 rounded-lg text-xs font-semibold',
+            value === opt.id ? 'bg-primary text-black' : 'text-text-secondary hover:text-text-primary',
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function EmptyState({ msg }: { msg: string }) {
@@ -309,9 +369,14 @@ function volumeDelta(currentKg: number, previousKg: number, units: 'kg' | 'lb'):
 export default function Progress() {
   const [pickedId, setPickedId] = useState<string | null>(null)
   const [range, setRange] = useState<Range>(30)
+  const [volumeRange, setVolumeRange] = useState<VolumeRange>('12w')
+  const [weekOffset, setWeekOffset] = useState(0)
   const [showAllSessions, setShowAllSessions] = useState(false)
   const reduceMotion = useReducedMotion()
   const { units, step } = useWeightDisplay()
+  const { user } = useCurrentUser()
+  const userId = user?.id ?? ''
+  const { goal } = useWeeklyGoal(userId)
 
   const {
     histories,
@@ -327,14 +392,18 @@ export default function Progress() {
   const today = todayDateString()
 
   // Convert kg series → display units for charts/labels
-  const recentWeekly = useMemo(
-    () =>
-      weeklyVolume.slice(-16).map((p) => ({
-        ...p,
-        volume: units === 'kg' ? p.volume : kgToDisplay(p.volume, units),
-      })),
-    [weeklyVolume, units],
-  )
+  const recentWeekly = useMemo(() => {
+    const sliced =
+      volumeRange === '12w'
+        ? weeklyVolume.slice(-12)
+        : volumeRange === '6m'
+          ? weeklyVolume.slice(-26)
+          : weeklyVolume
+    return sliced.map((p) => ({
+      ...p,
+      volume: units === 'kg' ? p.volume : kgToDisplay(p.volume, units),
+    }))
+  }, [weeklyVolume, units, volumeRange])
   const weightData = useMemo(
     () =>
       dailyMetricSeries(dailyLogs, 'weight', range, today).map((p) => ({
@@ -391,24 +460,53 @@ export default function Progress() {
   )
 
   const thisWeekStart = startOfLocalWeekMonday()
-  const lastWeekBounds = useMemo(() => {
-    const [year, month, day] = thisWeekStart.split('-').map(Number)
-    const monday = new Date(year, (month ?? 1) - 1, day ?? 1)
-    const start = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 7)
-    const end = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 1)
-    const ymd = (date: Date) =>
-      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-    return { start: ymd(start), end: ymd(end) }
-  }, [thisWeekStart])
-  const thisWeek = useMemo(
-    () => weekSummary(histories, thisWeekStart, today),
-    [histories, thisWeekStart, today],
+  const selectedWeekStart = useMemo(
+    () => addDays(thisWeekStart, 7 * weekOffset),
+    [thisWeekStart, weekOffset],
   )
-  const lastWeek = useMemo(
-    () => weekSummary(histories, lastWeekBounds.start, lastWeekBounds.end),
-    [histories, lastWeekBounds],
+  const selectedWeekEnd = weekOffset === 0 ? today : addDays(selectedWeekStart, 6)
+  const comparisonStart = addDays(selectedWeekStart, -7)
+  const comparisonEnd = addDays(selectedWeekStart, -1)
+  const selectedWeek = useMemo(
+    () => weekSummary(histories, selectedWeekStart, selectedWeekEnd),
+    [histories, selectedWeekStart, selectedWeekEnd],
   )
-  const muscleMax = Math.max(1, ...thisWeek.setsByCategory.map((row) => row.sets))
+  const comparisonWeek = useMemo(
+    () => weekSummary(histories, comparisonStart, comparisonEnd),
+    [histories, comparisonStart, comparisonEnd],
+  )
+  const weekCardTitle =
+    weekOffset === 0
+      ? 'This week'
+      : weekOffset === -1
+        ? 'Last week'
+        : formatWeekRangeTitle(selectedWeekStart, selectedWeekEnd)
+  const muscleMax = Math.max(1, ...selectedWeek.setsByCategory.map((row) => row.sets))
+
+  const lifetime = useMemo(() => allTimeSummary(histories), [histories])
+  const trainingDates = useMemo(() => {
+    const dates = new Set<string>()
+    for (const ex of histories) {
+      for (const session of ex.sessions) dates.add(session.date)
+    }
+    return Array.from(dates)
+  }, [histories])
+  const longestStreak = useMemo(
+    () => longestWeeklyStreak(trainingDates, goal),
+    [trainingDates, goal],
+  )
+  const workoutsPerWeek = useMemo(
+    () => workoutsPerWeekSeries(histories, 12, today),
+    [histories, today],
+  )
+  const workoutsTicks = useMemo(
+    () => niceTicks(workoutsPerWeek.map((p) => p.workouts), 4, { fromZero: true }),
+    [workoutsPerWeek],
+  )
+  const workoutsTickFormat = useMemo(
+    () => chartTickFormatter(workoutsTicks.ticks),
+    [workoutsTicks.ticks],
+  )
 
   const sessions = selectedHistory?.sessions ?? []
   const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 8)
@@ -437,35 +535,57 @@ export default function Progress() {
       {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="rounded-xl border border-border bg-surface p-4 md:col-span-2">
-            <h2 className="text-[11px] text-text-secondary uppercase tracking-widest font-semibold flex items-center gap-2 mb-3">
-              <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
-              This week
-            </h2>
-            {thisWeek.workouts === 0 ? (
-              <p className="text-sm text-text-muted">No workouts logged this week yet.</p>
+            <div className="flex items-center gap-2 mb-3">
+              <button
+                type="button"
+                aria-label="Previous week"
+                disabled={weekOffset <= -104}
+                onClick={() => setWeekOffset((n) => Math.max(-104, n - 1))}
+                className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl text-text-secondary disabled:opacity-40"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <h2 className="flex-1 text-center text-[11px] text-text-secondary uppercase tracking-widest font-semibold flex items-center justify-center gap-2">
+                <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
+                {weekCardTitle}
+              </h2>
+              <button
+                type="button"
+                aria-label="Next week"
+                disabled={weekOffset >= 0}
+                onClick={() => setWeekOffset((n) => Math.min(0, n + 1))}
+                className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl text-text-secondary disabled:opacity-40"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+            {selectedWeek.workouts === 0 ? (
+              <p className="text-sm text-text-muted">
+                {weekOffset === 0 ? 'No workouts logged this week yet.' : 'No workouts that week.'}
+              </p>
             ) : (
               <>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <p className="text-[11px] text-text-secondary uppercase tracking-widest">Workouts</p>
-                    <p className="text-2xl font-black text-text-primary tabular-nums">{thisWeek.workouts}</p>
-                    <p className="text-xs text-text-secondary">{countDelta(thisWeek.workouts, lastWeek.workouts)} vs last week</p>
+                    <p className="text-2xl font-black text-text-primary tabular-nums">{selectedWeek.workouts}</p>
+                    <p className="text-xs text-text-secondary">{countDelta(selectedWeek.workouts, comparisonWeek.workouts)} vs last week</p>
                   </div>
                   <div>
                     <p className="text-[11px] text-text-secondary uppercase tracking-widest">Sets</p>
-                    <p className="text-2xl font-black text-text-primary tabular-nums">{thisWeek.sets}</p>
-                    <p className="text-xs text-text-secondary">{countDelta(thisWeek.sets, lastWeek.sets)} vs last week</p>
+                    <p className="text-2xl font-black text-text-primary tabular-nums">{selectedWeek.sets}</p>
+                    <p className="text-xs text-text-secondary">{countDelta(selectedWeek.sets, comparisonWeek.sets)} vs last week</p>
                   </div>
                   <div>
                     <p className="text-[11px] text-text-secondary uppercase tracking-widest">Volume</p>
-                    <p className="text-2xl font-black text-text-primary tabular-nums">{formatVolume(thisWeek.volumeKg, units)}</p>
-                    <p className="text-xs text-text-secondary">{volumeDelta(thisWeek.volumeKg, lastWeek.volumeKg, units)} vs last week</p>
+                    <p className="text-2xl font-black text-text-primary tabular-nums">{formatVolume(selectedWeek.volumeKg, units)}</p>
+                    <p className="text-xs text-text-secondary">{volumeDelta(selectedWeek.volumeKg, comparisonWeek.volumeKg, units)} vs last week</p>
                   </div>
                 </div>
-                {thisWeek.setsByCategory.length > 0 && (
+                {selectedWeek.setsByCategory.length > 0 && (
                   <div className="mt-4 space-y-2">
                     <p className="text-[11px] text-text-secondary uppercase tracking-widest">Sets per muscle</p>
-                    {thisWeek.setsByCategory.map((row) => (
+                    {selectedWeek.setsByCategory.map((row) => (
                       <div key={row.category}>
                         <div className="flex items-baseline justify-between gap-3 text-sm">
                           <span className="text-text-primary">{CATEGORY_LABELS[row.category]}</span>
@@ -484,8 +604,91 @@ export default function Progress() {
               </>
             )}
           </div>
+
+          {lifetime.workouts > 0 && (
+            <div className="rounded-xl border border-border bg-surface p-4 md:col-span-2">
+              <h2 className="text-[11px] text-text-secondary uppercase tracking-widest font-semibold flex items-center gap-2 mb-3">
+                <span className="w-1 h-3.5 bg-primary rounded-full inline-block" />
+                All time
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <p className="text-[11px] text-text-secondary uppercase tracking-widest">Workouts</p>
+                  <p className="text-2xl font-black text-text-primary tabular-nums">{lifetime.workouts}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-text-secondary uppercase tracking-widest">Sets</p>
+                  <p className="text-2xl font-black text-text-primary tabular-nums">{lifetime.sets}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-text-secondary uppercase tracking-widest">Volume</p>
+                  <p className="text-2xl font-black text-text-primary tabular-nums">{formatVolume(lifetime.volumeKg, units)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-text-secondary uppercase tracking-widest">Longest weekly streak</p>
+                  <p className="text-2xl font-black text-text-primary tabular-nums">{longestStreak} wk</p>
+                </div>
+              </div>
+              {lifetime.firstDate && (
+                <p className="mt-3 text-xs text-text-muted">Since {fmtShortDate(lifetime.firstDate)}</p>
+              )}
+            </div>
+          )}
+
+            {/* Workouts per week */}
+            <Accordion title="Workouts per week" defaultOpen>
+              {workoutsPerWeek.every((p) => p.workouts === 0) ? (
+                <EmptyState msg="Complete workouts to see weekly consistency." />
+              ) : (
+                <ChartCard>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={workoutsPerWeek} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fontSize: 11, fill: '#64748b' }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={32}
+                        domain={workoutsTicks.domain}
+                        ticks={workoutsTicks.ticks}
+                        interval={0}
+                        tickFormatter={workoutsTickFormat}
+                      />
+                      <Tooltip content={<KineticTooltip />} />
+                      <ReferenceLine
+                        y={goal}
+                        strokeDasharray="4 4"
+                        stroke="#64748b"
+                        label={{ value: `Goal ${goal}`, position: 'insideTopRight', fontSize: 10, fill: '#64748b' }}
+                      />
+                      <Bar
+                        dataKey="workouts"
+                        name="Workouts"
+                        radius={[3, 3, 0, 0]}
+                        isAnimationActive={!reduceMotion}
+                      >
+                        {workoutsPerWeek.map((entry) => (
+                          <Cell
+                            key={entry.weekStart}
+                            fill={entry.workouts >= goal ? '#CCFF00' : '#64748b'}
+                            fillOpacity={entry.workouts >= goal ? 0.9 : 0.7}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              )}
+            </Accordion>
+
             {/* Weekly volume */}
-            <Accordion title="Weekly volume" defaultOpen>
+            <Accordion
+              title="Weekly volume"
+              defaultOpen
+              action={<VolumeRangeSelector value={volumeRange} onChange={setVolumeRange} />}
+            >
               {recentWeekly.length === 0 ? (
                 <EmptyState msg="Complete workouts to see weekly volume." />
               ) : (
@@ -493,7 +696,14 @@ export default function Progress() {
                   <ResponsiveContainer width="100%" height={180}>
                     <BarChart data={recentWeekly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 11, fill: '#64748b' }}
+                        tickLine={false}
+                        axisLine={false}
+                        interval={volumeRange === 'all' ? 'preserveStartEnd' : 0}
+                        minTickGap={volumeRange === 'all' ? 28 : undefined}
+                      />
                       <YAxis
                         tick={{ fontSize: 11, fill: '#64748b' }}
                         tickLine={false}

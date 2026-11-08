@@ -6,6 +6,7 @@
 import { localDateString } from '../../../lib/localDate'
 import { exerciseCategory, type MuscleCategory } from '../../exercises/lib/muscles'
 import { bestPersonalRecord, isPersonalRecord } from '../../workout/lib/prDetection'
+import { addDays, weekStartKey } from '../../workout/lib/weeklyConsistency'
 import type { ExerciseHistory, ExerciseHistorySession } from '../../history/types'
 import type { DailyLogEntry } from '../../history/types'
 
@@ -182,6 +183,109 @@ export function weekSummary(
     .sort((a, b) => b.sets - a.sets)
 
   return { workouts: workoutIds.size, sets, volumeKg, setsByCategory }
+}
+
+export interface WorkoutsPerWeekPoint {
+  weekStart: string
+  label: string
+  workouts: number
+}
+
+/**
+ * Distinct workout counts per Monday-start local week for the last `weeks` weeks
+ * (including empty weeks as 0), oldest first. Labels like "Oct 27".
+ */
+export function workoutsPerWeekSeries(
+  histories: ExerciseHistory[],
+  weeks: number,
+  todayStr: string,
+): WorkoutsPerWeekPoint[] {
+  const byWeek = new Map<string, Set<string>>()
+  for (const ex of histories) {
+    for (const session of ex.sessions) {
+      if (session.date > todayStr) continue
+      const week = weekStartKey(session.date)
+      const ids = byWeek.get(week) ?? new Set<string>()
+      ids.add(session.workoutId)
+      byWeek.set(week, ids)
+    }
+  }
+
+  const thisMonday = weekStartKey(todayStr)
+  const points: WorkoutsPerWeekPoint[] = []
+  for (let i = weeks - 1; i >= 0; i--) {
+    const weekStart = addDays(thisMonday, -7 * i)
+    const [y, m, d] = weekStart.split('-').map(Number)
+    const label = new Date(y, (m ?? 1) - 1, d ?? 1).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+    })
+    points.push({
+      weekStart,
+      label,
+      workouts: byWeek.get(weekStart)?.size ?? 0,
+    })
+  }
+  return points
+}
+
+export interface AllTimeSummary {
+  workouts: number
+  sets: number
+  volumeKg: number
+  firstDate: string | null
+}
+
+/** All-time totals from completed exercise-history sessions. */
+export function allTimeSummary(histories: ExerciseHistory[]): AllTimeSummary {
+  const workoutIds = new Set<string>()
+  let sets = 0
+  let volumeKg = 0
+  let firstDate: string | null = null
+
+  for (const ex of histories) {
+    for (const session of ex.sessions) {
+      workoutIds.add(session.workoutId)
+      sets += session.sets.length
+      volumeKg += session.totalVolume
+      if (firstDate == null || session.date < firstDate) firstDate = session.date
+    }
+  }
+
+  return { workouts: workoutIds.size, sets, volumeKg, firstDate }
+}
+
+/**
+ * Longest run of consecutive Mon–Sun weeks with ≥ goal distinct training dates.
+ */
+export function longestWeeklyStreak(trainingDates: string[], goal: number): number {
+  if (goal <= 0 || trainingDates.length === 0) return 0
+
+  const byWeek = new Map<string, Set<string>>()
+  for (const date of trainingDates) {
+    const week = weekStartKey(date)
+    const days = byWeek.get(week) ?? new Set<string>()
+    days.add(date)
+    byWeek.set(week, days)
+  }
+
+  const weeks = Array.from(byWeek.keys()).sort()
+  const first = weeks[0]
+  const last = weeks[weeks.length - 1]
+  if (!first || !last) return 0
+
+  let longest = 0
+  let current = 0
+  for (let w = first; w <= last; w = addDays(w, 7)) {
+    const count = byWeek.get(w)?.size ?? 0
+    if (count >= goal) {
+      current += 1
+      if (current > longest) longest = current
+    } else {
+      current = 0
+    }
+  }
+  return longest
 }
 
 // ─── Global PR list ──────────────────────────────────────────────────────────
