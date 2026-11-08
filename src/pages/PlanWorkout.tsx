@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { Button } from '../components/ui/Button'
+import { UnsavedChangesSheet } from '../components/ui/UnsavedChangesSheet'
 import { useToast } from '../components/ui/toastContext'
+import { clearDraft, draftKey, loadDraft, saveDraft } from '../lib/drafts'
+import { useUnsavedGuard } from '../lib/useUnsavedGuard'
 import { useCurrentUser } from '../features/auth/useAuth'
 import type { Exercise } from '../features/exercises/types'
 import { ExercisePickerSheet } from '../features/workout/components/ExercisePickerSheet'
@@ -43,18 +46,59 @@ export default function PlanWorkout() {
   const toast = useToast()
   const navigate = useNavigate()
 
-  const [pickedType, setPickedType] = useState<string | null>(null)
-  const [exercises, setExercises] = useState<PlannedExercise[]>(() => saved?.exercises ?? [])
+  const draftStorageKey = draftKey(userId, 'plan')
+  const [restoredDraft] = useState(() =>
+    loadDraft<{ pickedType: string | null; exercises: PlannedExercise[] }>(draftStorageKey),
+  )
+  const [pickedType, setPickedType] = useState<string | null>(
+    () => restoredDraft?.pickedType ?? null,
+  )
+  const [exercises, setExercises] = useState<PlannedExercise[]>(
+    () => restoredDraft?.exercises ?? saved?.exercises ?? [],
+  )
   const [pickerOpen, setPickerOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [draftBanner, setDraftBanner] = useState(() => Boolean(restoredDraft))
 
   const type = pickedType ?? saved?.type ?? suggestedType
   const chipsEnabled = suggestionsReady || Boolean(saved)
   const dirty = isDirty(saved, type, exercises, pickedType)
+  const { blocker, allowNextNavigation } = useUnsavedGuard(dirty)
+
+  useEffect(() => {
+    if (!dirty) {
+      clearDraft(draftStorageKey)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      saveDraft(draftStorageKey, { pickedType, exercises })
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [dirty, pickedType, exercises, draftStorageKey])
+
+  const resetDraftState = () => {
+    clearDraft(draftStorageKey)
+    setPickedType(null)
+    setExercises(saved?.exercises ?? [])
+    setDraftBanner(false)
+  }
 
   const requestLeave = () => {
     if (dirty) setDiscardOpen(true)
+    else navigate(-1)
+  }
+
+  const keepEditing = () => {
+    setDiscardOpen(false)
+    blocker.reset?.()
+  }
+
+  const discardChanges = () => {
+    resetDraftState()
+    allowNextNavigation()
+    setDiscardOpen(false)
+    if (blocker.state === 'blocked') blocker.proceed?.()
     else navigate(-1)
   }
 
@@ -88,6 +132,8 @@ export default function PlanWorkout() {
       toast.show("Couldn't save the plan on this device", { kind: 'error' })
       return
     }
+    clearDraft(draftStorageKey)
+    allowNextNavigation()
     toast.show('Plan saved', { kind: 'success' })
     navigate('/workout', { replace: true })
   }
@@ -104,6 +150,19 @@ export default function PlanWorkout() {
       <p className="text-sm text-text-muted">
         Saved on this device only. Starting it creates the workout with these exercises.
       </p>
+
+      {draftBanner && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-text-secondary">
+          <span>Restored your unsaved plan</span>
+          <button
+            type="button"
+            className="min-h-11 px-2 text-primary font-semibold"
+            onClick={resetDraftState}
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {typeChips.map((chip) => {
@@ -208,25 +267,13 @@ export default function PlanWorkout() {
         onPick={onPick}
       />
 
-      <BottomSheet open={discardOpen} onClose={() => setDiscardOpen(false)} title="Discard changes?">
-        <p className="text-sm text-text-secondary mb-4">Nothing has been saved yet.</p>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setDiscardOpen(false)}
-            className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary"
-          >
-            Keep editing
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="flex-1 min-h-11 rounded-xl bg-primary text-black text-sm font-semibold"
-          >
-            Discard
-          </button>
-        </div>
-      </BottomSheet>
+      <UnsavedChangesSheet
+        open={discardOpen || blocker.state === 'blocked'}
+        title="Discard changes?"
+        message="Nothing has been saved yet."
+        onKeep={keepEditing}
+        onDiscard={discardChanges}
+      />
 
       <BottomSheet open={deleteOpen} onClose={() => setDeleteOpen(false)} title={DELETE_PLAN_TITLE}>
         <p className="text-sm text-text-secondary mb-4">{DELETE_PLAN_BODY}</p>
@@ -242,6 +289,8 @@ export default function PlanWorkout() {
             type="button"
             onClick={() => {
               clearWorkoutPlan(userId)
+              clearDraft(draftStorageKey)
+              allowNextNavigation()
               toast.show('Plan deleted', { kind: 'success' })
               navigate('/workout')
             }}

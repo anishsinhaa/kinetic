@@ -1,10 +1,13 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Trash2 } from 'lucide-react'
 import { BottomSheet } from '../components/ui/BottomSheet'
 import { Button } from '../components/ui/Button'
+import { UnsavedChangesSheet } from '../components/ui/UnsavedChangesSheet'
 import { useToast } from '../components/ui/toastContext'
+import { clearDraft, draftKey, loadDraft, saveDraft } from '../lib/drafts'
+import { useUnsavedGuard } from '../lib/useUnsavedGuard'
 import { useCurrentUser } from '../features/auth/useAuth'
 import type { Exercise } from '../features/exercises/types'
 import {
@@ -151,6 +154,23 @@ async function invalidateAfterEdit(
   ])
 }
 
+type EditDraftPayload = {
+  type: string
+  date: string
+  exercises: DraftExercise[]
+  removedSetIds: string[]
+  removedExerciseIds: string[]
+  base: { date: string; type: string; setCount: number }
+}
+
+function workoutBase(workout: EditableWorkout) {
+  return {
+    date: workout.date,
+    type: workout.type,
+    setCount: workout.exercises.reduce((count, exercise) => count + exercise.sets.length, 0),
+  }
+}
+
 function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
   const { user } = useCurrentUser()
   const userId = user!.id
@@ -161,17 +181,40 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
   const units = settings?.units ?? 'kg'
   const weightStep = settings?.weightStep ?? 2.5
   const displayLimit = roundDisplayWeight(kgToDisplay(MAX_SET_WEIGHT_KG, units), units)
+  const draftStorageKey = draftKey(userId, 'edit', workout.id)
+  const liveBase = useMemo(() => workoutBase(workout), [workout])
+  const [restoredDraft] = useState(() => {
+    const draft = loadDraft<EditDraftPayload>(draftStorageKey)
+    if (!draft?.base) return null
+    const base = workoutBase(workout)
+    if (
+      draft.base.date !== base.date ||
+      draft.base.type !== base.type ||
+      draft.base.setCount !== base.setCount
+    ) {
+      clearDraft(draftStorageKey)
+      return null
+    }
+    return draft
+  })
 
-  const [type, setType] = useState(workout.type)
-  const [date, setDate] = useState(workout.date)
+  const [type, setType] = useState(() => restoredDraft?.type ?? workout.type)
+  const [date, setDate] = useState(() => restoredDraft?.date ?? workout.date)
   const today = localDateString()
-  const [exercises, setExercises] = useState(() => buildCards(workout, units))
+  const [exercises, setExercises] = useState(
+    () => restoredDraft?.exercises ?? buildCards(workout, units),
+  )
   const [openCardId, setOpenCardId] = useState<string | null>(null)
-  const [removedSetIds, setRemovedSetIds] = useState<string[]>([])
-  const [removedExerciseIds, setRemovedExerciseIds] = useState<string[]>([])
+  const [removedSetIds, setRemovedSetIds] = useState<string[]>(
+    () => restoredDraft?.removedSetIds ?? [],
+  )
+  const [removedExerciseIds, setRemovedExerciseIds] = useState<string[]>(
+    () => restoredDraft?.removedExerciseIds ?? [],
+  )
   const [pickerOpen, setPickerOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [draftBanner, setDraftBanner] = useState(() => Boolean(restoredDraft))
   const [isSaving, setIsSaving] = useState(false)
   const savingRef = useRef(false)
 
@@ -207,6 +250,45 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
     addedExerciseCount > 0 ||
     typeChanged ||
     dateChanged
+  const { blocker, allowNextNavigation } = useUnsavedGuard(hasChanges)
+
+  useEffect(() => {
+    if (!hasChanges) {
+      clearDraft(draftStorageKey)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      saveDraft(draftStorageKey, {
+        type,
+        date,
+        exercises,
+        removedSetIds,
+        removedExerciseIds,
+        base: liveBase,
+      })
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [
+    hasChanges,
+    type,
+    date,
+    exercises,
+    removedSetIds,
+    removedExerciseIds,
+    draftStorageKey,
+    liveBase,
+  ])
+
+  const resetDraftState = () => {
+    clearDraft(draftStorageKey)
+    setType(workout.type)
+    setDate(workout.date)
+    setExercises(buildCards(workout, units))
+    setRemovedSetIds([])
+    setRemovedExerciseIds([])
+    setOpenCardId(null)
+    setDraftBanner(false)
+  }
 
   const summary = useMemo(() => {
     const parts: string[] = []
@@ -236,6 +318,19 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
 
   const requestLeave = () => {
     if (hasChanges) setDiscardOpen(true)
+    else navigate(-1)
+  }
+
+  const keepEditing = () => {
+    setDiscardOpen(false)
+    blocker.reset?.()
+  }
+
+  const discardChanges = () => {
+    resetDraftState()
+    allowNextNavigation()
+    setDiscardOpen(false)
+    if (blocker.state === 'blocked') blocker.proceed?.()
     else navigate(-1)
   }
 
@@ -339,6 +434,8 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         addedSets,
         date: date !== workout.date ? date : undefined,
       })
+      clearDraft(draftStorageKey)
+      allowNextNavigation()
       await invalidateAfterEdit(queryClient, userId)
       toast.show('Workout updated')
       navigate(`/progress/history?w=${workout.id}`, { replace: true })
@@ -356,6 +453,8 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
     setIsSaving(true)
     try {
       await deleteFinishedWorkout(userId, workout.id)
+      clearDraft(draftStorageKey)
+      allowNextNavigation()
       await invalidateAfterEdit(queryClient, userId)
       toast.show('Workout deleted')
       navigate('/progress/history', { replace: true })
@@ -382,6 +481,19 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
           Cancel
         </button>
       </div>
+
+      {draftBanner && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-text-secondary">
+          <span>Restored your unsaved edits</span>
+          <button
+            type="button"
+            className="min-h-11 px-2 text-primary font-semibold"
+            onClick={resetDraftState}
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       <div>
         <label className="block text-xs uppercase tracking-widest text-text-secondary">Date</label>
@@ -556,26 +668,12 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
         }}
       />
 
-      <BottomSheet open={discardOpen} onClose={() => setDiscardOpen(false)} title="Discard changes?">
-        <div className="p-4 space-y-4">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setDiscardOpen(false)}
-              className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary"
-            >
-              Keep editing
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate(-1)}
-              className="flex-1 min-h-11 rounded-xl bg-primary text-black text-sm font-semibold"
-            >
-              Discard
-            </button>
-          </div>
-        </div>
-      </BottomSheet>
+      <UnsavedChangesSheet
+        open={discardOpen || blocker.state === 'blocked'}
+        title="Discard changes?"
+        onKeep={keepEditing}
+        onDiscard={discardChanges}
+      />
 
       <BottomSheet open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Delete this workout?">
         <div className="p-4 space-y-4">

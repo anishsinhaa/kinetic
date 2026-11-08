@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CheckCircle2, Loader2 } from 'lucide-react'
 import { Button } from '../../../components/ui/Button'
 import { useToast } from '../../../components/ui/toastContext'
@@ -20,6 +20,17 @@ type DailyLogFormProps = {
   onSave: (payload: DailyLogPayload) => Promise<unknown>
   /** Called after a successful save. */
   onSaved?: () => void
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+function sameForm(a: DailyLogFormState, b: DailyLogFormState): boolean {
+  return (
+    a.weight === b.weight &&
+    a.calories === b.calories &&
+    a.protein === b.protein &&
+    a.sleep === b.sleep &&
+    a.notes === b.notes
+  )
 }
 
 /**
@@ -29,12 +40,26 @@ type DailyLogFormProps = {
  * (new → optimistic → real UUID) during the first save and a remount would
  * wipe whatever was typed into the other fields.
  */
-export function DailyLogForm({ initialLog, units, onSave, onSaved }: DailyLogFormProps) {
+export function DailyLogForm({
+  initialLog,
+  units,
+  onSave,
+  onSaved,
+  onDirtyChange,
+}: DailyLogFormProps) {
   const toast = useToast()
   // Initial value is captured once. A later log/units change must not remount or
   // overwrite what the user has started typing (see LogDaySheet's key).
+  const [baseline, setBaseline] = useState<DailyLogFormState>(() =>
+    logToDisplayForm(initialLog, units),
+  )
   const [form, setForm] = useState<DailyLogFormState>(() => logToDisplayForm(initialLog, units))
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const dirty = !sameForm(form, baseline)
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
 
   const numericFields = [
     { key: 'weight' as const, label: `Weight (${units})`, mode: 'decimal' as const },
@@ -53,7 +78,9 @@ export function DailyLogForm({ initialLog, units, onSave, onSaved }: DailyLogFor
     setStatus('saving')
     try {
       await onSave(displayFormToPayload(form, units))
+      setBaseline(form)
       setStatus('saved')
+      onDirtyChange?.(false)
       onSaved?.()
     } catch (err) {
       setStatus('idle')

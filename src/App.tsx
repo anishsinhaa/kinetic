@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
+import { createBrowserRouter, Navigate, Route, RouterProvider, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -36,7 +36,7 @@ const queryClient = new QueryClient({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppShell: sets up the auth listener + handles routing/guarding
-// Must be rendered inside QueryClientProvider + BrowserRouter
+// Must be rendered inside QueryClientProvider + the data RouterProvider
 // ─────────────────────────────────────────────────────────────────────────────
 function AppShell() {
   // Set up the Supabase auth state listener once — syncs to Zustand store
@@ -95,14 +95,14 @@ function AppShell() {
   )
 }
 
+const router = createBrowserRouter([{ path: '*', element: <AppShell /> }])
+
 export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <BrowserRouter>
-            <AppShell />
-          </BrowserRouter>
+          <RouterProvider router={router} />
         </ToastProvider>
       </QueryClientProvider>
     </ErrorBoundary>

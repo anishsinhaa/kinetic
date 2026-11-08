@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { BottomSheet } from '../components/ui/BottomSheet'
 import { Button } from '../components/ui/Button'
+import { UnsavedChangesSheet } from '../components/ui/UnsavedChangesSheet'
 import { useToast } from '../components/ui/toastContext'
+import { clearDraft, draftKey, loadDraft, saveDraft } from '../lib/drafts'
+import { useUnsavedGuard } from '../lib/useUnsavedGuard'
 import { useCurrentUser } from '../features/auth/useAuth'
 import type { Exercise } from '../features/exercises/types'
 import {
@@ -115,24 +117,75 @@ export default function LogPastWorkout() {
   const weightStep = settings?.weightStep ?? 2.5
 
   const today = localDateString()
-  const [date, setDate] = useState(() => initialDate(searchParams.get('date'), today))
-  const [pickedType, setPickedType] = useState<string | null>(null)
-  const [exercises, setExercises] = useState<PastExerciseCard[]>([])
+  const dateParam = searchParams.get('date')
+  const [baselineDate] = useState(() => initialDate(dateParam, today))
+  const draftStorageKey = draftKey(userId, 'log')
+  const [restoredDraft] = useState(() => {
+    const draft = loadDraft<{
+      date: string
+      pickedType: string | null
+      exercises: PastExerciseCard[]
+    }>(draftStorageKey)
+    if (!draft) return null
+    if (dateParam && isRealDate(dateParam) && dateParam <= today && draft.date !== dateParam) {
+      return null
+    }
+    return draft
+  })
+  const [date, setDate] = useState(() => restoredDraft?.date ?? baselineDate)
+  const [pickedType, setPickedType] = useState<string | null>(() => restoredDraft?.pickedType ?? null)
+  const [exercises, setExercises] = useState<PastExerciseCard[]>(() => restoredDraft?.exercises ?? [])
   const [openCardId, setOpenCardId] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
+  const [draftBanner, setDraftBanner] = useState(() => Boolean(restoredDraft))
   const [isSaving, setIsSaving] = useState(false)
   const savingRef = useRef(false)
 
   const workoutType = pickedType ?? (suggestionsReady ? suggestedType : '')
+  const dirty = exercises.length > 0 || pickedType != null || date !== baselineDate
+  const { blocker, allowNextNavigation } = useUnsavedGuard(dirty)
 
   const savableCount = useMemo(
     () => exercises.reduce((count, exercise) => count + exercise.sets.filter(isSavableSet).length, 0),
     [exercises],
   )
 
+  useEffect(() => {
+    if (!dirty) {
+      clearDraft(draftStorageKey)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      saveDraft(draftStorageKey, { date, pickedType, exercises })
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [dirty, date, pickedType, exercises, draftStorageKey])
+
+  const resetDraftState = () => {
+    clearDraft(draftStorageKey)
+    setDate(baselineDate)
+    setPickedType(null)
+    setExercises([])
+    setOpenCardId(null)
+    setDraftBanner(false)
+  }
+
   const requestLeave = () => {
-    if (exercises.length > 0) setDiscardOpen(true)
+    if (dirty) setDiscardOpen(true)
+    else navigate(-1)
+  }
+
+  const keepEditing = () => {
+    setDiscardOpen(false)
+    blocker.reset?.()
+  }
+
+  const discardChanges = () => {
+    resetDraftState()
+    allowNextNavigation()
+    setDiscardOpen(false)
+    if (blocker.state === 'blocked') blocker.proceed?.()
     else navigate(-1)
   }
 
@@ -242,6 +295,8 @@ export default function LogPastWorkout() {
           refetchType: 'all',
         })
       }
+      clearDraft(draftStorageKey)
+      allowNextNavigation()
       toast.show(`Workout saved for ${formatRelativeDate(date)}`, { kind: 'success' })
       navigate(`/progress/history?w=${id}`)
     } catch (err) {
@@ -259,6 +314,19 @@ export default function LogPastWorkout() {
           Cancel
         </button>
       </div>
+
+      {draftBanner && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-text-secondary">
+          <span>Restored your unsaved workout</span>
+          <button
+            type="button"
+            className="min-h-11 px-2 text-primary font-semibold"
+            onClick={resetDraftState}
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <input
@@ -397,25 +465,13 @@ export default function LogPastWorkout() {
         onPick={addExercise}
       />
 
-      <BottomSheet open={discardOpen} onClose={() => setDiscardOpen(false)} title="Discard this workout?">
-        <p className="text-sm text-text-secondary mb-4">Nothing has been saved yet.</p>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setDiscardOpen(false)}
-            className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary"
-          >
-            Keep editing
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="flex-1 min-h-11 rounded-xl bg-primary text-black text-sm font-semibold"
-          >
-            Discard
-          </button>
-        </div>
-      </BottomSheet>
+      <UnsavedChangesSheet
+        open={discardOpen || blocker.state === 'blocked'}
+        title="Discard this workout?"
+        message="Nothing has been saved yet."
+        onKeep={keepEditing}
+        onDiscard={discardChanges}
+      />
     </div>
   )
 }
