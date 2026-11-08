@@ -480,9 +480,14 @@ function EditWorkoutForm({ workout }: { workout: EditableWorkout }) {
             type="button"
             onClick={() =>
               setExercises((prev) =>
-                prev.map((card) =>
-                  card.rowId === exercise.rowId ? { ...card, sets: [...card.sets, emptySet()] } : card,
-                ),
+                prev.map((card) => {
+                  if (card.rowId !== exercise.rowId) return card
+                  const last = card.sets[card.sets.length - 1]
+                  const next = last
+                    ? { ...emptySet(), weight: last.weight, reps: last.reps }
+                    : emptySet()
+                  return { ...card, sets: [...card.sets, next] }
+                }),
               )
             }
             className="w-full min-h-11 text-sm text-primary"

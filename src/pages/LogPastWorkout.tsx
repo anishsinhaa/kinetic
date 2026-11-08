@@ -40,14 +40,9 @@ function isRealDate(value: string): boolean {
   return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
 }
 
-function yesterdayString(): string {
-  const now = new Date()
-  return localDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
-}
-
 function initialDate(param: string | null, today: string): string {
   if (param && isRealDate(param) && param <= today) return param
-  return yesterdayString()
+  return today
 }
 
 function noonOrNow(date: string): string {
@@ -253,7 +248,7 @@ export default function LogPastWorkout() {
   return (
     <div className="p-4 md:p-8 pb-28 max-w-lg mx-auto space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-black text-text-primary">Log past workout</h1>
+        <h1 className="text-2xl font-black text-text-primary">Log workout</h1>
         <button type="button" onClick={requestLeave} className="min-h-11 px-3 text-sm text-text-secondary">
           Cancel
         </button>
@@ -345,9 +340,19 @@ export default function LogPastWorkout() {
             type="button"
             onClick={() =>
               setExercises((prev) =>
-                prev.map((card) =>
-                  card.id === exercise.id ? { ...card, sets: [...card.sets, emptySet()] } : card,
-                ),
+                prev.map((card) => {
+                  if (card.id !== exercise.id) return card
+                  const last = card.sets[card.sets.length - 1]
+                  const next = last
+                    ? {
+                        ...emptySet(),
+                        weight: last.weight,
+                        reps: last.reps,
+                        toFailure: last.toFailure,
+                      }
+                    : emptySet()
+                  return { ...card, sets: [...card.sets, next] }
+                }),
               )
             }
             className="w-full min-h-11 text-sm text-primary"

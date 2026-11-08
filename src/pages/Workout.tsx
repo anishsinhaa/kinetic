@@ -193,7 +193,7 @@ function LaterWorkoutActions({ hasPlan }: { hasPlan: boolean }) {
           onClick={() => navigate('/workout/log')}
           className="flex-1 min-h-11 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:border-primary"
         >
-          Log past workout
+          Log workout
         </button>
       )}
     </div>
